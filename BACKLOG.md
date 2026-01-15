@@ -29,3 +29,38 @@ Ideas for future implementation when conditions are right.
 **Analysis:** See `~/.claude/plans/velvet-hopping-pnueli.md`
 
 ---
+
+## Conflict Detection Between Worktrees
+
+**Status:** Nice to have
+
+**Idea:**
+- `pwt conflicts` - Show file overlap between all active worktrees
+- `pwt conflicts TICKET-1 TICKET-2` - Check specific pair
+- Useful for parallel AI agents working on same codebase
+
+**Current workaround:**
+```bash
+# Check which files each worktree modified
+pwt for-each git diff --name-only master 2>/dev/null | sort | uniq -d
+```
+
+**Implementation:**
+```bash
+cmd_conflicts() {
+    local files=$(mktemp)
+    for dir in "$WORKTREES_DIR"/*/; do
+        name=$(basename "$dir")
+        git -C "$dir" diff --name-only master 2>/dev/null | \
+            sed "s|^|$name:|" >> "$files"
+    done
+    # Find duplicates (same file in multiple worktrees)
+    cut -d: -f2 "$files" | sort | uniq -d | while read f; do
+        echo "⚠️  $f modified in:"
+        grep ":$f$" "$files" | cut -d: -f1 | sed 's/^/   /'
+    done
+    rm "$files"
+}
+```
+
+---

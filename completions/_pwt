@@ -1,0 +1,228 @@
+#compdef pwt
+
+# pwt - Power Worktrees completion
+# Install: add to fpath and run compinit
+
+_pwt_commands() {
+    local commands=(
+        'create:Create new worktree'
+        'list:List worktrees and status'
+        'ls:List worktrees and status'
+        'info:Show worktree details'
+        'show:Show worktree details'
+        'remove:Remove worktree'
+        'rm:Remove worktree'
+        'server:Start development server'
+        's:Start development server'
+        'repair:Repair broken worktree'
+        'fix:Repair broken worktree'
+        'auto-remove:Remove merged worktrees'
+        'cleanup:Remove merged worktrees'
+        'fix-port:Resolve port conflict'
+        'meta:Manage worktree metadata'
+        'project:Manage project configs'
+        'config:Configure current project'
+        'port:Get port for worktree'
+        'migrate:Migrate from old system'
+        'help:Show help'
+    )
+    _describe 'command' commands
+}
+
+_pwt_worktrees() {
+    local worktrees
+    if [[ -f ~/.pwt/meta.json ]]; then
+        worktrees=(${(f)"$(jq -r 'keys[]' ~/.pwt/meta.json 2>/dev/null)"})
+        _describe 'worktree' worktrees
+    fi
+}
+
+_pwt_projects() {
+    local projects
+    if [[ -d ~/.pwt/projects ]]; then
+        projects=(${(f)"$(ls ~/.pwt/projects/ 2>/dev/null)"})
+        _describe 'project' projects
+    fi
+}
+
+_pwt_branches() {
+    local branches
+    branches=(${(f)"$(git branch -a 2>/dev/null | sed 's/^[* ]*//' | sed 's|remotes/||')"})
+    _describe 'branch' branches
+}
+
+_pwt_meta_actions() {
+    local actions=(
+        'list:List all metadata'
+        'show:Show metadata for worktree'
+        'set:Update metadata field'
+        'import:Import existing worktrees'
+    )
+    _describe 'action' actions
+}
+
+_pwt_project_actions() {
+    local actions=(
+        'list:List all projects'
+        'init:Initialize new project'
+        'show:Show project config'
+        'set:Update project config'
+        'path:Print config directory'
+    )
+    _describe 'action' actions
+}
+
+_pwt_config_keys() {
+    local keys=(
+        'main_app:Main app path'
+        'worktrees_dir:Worktrees directory'
+        'branch_prefix:Branch prefix (e.g. jp/)'
+        'base_port:Base port for allocation'
+    )
+    _describe 'key' keys
+}
+
+_pwt_meta_fields() {
+    local fields=(
+        'base:Base branch'
+        'description:Worktree description'
+        'branch:Git branch'
+        'port:Port number'
+    )
+    _describe 'field' fields
+}
+
+_pwt() {
+    local curcontext="$curcontext" state line
+    typeset -A opt_args
+
+    _arguments -C \
+        '--project[Specify project]:project:_pwt_projects' \
+        '1: :->command' \
+        '*: :->args'
+
+    case $state in
+        command)
+            # Check if first arg is a project name
+            if [[ -d ~/.pwt/projects/$words[2] ]]; then
+                _pwt_commands
+            else
+                _alternative \
+                    'projects:project:_pwt_projects' \
+                    'commands:command:_pwt_commands'
+            fi
+            ;;
+        args)
+            local cmd="${words[2]}"
+
+            # Handle project as first arg
+            if [[ -d ~/.pwt/projects/$cmd ]]; then
+                cmd="${words[3]}"
+                case $cmd in
+                    create)
+                        case $CURRENT in
+                            4) _pwt_branches ;;
+                            5) _pwt_branches ;;
+                            *) _message 'description' ;;
+                        esac
+                        ;;
+                    remove|rm|info|show|fix-port|port)
+                        _pwt_worktrees
+                        ;;
+                    meta)
+                        case $CURRENT in
+                            4) _pwt_meta_actions ;;
+                            5)
+                                case ${words[4]} in
+                                    show|set) _pwt_worktrees ;;
+                                esac
+                                ;;
+                            6)
+                                case ${words[4]} in
+                                    set) _pwt_meta_fields ;;
+                                esac
+                                ;;
+                        esac
+                        ;;
+                    project)
+                        case $CURRENT in
+                            4) _pwt_project_actions ;;
+                            5)
+                                case ${words[4]} in
+                                    show|set|path) _pwt_projects ;;
+                                    init) _message 'project name' ;;
+                                esac
+                                ;;
+                            6)
+                                case ${words[4]} in
+                                    set) _pwt_config_keys ;;
+                                esac
+                                ;;
+                        esac
+                        ;;
+                    config)
+                        case $CURRENT in
+                            4) _pwt_config_keys ;;
+                            *) _message 'value' ;;
+                        esac
+                        ;;
+                esac
+            else
+                case $cmd in
+                    create)
+                        case $CURRENT in
+                            3) _pwt_branches ;;
+                            4) _pwt_branches ;;
+                            *) _message 'description' ;;
+                        esac
+                        ;;
+                    remove|rm|info|show|fix-port|repair|fix|port)
+                        _pwt_worktrees
+                        ;;
+                    auto-remove|cleanup)
+                        _pwt_branches
+                        ;;
+                    meta)
+                        case $CURRENT in
+                            3) _pwt_meta_actions ;;
+                            4)
+                                case ${words[3]} in
+                                    show|set) _pwt_worktrees ;;
+                                esac
+                                ;;
+                            5)
+                                case ${words[3]} in
+                                    set) _pwt_meta_fields ;;
+                                esac
+                                ;;
+                        esac
+                        ;;
+                    project)
+                        case $CURRENT in
+                            3) _pwt_project_actions ;;
+                            4)
+                                case ${words[3]} in
+                                    show|set|path) _pwt_projects ;;
+                                    init) _message 'project name' ;;
+                                esac
+                                ;;
+                            5)
+                                case ${words[3]} in
+                                    set) _pwt_config_keys ;;
+                                esac
+                                ;;
+                        esac
+                        ;;
+                    config)
+                        case $CURRENT in
+                            3) _pwt_config_keys ;;
+                            *) _message 'value' ;;
+                        esac
+                        ;;
+                esac
+            fi
+            ;;
+    esac
+}
+
+_pwt "$@"

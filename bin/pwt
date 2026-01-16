@@ -1,0 +1,2216 @@
+#!/bin/bash
+# pwt - Power Worktrees
+# A generic tool for managing git worktrees across multiple projects
+#
+# Usage:
+#   pwt create <branch> [base] [desc]   # Create worktree
+#   pwt list                            # List worktrees and status
+#   pwt info [name]                     # Show worktree details
+#   pwt remove <name>                   # Remove worktree
+#   pwt fix-port [name]                 # Fix port conflict
+#   pwt auto-remove [branch]            # Remove merged worktrees
+#   pwt meta [action] [args]            # Manage worktree metadata
+#   pwt project [action] [args]         # Manage project configs
+#
+# Project auto-detection:
+#   pwt detects the current project from your working directory
+#   or you can specify: pwt myproject create ...
+#   or use flag: pwt --project myproject create ...
+#
+# First time setup:
+#   pwt project init myproject
+#   pwt project set myproject main_app ~/path/to/main/app
+#   pwt project set myproject worktrees_dir ~/path/to/worktrees
+
+set -e
+
+# PWT directory structure
+PWT_DIR="$HOME/.pwt"
+PWT_META_FILE="$PWT_DIR/meta.json"
+PWT_PROJECTS_DIR="$PWT_DIR/projects"
+
+# Legacy support - will be overridden by project config
+METADATA_DIR="$PWT_DIR"
+METADATA_FILE="$PWT_META_FILE"
+PROJECTS_DIR="$PWT_PROJECTS_DIR"
+
+# Current project context (set by detect_project or --project flag)
+CURRENT_PROJECT=""
+MAIN_APP=""
+WORKTREES_DIR=""
+BRANCH_PREFIX=""
+BASE_PORT=5000
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Initialize PWT directory
+init_pwt() {
+    # Create directory structure if it doesn't exist
+    if [ ! -d "$PWT_DIR" ]; then
+        mkdir -p "$PWT_DIR"
+        mkdir -p "$PWT_PROJECTS_DIR"
+    fi
+
+    # Create empty metadata file if it doesn't exist
+    if [ ! -f "$PWT_META_FILE" ]; then
+        echo '{}' > "$PWT_META_FILE"
+    fi
+}
+
+# Alias for compatibility
+init_metadata() {
+    init_pwt
+}
+
+# Detect project from current directory
+# Sets CURRENT_PROJECT, MAIN_APP, WORKTREES_DIR, BRANCH_PREFIX
+detect_project() {
+    local current_dir="$1"
+    [ -z "$current_dir" ] && current_dir=$(pwd)
+
+    # Already set via --project flag
+    if [ -n "$CURRENT_PROJECT" ]; then
+        load_project_config "$CURRENT_PROJECT"
+        return 0
+    fi
+
+    # Search through existing configured projects
+    if [ -d "$PWT_PROJECTS_DIR" ]; then
+        for project_dir in "$PWT_PROJECTS_DIR"/*/; do
+            [ -d "$project_dir" ] || continue
+            local project_name=$(basename "$project_dir")
+            local config_file="$project_dir/config.json"
+            [ -f "$config_file" ] || continue
+
+            local main_app=$(jq -r '.main_app // empty' "$config_file")
+            local worktrees_dir=$(jq -r '.worktrees_dir // empty' "$config_file")
+
+            # Check if current dir is main_app or inside worktrees_dir
+            if [ -n "$main_app" ]; then
+                case "$current_dir" in
+                    "$main_app"*|"$main_app")
+                        CURRENT_PROJECT="$project_name"
+                        load_project_config "$project_name"
+                        return 0
+                        ;;
+                esac
+            fi
+            if [ -n "$worktrees_dir" ]; then
+                case "$current_dir" in
+                    "$worktrees_dir"*|"$worktrees_dir")
+                        CURRENT_PROJECT="$project_name"
+                        load_project_config "$project_name"
+                        return 0
+                        ;;
+                esac
+            fi
+        done
+    fi
+
+    # No configured project found - try auto-detect from git
+    auto_detect_project "$current_dir" || true
+    return 0
+}
+
+# Auto-detect project from git repository (zero-config)
+auto_detect_project() {
+    local current_dir="$1"
+
+    # Find git root
+    local git_root=$(git -C "$current_dir" rev-parse --show-toplevel 2>/dev/null)
+    [ -z "$git_root" ] && return 1
+
+    # Project name = directory name
+    local project_name=$(basename "$git_root")
+
+    # Check if we're in a worktree (git-common-dir points to main repo's .git)
+    local git_dir=$(git -C "$current_dir" rev-parse --git-dir 2>/dev/null)
+    local git_common=$(git -C "$current_dir" rev-parse --git-common-dir 2>/dev/null)
+
+    # In a worktree: git_dir is .git file, git_common is path to main's .git
+    # In main repo: git_dir == git_common == .git
+    if [ -n "$git_common" ] && [ "$git_dir" != "$git_common" ]; then
+        # We're in a worktree, find the main repo
+        # git_common = /path/to/main/.git, so main = dirname
+        local main_repo=$(dirname "$git_common")
+        if [ -d "$main_repo" ]; then
+            git_root="$main_repo"
+            project_name=$(basename "$git_root")
+        fi
+    fi
+
+    # Set globals using conventions
+    CURRENT_PROJECT="$project_name"
+    MAIN_APP="$git_root"
+    WORKTREES_DIR="$(dirname "$git_root")/${project_name}-worktrees"
+    BRANCH_PREFIX=""
+
+    return 0
+}
+
+# Load project configuration into global variables
+# Falls back to auto-detect if config doesn't exist
+load_project_config() {
+    local project="$1"
+    local config_file="$PWT_PROJECTS_DIR/$project/config.json"
+
+    CURRENT_PROJECT="$project"
+
+    if [ -f "$config_file" ]; then
+        # Load from config file
+        local cfg_main=$(jq -r '.main_app // empty' "$config_file")
+        local cfg_wt=$(jq -r '.worktrees_dir // empty' "$config_file")
+        local cfg_prefix=$(jq -r '.branch_prefix // empty' "$config_file")
+        local cfg_port=$(jq -r '.base_port // empty' "$config_file")
+
+        [ -n "$cfg_main" ] && MAIN_APP="$cfg_main"
+        [ -n "$cfg_wt" ] && WORKTREES_DIR="$cfg_wt"
+        [ -n "$cfg_prefix" ] && BRANCH_PREFIX="$cfg_prefix"
+        [ -n "$cfg_port" ] && BASE_PORT="$cfg_port"
+    fi
+
+    return 0
+}
+
+# Require project context for commands that need it
+# Auto-creates worktrees directory if needed
+require_project() {
+    if [ -z "$CURRENT_PROJECT" ]; then
+        echo -e "${RED}Error: No project detected${NC}"
+        echo ""
+        echo "Make sure you're inside a git repository."
+        exit 1
+    fi
+
+    if [ -z "$MAIN_APP" ] || [ -z "$WORKTREES_DIR" ]; then
+        echo -e "${RED}Error: Could not determine project paths${NC}"
+        echo ""
+        echo "Run from inside a git repository, or configure manually:"
+        echo "  pwt config main_app /path/to/main/app"
+        echo "  pwt config worktrees_dir /path/to/worktrees"
+        exit 1
+    fi
+
+    # Auto-create worktrees directory if it doesn't exist
+    if [ ! -d "$WORKTREES_DIR" ]; then
+        echo -e "${BLUE}Creating worktrees directory: $WORKTREES_DIR${NC}"
+        mkdir -p "$WORKTREES_DIR"
+    fi
+}
+
+# Atomic write to metadata file with file locking
+# Usage: atomic_metadata_write <jq_filter> [jq_args...]
+atomic_metadata_write() {
+    local jq_filter="$1"
+    shift
+
+    init_metadata
+
+    local lock_dir="$METADATA_FILE.lock"
+    local tmp_file=$(mktemp)
+    local max_wait=50  # 5 seconds (50 * 0.1s)
+
+    # Acquire lock using mkdir (atomic on all systems)
+    local waited=0
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        waited=$((waited + 1))
+        if [ $waited -ge $max_wait ]; then
+            echo -e "${RED}Error: Could not acquire lock on metadata file${NC}" >&2
+            rm -f "$tmp_file"
+            return 1
+        fi
+        sleep 0.1
+    done
+
+    # Ensure lock is released on exit
+    trap "rm -rf '$lock_dir' '$tmp_file'" RETURN
+
+    # Perform atomic write
+    if jq "$jq_filter" "$@" "$METADATA_FILE" > "$tmp_file"; then
+        mv "$tmp_file" "$METADATA_FILE"
+    else
+        rm -f "$tmp_file"
+        rm -rf "$lock_dir"
+        return 1
+    fi
+
+    rm -rf "$lock_dir"
+}
+
+# Save worktree metadata
+# Usage: save_metadata <name> <path> <branch> <base> <base_commit> <port> <description>
+save_metadata() {
+    local name="$1"
+    local path="$2"
+    local branch="$3"
+    local base="$4"
+    local base_commit="$5"
+    local port="$6"
+    local description="$7"
+    local created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    atomic_metadata_write \
+       '.[$name] = {
+           path: $path,
+           branch: $branch,
+           base: $base,
+           base_commit: $base_commit,
+           port: $port,
+           description: $description,
+           created_at: $created_at
+       }' \
+       --arg name "$name" \
+       --arg path "$path" \
+       --arg branch "$branch" \
+       --arg base "$base" \
+       --arg base_commit "$base_commit" \
+       --argjson port "$port" \
+       --arg description "$description" \
+       --arg created_at "$created_at"
+}
+
+# Get worktree metadata field
+# Usage: get_metadata <name> <field>
+get_metadata() {
+    local name="$1"
+    local field="$2"
+
+    init_metadata
+
+    jq -r --arg name "$name" --arg field "$field" '.[$name][$field] // empty' "$METADATA_FILE" 2>/dev/null
+}
+
+# Remove worktree metadata
+# Usage: remove_metadata <name>
+remove_metadata() {
+    local name="$1"
+    atomic_metadata_write 'del(.[$name])' --arg name "$name"
+}
+
+# Update worktree metadata field
+# Usage: update_metadata <name> <field> <value>
+update_metadata() {
+    local name="$1"
+    local field="$2"
+    local value="$3"
+    atomic_metadata_write \
+       'if .[$name] then .[$name][$field] = $value else . end' \
+       --arg name "$name" --arg field "$field" --arg value "$value"
+}
+
+# List all metadata
+list_metadata() {
+    init_metadata
+    jq '.' "$METADATA_FILE"
+}
+
+# Get project config directory
+# Usage: get_project_dir <project_name>
+get_project_dir() {
+    local project="$1"
+    echo "$PROJECTS_DIR/$project"
+}
+
+# Get project config value
+# Usage: get_project_config <project_name> <key>
+get_project_config() {
+    local project="$1"
+    local key="$2"
+    local config_file="$PROJECTS_DIR/$project/config.json"
+
+    if [ -f "$config_file" ]; then
+        jq -r --arg key "$key" '.[$key] // empty' "$config_file" 2>/dev/null
+    fi
+}
+
+# Pwtfile helpers (available in Pwtfile)
+# These are sourced when running a Pwtfile
+pwtfile_env() {
+    local key="$1"
+    local value="$2"
+    if [ -f .env ]; then
+        if grep -q "^${key}=" .env; then
+            sed -i '' "s|^${key}=.*|${key}=${value}|" .env
+        else
+            echo "${key}=${value}" >> .env
+        fi
+    fi
+}
+
+pwtfile_replace() {
+    local file="$1"
+    local from="$2"
+    local to="$3"
+    [ -f "$file" ] && sed -i '' "s|${from}|${to}|g" "$file"
+}
+
+pwtfile_database() {
+    local action="$1"
+    local name="$2"
+    case "$action" in
+        create) createdb "$name" 2>/dev/null || true ;;
+        drop) dropdb "$name" 2>/dev/null || true ;;
+    esac
+}
+
+pwtfile_rake() {
+    bundle exec rake "$@" 2>/dev/null || true
+}
+
+pwtfile_run() {
+    "$@" 2>/dev/null || true
+}
+
+# Read PORT_BASE from Pwtfile (if defined)
+# Sets BASE_PORT global variable
+read_port_base() {
+    local pwtfile=""
+
+    # Find Pwtfile in project root
+    if [ -n "$MAIN_APP" ]; then
+        if [ -f "$MAIN_APP/Pwtfile" ]; then
+            pwtfile="$MAIN_APP/Pwtfile"
+        fi
+    fi
+
+    [ -z "$pwtfile" ] && return 0
+
+    # Extract PORT_BASE from Pwtfile (bash only)
+    local port_base=$(grep -E "^PORT_BASE=" "$pwtfile" 2>/dev/null | head -1 | cut -d= -f2)
+
+    if [ -n "$port_base" ] && [[ "$port_base" =~ ^[0-9]+$ ]]; then
+        BASE_PORT=$((port_base - 1))  # -1 because next_available_port does +1
+    fi
+}
+
+# Run Pwtfile if exists
+# Looks for: Pwtfile, Pwtfile.rb, Pwtfile.js
+# Usage: run_pwtfile <phase> (setup|teardown|server)
+# Execute a single Pwtfile
+# Arguments: pwtfile_path phase label
+run_single_pwtfile() {
+    local pwtfile="$1"
+    local phase="$2"
+    local label="$3"
+
+    [ ! -f "$pwtfile" ] && return 0
+
+    echo -e "${BLUE}Running $label ($phase)...${NC}"
+
+    case "$pwtfile" in
+        *.rb)
+            ruby "$pwtfile" "$phase"
+            ;;
+        *.js)
+            if command -v bun >/dev/null 2>&1; then
+                bun "$pwtfile" "$phase"
+            else
+                node "$pwtfile" "$phase"
+            fi
+            ;;
+        *)
+            # Bash Pwtfile - source and call function
+            (
+                cd "$PWT_WORKTREE_PATH"
+                # Make helpers available
+                env() { pwtfile_env "$@"; }
+                replace() { pwtfile_replace "$@"; }
+                database() { pwtfile_database "$@"; }
+                rake() { pwtfile_rake "$@"; }
+                run() { pwtfile_run "$@"; }
+
+                source "$pwtfile"
+
+                # Call the phase function if it exists
+                if type "$phase" &>/dev/null; then
+                    "$phase"
+                fi
+            )
+            ;;
+    esac
+
+    echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
+}
+
+# Run Pwtfiles: project first, then global
+run_pwtfile() {
+    local phase="$1"
+
+    # Export context for Pwtfiles
+    export PORT="$PWT_PORT"
+    export WORKTREE="$PWT_WORKTREE"
+    export WORKTREE_PATH="$PWT_WORKTREE_PATH"
+    export BRANCH="$PWT_BRANCH"
+    export TICKET="$PWT_TICKET"
+    export PROJECT="$PWT_PROJECT"
+
+    # Find and run project Pwtfile
+    local project_pwtfile=""
+    if [ -f "$MAIN_APP/Pwtfile" ]; then
+        project_pwtfile="$MAIN_APP/Pwtfile"
+    elif [ -f "$MAIN_APP/Pwtfile.rb" ]; then
+        project_pwtfile="$MAIN_APP/Pwtfile.rb"
+    elif [ -f "$MAIN_APP/Pwtfile.js" ]; then
+        project_pwtfile="$MAIN_APP/Pwtfile.js"
+    fi
+
+    [ -n "$project_pwtfile" ] && run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile"
+
+    # Run global Pwtfile (user preferences)
+    local global_pwtfile="$PWT_DIR/Pwtfile"
+    [ -f "$global_pwtfile" ] && run_single_pwtfile "$global_pwtfile" "$phase" "Global Pwtfile"
+}
+
+# Run project hook if it exists
+# Usage: run_hook <hook_name>
+# Environment variables passed to hooks:
+#   PWT_PROJECT      - Project name
+#   PWT_WORKTREE     - Worktree name (directory name)
+#   PWT_WORKTREE_PATH - Full path to worktree
+#   PWT_BRANCH       - Git branch name
+#   PWT_PORT         - Allocated port
+#   PWT_TICKET       - Ticket name (e.g., ACME-14586)
+#   PWT_BASE         - Base branch
+#   PWT_DESC         - Description
+run_hook() {
+    local hook_name="$1"
+    local hook_file="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/hooks/$hook_name"
+
+    [ -x "$hook_file" ] || return 0
+
+    echo -e "${BLUE}Running $hook_name hook...${NC}"
+
+    # Export all PWT_* variables for the hook
+    export PWT_PROJECT="${PWT_PROJECT:-$CURRENT_PROJECT}"
+    export PWT_WORKTREE="${PWT_WORKTREE:-}"
+    export PWT_WORKTREE_PATH="${PWT_WORKTREE_PATH:-}"
+    export PWT_BRANCH="${PWT_BRANCH:-}"
+    export PWT_PORT="${PWT_PORT:-}"
+    export PWT_TICKET="${PWT_TICKET:-}"
+    export PWT_BASE="${PWT_BASE:-}"
+    export PWT_DESC="${PWT_DESC:-}"
+
+    if "$hook_file"; then
+        echo -e "  ${GREEN}✓${NC} $hook_name hook completed"
+        return 0
+    else
+        echo -e "  ${YELLOW}⚠${NC} $hook_name hook failed (exit $?)"
+        return 1
+    fi
+}
+
+# Legacy wrapper
+run_project_hook() {
+    local project="$1"
+    local hook="$2"
+    shift 2
+    CURRENT_PROJECT="$project" run_hook "$hook"
+}
+
+# Initialize project config directory
+# Usage: init_project <project_name>
+init_project() {
+    local project="$1"
+    local project_dir="$PROJECTS_DIR/$project"
+
+    if [ ! -d "$project_dir" ]; then
+        mkdir -p "$project_dir/hooks"
+        cat > "$project_dir/config.json" << 'EOF'
+{
+  "name": "PROJECT_NAME",
+  "main_app": "",
+  "worktrees_dir": "",
+  "branch_prefix": "",
+  "post_create_commands": [],
+  "pre_remove_commands": []
+}
+EOF
+        sed -i '' "s/PROJECT_NAME/$project/" "$project_dir/config.json"
+        echo -e "${GREEN}✓ Created project config: $project_dir${NC}"
+    fi
+}
+
+# Extract ticket name from branch (e.g.: feature/ACME-14400 -> ACME-14400)
+extract_ticket_name() {
+    local branch="$1"
+    echo "$branch" | sed -E 's|.*/||; s|^(ACME-[0-9]+).*|\1|'
+}
+
+# Check if a port (and its Vite port +1) are free
+# Returns 0 if both free, 1 if any occupied
+is_port_pair_free() {
+    local rails_port="$1"
+    local vite_port=$((rails_port + 1))
+
+    # Check if Rails port is occupied
+    if lsof -ti ":$rails_port" > /dev/null 2>&1; then
+        return 1
+    fi
+
+    # Check if Vite port is occupied
+    if lsof -ti ":$vite_port" > /dev/null 2>&1; then
+        return 1
+    fi
+
+    return 0
+}
+
+# Find next available port
+# Strategy: try to reuse ports from removed worktrees before incrementing
+next_available_port() {
+    # Collect all ports "allocated" by existing worktrees
+    local -a allocated_ports=()
+
+    # Port 5000 is reserved for main app
+    allocated_ports+=(5000)
+
+    # Read ports from metadata (primary source)
+    if [ -f "$METADATA_FILE" ]; then
+        while IFS= read -r port; do
+            if [[ "$port" =~ ^[0-9]+$ ]]; then
+                allocated_ports+=("$port")
+            fi
+        done < <(jq -r '.[].port // empty' "$METADATA_FILE" 2>/dev/null)
+    fi
+
+    # Also scan directory names (fallback for legacy worktrees without metadata)
+    if [ -d "$WORKTREES_DIR" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            if [ -d "$dir" ]; then
+                local dirname=$(basename "$dir")
+                # Only extract port if it looks like old format (ends with -XXXX)
+                if [[ "$dirname" =~ -([0-9]{4})$ ]]; then
+                    local port="${BASH_REMATCH[1]}"
+                    allocated_ports+=("$port")
+                fi
+            fi
+        done
+    fi
+
+    # Find next free port, starting from BASE_PORT+1
+    # Try to reuse "holes" from removed worktrees
+    local candidate=$((BASE_PORT + 1))
+    local max_attempts=100  # Avoid infinite loop
+
+    for ((i=0; i<max_attempts; i++)); do
+        local is_allocated=false
+
+        # Check if port is allocated by existing worktree
+        for allocated in "${allocated_ports[@]}"; do
+            if [ "$candidate" -eq "$allocated" ]; then
+                is_allocated=true
+                break
+            fi
+        done
+
+        if [ "$is_allocated" = false ]; then
+            # Check if port (and Vite +1) are actually free on the system
+            if is_port_pair_free "$candidate"; then
+                echo "$candidate"
+                return 0
+            fi
+        fi
+
+        candidate=$((candidate + 1))
+    done
+
+    # Fallback: return next after all allocated
+    local max_port=$BASE_PORT
+    for allocated in "${allocated_ports[@]}"; do
+        if [ "$allocated" -gt "$max_port" ]; then
+            max_port=$allocated
+        fi
+    done
+    echo $((max_port + 1))
+}
+
+# Check if server is running in a worktree
+check_server_status() {
+    local dir="$1"
+    local pidfile="$dir/tmp/pids/server.pid"
+
+    if [ -f "$pidfile" ]; then
+        local pid=$(cat "$pidfile")
+        if ps -p "$pid" > /dev/null 2>&1; then
+            local port=$(ps -p "$pid" -o command= 2>/dev/null | grep -oE ':([0-9]+)\)' | tr -d ':)' || echo "?")
+            echo -e "${GREEN}[running]${NC} PID $pid port $port"
+            return
+        fi
+    fi
+    echo -e "${YELLOW}[stopped]${NC}"
+}
+
+# Check md-docs symlinks status in a directory
+# Returns: 0 = all OK, 1 = some missing
+check_symlinks_status() {
+    local dir="$1"
+    local missing=0
+    local items=(.claude md-docs CLAUDE.md AGENTS.md)
+
+    if [ -d "$CODEX_DIR" ] || [ -L "$CODEX_DIR" ]; then
+        items+=(.codex)
+    fi
+
+    local expected=${#items[@]}
+
+    for item in "${items[@]}"; do
+        if [ ! -L "$dir/$item" ] || [ ! -e "$dir/$item" ]; then
+            missing=$((missing + 1))
+        fi
+    done
+
+    if [ $missing -eq 0 ]; then
+        echo -e "${GREEN}[links OK]${NC}"
+        return 0
+    elif [ $missing -eq $expected ]; then
+        echo -e "${RED}[no links]${NC}"
+        return 1
+    else
+        echo -e "${YELLOW}[$missing missing]${NC}"
+        return 1
+    fi
+}
+
+# Repair md-docs symlinks in a directory
+repair_symlinks() {
+    local dir="$1"
+    local name=$(basename "$dir")
+
+    echo -e "${BLUE}Repairing symlinks in: $name${NC}"
+
+    cd "$dir"
+    if command -v md-docs >/dev/null 2>&1; then
+        md-docs init acme
+    else
+        # Manual fallback
+        for item in .claude md-docs CLAUDE.md AGENTS.md; do
+            [ -L "$item" ] && rm "$item"
+        done
+        ln -sf "$MD_DOCS_DIR/claude" ".claude"
+        ln -sf "$MD_DOCS_DIR" "md-docs"
+        ln -sf "$MD_DOCS_DIR/CLAUDE.md" "CLAUDE.md"
+        ln -sf "$MD_DOCS_DIR/AGENTS.md" "AGENTS.md"
+        echo -e "  ${GREEN}✓ Symlinks created manually${NC}"
+    fi
+
+    ensure_codex_symlink "$dir"
+    cd - > /dev/null
+}
+
+ensure_codex_symlink() {
+    local dir="$1"
+
+    if [ -d "$CODEX_DIR" ] || [ -L "$CODEX_DIR" ]; then
+        ln -sf "$CODEX_DIR" "$dir/.codex"
+        echo "  ✓ .codex"
+        sync_codex_skills
+    fi
+}
+
+sync_codex_skills() {
+    if [ ! -d "$ACME_CODEX_SKILLS_DIR" ]; then
+        return 0
+    fi
+
+    if [ ! -d "$CODEX_DIR" ] && [ ! -L "$CODEX_DIR" ]; then
+        return 0
+    fi
+
+    mkdir -p "$CODEX_SKILLS_DIR"
+
+    local synced=0
+    local skipped=0
+
+    for skill_dir in "$ACME_CODEX_SKILLS_DIR"/*; do
+        [ -d "$skill_dir" ] || continue
+        local skill_name=$(basename "$skill_dir")
+        local target="$CODEX_SKILLS_DIR/$skill_name"
+
+        if [ -L "$target" ]; then
+            local current
+            current=$(readlink "$target" 2>/dev/null || echo "")
+            if [ "$current" != "$skill_dir" ]; then
+                ln -sf "$skill_dir" "$target"
+                synced=$((synced + 1))
+            fi
+        elif [ -e "$target" ]; then
+            skipped=$((skipped + 1))
+        else
+            ln -sf "$skill_dir" "$target"
+            synced=$((synced + 1))
+        fi
+    done
+
+    if [ $synced -gt 0 ]; then
+        echo "  ✓ Codex skills synced ($synced)"
+    fi
+    if [ $skipped -gt 0 ]; then
+        echo -e "  ${YELLOW}!${NC} Codex skills skipped ($skipped existing)"
+    fi
+}
+
+
+# Ensure JS dependencies (devDependencies) are installed.
+# Prevents error: `error Command "vite" not found.`
+install_js_deps() {
+    if [ ! -f "package.json" ]; then
+        return 0
+    fi
+
+    if [ -e "node_modules/.bin/vite" ]; then
+        echo "  ✓ JS dependencies ok (vite already installed)"
+        return 0
+    fi
+
+    echo "  Running yarn install (including devDependencies)..."
+
+    if command -v yarn > /dev/null 2>&1; then
+        if ! NODE_ENV=development YARN_PRODUCTION=false yarn install --silent --frozen-lockfile; then
+            echo -e "  ${YELLOW}Warning: yarn.lock out of sync; running yarn install without --frozen-lockfile...${NC}"
+            NODE_ENV=development YARN_PRODUCTION=false yarn install --silent
+        fi
+    elif command -v yarnpkg > /dev/null 2>&1; then
+        if ! NODE_ENV=development YARN_PRODUCTION=false yarnpkg install --silent --frozen-lockfile; then
+            echo -e "  ${YELLOW}Warning: yarn.lock out of sync; running yarnpkg install without --frozen-lockfile...${NC}"
+            NODE_ENV=development YARN_PRODUCTION=false yarnpkg install --silent
+        fi
+    else
+        echo -e "  ${YELLOW}Yarn not found; using npm install...${NC}"
+        NPM_CONFIG_PRODUCTION=false npm install --silent
+    fi
+
+    if [ ! -e "node_modules/.bin/vite" ]; then
+        echo -e "  ${RED}Error: Vite not found after installing JS dependencies.${NC}"
+        echo "  Run manually: NODE_ENV=development YARN_PRODUCTION=false yarn install"
+        exit 1
+    fi
+
+    echo "  ✓ JS dependencies installed (vite ok)"
+}
+
+# Command: create
+cmd_create() {
+    local branch="$1"
+    local base_ref="$2"
+    local description="$3"
+
+    if [ -z "$branch" ]; then
+        echo -e "${RED}Error: Branch/ticket not specified${NC}"
+        echo "Usage: acme-worktree create <branch> [base-ref] [description]"
+        echo "Examples:"
+        echo "  acme-worktree create feature/ACME-14400"
+        echo "  acme-worktree create ACME-17652 master"
+        echo "  acme-worktree create ACME-17652 master \"batch forms multi contracts\""
+        echo ""
+        echo "Description will be added to branch name: jp/ACME-17652-batch-forms-multi-contracts"
+        exit 1
+    fi
+
+    # Ensure worktrees_dir exists
+    mkdir -p "$WORKTREES_DIR"
+
+    # Extract name for directory (without port)
+    local ticket_name=$(extract_ticket_name "$branch")
+    local worktree_name="${ticket_name}"
+    local worktree_dir="$WORKTREES_DIR/$worktree_name"
+
+    # Check if worktree already exists
+    if [ -d "$worktree_dir" ]; then
+        echo -e "${RED}Error: Worktree already exists: $worktree_name${NC}"
+        echo ""
+        echo "Options:"
+        echo "  1. Remove existing: pwt remove $worktree_name"
+        echo "  2. Use a different branch name"
+        exit 1
+    fi
+
+    # Read PORT_BASE from Pwtfile (if defined)
+    read_port_base
+
+    # Allocate port (stored in metadata only)
+    local port=$(next_available_port)
+
+    cd "$MAIN_APP"
+
+    # Determine if need to create new branch or use existing
+    local new_branch_name=""
+    local git_worktree_args=()
+
+    # Auto-detect: if branch looks like ticket ACME-XXXXX and doesn't exist, assume master as base
+    if [ -z "$base_ref" ] && [[ "$branch" =~ ^ACME-[0-9]+$ ]]; then
+        # Check if branch exists locally or remotely
+        if ! git rev-parse --verify "$branch" >/dev/null 2>&1 && \
+           ! git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+            echo -e "${YELLOW}Branch '$branch' doesn't exist. Creating from master...${NC}"
+            base_ref="master"
+        fi
+    fi
+
+    if [ -n "$base_ref" ]; then
+        # Base ref provided: create new branch from it
+        # Format: [prefix]ticket-name or [prefix]ticket-name-description-slug
+        if [ -n "$description" ]; then
+            # Convert description to slug: lowercase, spaces -> hyphens, remove special chars
+            local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+            new_branch_name="${BRANCH_PREFIX}${ticket_name}-${slug}"
+        else
+            new_branch_name="${BRANCH_PREFIX}${ticket_name}"
+        fi
+
+        # Fetch base ref if remote
+        if [[ "$base_ref" == origin/* ]] || [[ "$base_ref" == "master" ]] || [[ "$base_ref" == "main" ]]; then
+            local remote_ref="origin/${base_ref#origin/}"
+            echo -e "${BLUE}Updating reference:${NC} $remote_ref"
+            git fetch origin "${base_ref#origin/}" --quiet 2>/dev/null || true
+            base_ref="$remote_ref"
+        fi
+
+        echo -e "${BLUE}Creating worktree:${NC} $worktree_name"
+        echo -e "  New branch: $new_branch_name"
+        echo -e "  Base:   $base_ref"
+        echo -e "  Port:   $port"
+        echo -e "  Dir:    $worktree_dir"
+        echo ""
+
+        git_worktree_args=(-b "$new_branch_name" "$worktree_dir" "$base_ref")
+    else
+        # No base ref: use existing branch
+        echo -e "${BLUE}Creating worktree:${NC} $worktree_name"
+        echo -e "  Branch: $branch"
+        echo -e "  Port:   $port"
+        echo -e "  Dir:    $worktree_dir"
+        echo ""
+
+        git_worktree_args=("$worktree_dir" "$branch")
+    fi
+
+    # Create worktree
+    git worktree add "${git_worktree_args[@]}"
+
+    # Copy essential config files only
+    echo -e "\n${BLUE}Copying essential config files...${NC}"
+
+    # Copy .env (basic - Pwtfile can customize further)
+    if [ -f "$MAIN_APP/.env" ]; then
+        cp "$MAIN_APP/.env" "$worktree_dir/.env"
+        echo "  ✓ .env"
+    elif [ -f "$worktree_dir/.env.example" ]; then
+        cp "$worktree_dir/.env.example" "$worktree_dir/.env"
+        echo "  ✓ .env (from .env.example)"
+    elif [ -f "$worktree_dir/.env.sample" ]; then
+        cp "$worktree_dir/.env.sample" "$worktree_dir/.env"
+        echo "  ✓ .env (from .env.sample)"
+    fi
+
+    # Copy master.key if exists (Rails credential file)
+    if [ -f "$MAIN_APP/config/master.key" ]; then
+        mkdir -p "$worktree_dir/config"
+        cp "$MAIN_APP/config/master.key" "$worktree_dir/config/master.key"
+        echo "  ✓ config/master.key"
+    fi
+
+    # Save metadata
+    local final_branch="${new_branch_name:-$branch}"
+    local final_base="${base_ref:-master}"
+    local final_base_commit=$(git -C "$worktree_dir" merge-base HEAD "origin/${final_base#origin/}" 2>/dev/null || git -C "$worktree_dir" rev-parse HEAD 2>/dev/null)
+    local final_base_short=$(git -C "$worktree_dir" rev-parse --short "$final_base_commit" 2>/dev/null || echo "?")
+    local final_desc="${description:-}"
+
+    save_metadata "$worktree_name" "$worktree_dir" "$final_branch" "$final_base" "$final_base_short" "$port" "$final_desc"
+    echo -e "  ${GREEN}✓ Metadata saved${NC}"
+
+    # Set context for Pwtfile and hooks
+    export PWT_WORKTREE="$worktree_name"
+    export PWT_WORKTREE_PATH="$worktree_dir"
+    export PWT_BRANCH="$final_branch"
+    export PWT_PORT="$port"
+    export PWT_TICKET="$ticket_name"
+    export PWT_BASE="$final_base"
+    export PWT_DESC="$final_desc"
+    export PWT_PROJECT="$CURRENT_PROJECT"
+    export MAIN_APP="$MAIN_APP"
+
+    # Run Pwtfile setup (if exists), then hook
+    run_pwtfile "setup"
+    run_hook "post-create"
+
+    echo -e "\n${GREEN}✓ Worktree created successfully!${NC}"
+    echo ""
+    echo "To use:"
+    echo -e "  ${BLUE}cd $worktree_dir${NC}  or  ${BLUE}z ${worktree_name}${NC}"
+    echo -e "  Port: ${BLUE}$port${NC}"
+}
+
+# Check port status for a worktree
+# Arguments: port [worktree_dir]
+# Returns: colored text with status
+check_port_status() {
+    local port="$1"
+    local worktree_dir="$2"
+    local vite_port=$((port + 1))
+
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo -e "${YELLOW}[port ?]${NC}"
+        return
+    fi
+
+    local rails_pid=$(lsof -ti ":$port" 2>/dev/null)
+    local vite_pid=$(lsof -ti ":$vite_port" 2>/dev/null)
+
+    # If no port occupied, it's free
+    if [ -z "$rails_pid" ] && [ -z "$vite_pid" ]; then
+        echo -e "${GREEN}[port $port free]${NC}"
+        return
+    fi
+
+    # Check if this worktree's server is running
+    # Pragmatic approach: if server.pid exists and PID is active,
+    # we consider the port "in use" by the server itself
+    # (even if the port PID is a child like puma)
+    local own_server_running=false
+    if [ -n "$worktree_dir" ] && [ -f "$worktree_dir/tmp/pids/server.pid" ]; then
+        local own_server_pid=$(cat "$worktree_dir/tmp/pids/server.pid" 2>/dev/null)
+        if [ -n "$own_server_pid" ] && ps -p "$own_server_pid" > /dev/null 2>&1; then
+            own_server_running=true
+        fi
+    fi
+
+    if [ "$own_server_running" = true ]; then
+        echo -e "${GREEN}[port $port in use]${NC}"
+        return
+    fi
+
+    # Port occupied but this worktree's server not running = conflict
+    local issues=""
+    if [ -n "$rails_pid" ]; then
+        local proc=$(ps -p $rails_pid -o comm= 2>/dev/null || echo "?")
+        issues="Rails:$proc"
+    fi
+    if [ -n "$vite_pid" ]; then
+        local proc=$(ps -p $vite_pid -o comm= 2>/dev/null || echo "?")
+        [ -n "$issues" ] && issues="$issues, "
+        issues="${issues}Vite:$proc"
+    fi
+    echo -e "${RED}[port $port conflict: $issues]${NC}"
+}
+
+# Check if branch is merged into master
+# IMPORTANT: Also checks for uncommitted changes to avoid data loss
+check_merge_status() {
+    local dir="$1"
+    local wt_commit=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
+
+    if [ -z "$wt_commit" ]; then
+        echo -e "${RED}[corrupted]${NC}"
+        return
+    fi
+
+    # Check for uncommitted changes (staged, modified, or untracked)
+    local has_changes=false
+    local git_status=$(git -C "$dir" status --porcelain 2>/dev/null)
+    if [ -n "$git_status" ]; then
+        has_changes=true
+    fi
+
+    # If there are uncommitted changes, ALWAYS show as open (unsafe to remove)
+    if [ "$has_changes" = true ]; then
+        echo -e "${YELLOW}[has changes]${NC}"
+        return
+    fi
+
+    # Fetch master to have updated reference
+    cd "$MAIN_APP"
+    git fetch origin master --quiet 2>/dev/null || true
+
+    if git merge-base --is-ancestor "$wt_commit" "origin/master" 2>/dev/null; then
+        # Check if branch ever diverged from master
+        # If merge-base equals HEAD, branch never had unique commits
+        local merge_base=$(git -C "$dir" merge-base HEAD origin/master 2>/dev/null)
+        if [ "$merge_base" = "$wt_commit" ]; then
+            # Branch never diverged - no work done yet
+            echo -e "${BLUE}[clean]${NC}"
+        else
+            # Branch had commits that are now in master
+            echo -e "${GREEN}[merged]${NC}"
+        fi
+    else
+        echo -e "${YELLOW}[open]${NC}"
+    fi
+}
+
+# Command: list
+cmd_list() {
+    echo -e "${BLUE}Worktrees (${CURRENT_PROJECT}):${NC}\n"
+
+    # Main app
+    local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
+    local main_commit=$(git -C "$MAIN_APP" rev-parse --short HEAD 2>/dev/null || echo "?")
+    echo -e "  ${YELLOW}${CURRENT_PROJECT}${NC} (main)"
+    echo -e "    Branch: $main_branch @ $main_commit"
+    echo -n "    Server: "
+    check_server_status "$MAIN_APP"
+    echo -n "    Port:   "
+    check_port_status 5000 "$MAIN_APP"
+    echo ""
+
+    # Worktrees
+    local has_port_issues=false
+    local has_merged=false
+    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            if [ -d "$dir" ]; then
+                local name=$(basename "$dir")
+
+                # Get port from metadata first, fallback to extracting from name
+                local port=$(get_metadata "$name" "port")
+                if [ -z "$port" ]; then
+                    # Legacy: extract from directory name if ends with -XXXX
+                    if [[ "$name" =~ -([0-9]{4})$ ]]; then
+                        port="${BASH_REMATCH[1]}"
+                    fi
+                fi
+
+                # Git info
+                local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
+                local commit=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "?")
+                local upstream=$(git -C "$dir" rev-parse --abbrev-ref "${branch}@{upstream}" 2>/dev/null || echo "")
+
+                # Get metadata (if exists)
+                local meta_base=$(get_metadata "$name" "base")
+                local meta_base_commit=$(get_metadata "$name" "base_commit")
+                local meta_desc=$(get_metadata "$name" "description")
+
+                # Find base branch info
+                local base_name=""
+                local base_short=""
+                local base_ahead=""
+
+                if [ -n "$meta_base" ]; then
+                    # Use metadata for base
+                    base_name="$meta_base"
+                    base_short="$meta_base_commit"
+                    # Calculate ahead/behind from current base
+                    local base_ref="origin/${meta_base#origin/}"
+                    local base_commit=$(git -C "$dir" merge-base HEAD "$base_ref" 2>/dev/null)
+                    if [ -n "$base_commit" ]; then
+                        local commits_ahead=$(git -C "$dir" rev-list --count "${base_commit}..HEAD" 2>/dev/null || echo "0")
+                        local commits_behind=$(git -C "$dir" rev-list --count "HEAD..$base_ref" 2>/dev/null || echo "0")
+                        if [ "$commits_ahead" -gt 0 ] || [ "$commits_behind" -gt 0 ]; then
+                            base_ahead=" (↑${commits_ahead} ↓${commits_behind})"
+                        fi
+                    fi
+                else
+                    # Fallback: calculate merge-base with master
+                    base_name="master"
+                    local base_commit=$(git -C "$dir" merge-base HEAD origin/master 2>/dev/null)
+                    if [ -n "$base_commit" ]; then
+                        base_short=$(git -C "$dir" rev-parse --short "$base_commit" 2>/dev/null)
+                        local commits_ahead=$(git -C "$dir" rev-list --count "${base_commit}..HEAD" 2>/dev/null || echo "0")
+                        local commits_behind=$(git -C "$dir" rev-list --count "HEAD..origin/master" 2>/dev/null || echo "0")
+                        if [ "$commits_ahead" -gt 0 ] || [ "$commits_behind" -gt 0 ]; then
+                            base_ahead=" (↑${commits_ahead} ↓${commits_behind})"
+                        fi
+                    fi
+                fi
+
+                # Get description from metadata or extract from branch name
+                local desc=""
+                if [ -n "$meta_desc" ]; then
+                    desc="$meta_desc"
+                elif [ -n "$branch" ] && [ "$branch" != "detached" ]; then
+                    desc=$(echo "$branch" | sed -E 's|^[a-z]+/||' | sed -E 's|^ACME-[0-9]+-?||')
+                    desc=$(echo "$desc" | tr '-' ' ')
+                fi
+
+                # Check for uncommitted changes
+                local changes=""
+                local staged=$(git -C "$dir" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
+                local unstaged=$(git -C "$dir" diff --numstat 2>/dev/null | wc -l | tr -d ' ')
+                local untracked=$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+                if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
+                    local parts=()
+                    [ "$staged" -gt 0 ] && parts+=("${staged} staged")
+                    [ "$unstaged" -gt 0 ] && parts+=("${unstaged} modified")
+                    [ "$untracked" -gt 0 ] && parts+=("${untracked} untracked")
+                    changes=$(IFS=', '; echo "${parts[*]}")
+                fi
+
+                # Title with description
+                if [ -n "$desc" ]; then
+                    echo -e "  ${YELLOW}$name${NC} - ${desc}"
+                else
+                    echo -e "  ${YELLOW}$name${NC}"
+                fi
+
+                # Branch and commit
+                echo -e "    Branch: $branch @ $commit"
+
+                # Base (where it was created from)
+                if [ -n "$base_short" ]; then
+                    echo -e "    Base:   $base_name @ $base_short$base_ahead"
+                fi
+
+                # Upstream/target only if different from "origin/<branch>" (i.e., meaningful)
+                if [ -n "$upstream" ] && [ "$upstream" != "origin/$branch" ] && [ "$upstream" != "origin/master" ]; then
+                    echo -e "    Target: $upstream"
+                fi
+
+                # Uncommitted changes
+                if [ -n "$changes" ]; then
+                    echo -e "    Changes: ${YELLOW}$changes${NC}"
+                fi
+
+                # Server status
+                echo -n "    Server: "
+                check_server_status "$dir"
+
+                # Port status
+                echo -n "    Port:   "
+                local port_status=$(check_port_status "$port" "$dir")
+                echo -e "$port_status"
+                if [[ "$port_status" == *"conflict"* ]]; then
+                    has_port_issues=true
+                fi
+
+                # Merge status
+                echo -n "    Status: "
+                local merge_status=$(check_merge_status "$dir")
+                echo -e "$merge_status"
+                if [[ "$merge_status" == *"merged"* ]] || [[ "$merge_status" == *"clean"* ]]; then
+                    has_merged=true
+                fi
+                echo ""
+            fi
+        done
+    else
+        echo -e "  ${YELLOW}(no worktrees created)${NC}"
+        echo ""
+    fi
+
+    # Tips
+    if [ "$has_port_issues" = true ]; then
+        echo -e "${YELLOW}Tip:${NC} Use ${GREEN}acme-worktree fix-port <name>${NC} to resolve occupied ports"
+    fi
+    if [ "$has_merged" = true ]; then
+        echo -e "${YELLOW}Tip:${NC} Use ${GREEN}acme-worktree auto-remove${NC} to clean up merged worktrees"
+    fi
+    if [ "$has_port_issues" = false ] && [ "$has_merged" = false ]; then
+        echo ""
+    fi
+}
+
+# Comando: repair
+cmd_repair() {
+    local name="$1"
+
+    if [ -n "$name" ]; then
+        # Repair specific worktree
+        local worktree_dir="$WORKTREES_DIR/$name"
+        if [ ! -d "$worktree_dir" ]; then
+            echo -e "${RED}Error: Worktree not found: $name${NC}"
+            exit 1
+        fi
+        repair_symlinks "$worktree_dir"
+    else
+        # Repair all worktrees
+        echo -e "${BLUE}Checking symlinks in all worktrees...${NC}\n"
+
+        local repaired=0
+        local ok=0
+
+        # Main app
+        if check_symlinks_status "$MAIN_APP" > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} ${CURRENT_PROJECT} (main) - OK"
+            ok=$((ok + 1))
+        else
+            repair_symlinks "$MAIN_APP"
+            repaired=$((repaired + 1))
+        fi
+
+        # Worktrees
+        if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+            for dir in "$WORKTREES_DIR"/*/; do
+                [ -d "$dir" ] || continue
+                local wt_name=$(basename "$dir")
+
+                if check_symlinks_status "$dir" > /dev/null 2>&1; then
+                    echo -e "  ${GREEN}✓${NC} $wt_name - OK"
+                    ok=$((ok + 1))
+                else
+                    repair_symlinks "$dir"
+                    repaired=$((repaired + 1))
+                fi
+            done
+        fi
+
+        echo ""
+        echo -e "${GREEN}Done!${NC}"
+        echo -e "  OK: $ok"
+        echo -e "  Repaired: $repaired"
+    fi
+
+    sync_codex_skills
+}
+
+# Command: auto-remove (cleanup merged worktrees)
+cmd_auto_remove() {
+    local target_branch="$1"
+
+    # If no branch specified, use current branch from main app
+    if [ -z "$target_branch" ]; then
+        cd "$MAIN_APP"
+        target_branch=$(git branch --show-current 2>/dev/null)
+        if [ -z "$target_branch" ]; then
+            echo -e "${RED}Error: Could not detect current branch${NC}"
+            echo "Usage: acme-worktree auto-remove [target-branch]"
+            exit 1
+        fi
+        echo -e "${BLUE}Target branch (detected):${NC} $target_branch"
+    fi
+
+    echo -e "${BLUE}Checking worktrees merged into:${NC} $target_branch\n"
+
+    # Fetch to ensure updated branches
+    cd "$MAIN_APP"
+    git fetch origin "$target_branch" --quiet 2>/dev/null || {
+        echo -e "${RED}Error: Branch '$target_branch' not found on remote${NC}"
+        exit 1
+    }
+
+    # List worktrees to remove
+    local to_remove=()
+    local pending=()
+
+    if [ ! -d "$WORKTREES_DIR" ] || [ -z "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+        echo -e "${YELLOW}No worktrees found${NC}"
+        exit 0
+    fi
+
+    for dir in "$WORKTREES_DIR"/*/; do
+        [ -d "$dir" ] || continue
+
+        local name=$(basename "$dir")
+
+        # Get worktree HEAD commit
+        local wt_commit=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
+
+        # Skip worktrees without valid commit (corrupted)
+        if [ -z "$wt_commit" ]; then
+            echo -e "  ${YELLOW}⚠️  CORRUPTED:${NC} $name (no commit)"
+            to_remove+=("$name")
+            continue
+        fi
+
+        local wt_branch=$(git -C "$dir" branch --show-current 2>/dev/null)
+        local branch_display="${wt_branch:-detached}"
+
+        # Check if worktree commit is contained in target branch
+        # Uses merge-base --is-ancestor which works even if remote branch was deleted
+        if git merge-base --is-ancestor "$wt_commit" "$target_branch" 2>/dev/null; then
+            echo -e "  ${GREEN}✅ MERGED:${NC} $name ($branch_display)"
+            to_remove+=("$name")
+        else
+            echo -e "  ${YELLOW}⏳ PENDING:${NC} $name ($branch_display)"
+            pending+=("$name")
+        fi
+    done
+
+    echo ""
+
+    # If nothing to remove, exit
+    if [ ${#to_remove[@]} -eq 0 ]; then
+        echo -e "${GREEN}No worktrees to remove${NC}"
+        echo -e "Kept: ${#pending[@]}"
+        exit 0
+    fi
+
+    # Remove merged worktrees
+    echo -e "${BLUE}Removing ${#to_remove[@]} worktree(s)...${NC}\n"
+
+    local removed=0
+    for name in "${to_remove[@]}"; do
+        echo -e "${YELLOW}Removing: $name${NC}"
+        if cmd_remove "$name" 2>/dev/null; then
+            removed=$((removed + 1))
+        else
+            # Try manual removal if cmd_remove fails (corrupted worktree)
+            rm -rf "$WORKTREES_DIR/$name" 2>/dev/null && {
+                echo -e "  ${GREEN}✓ Manually removed${NC}"
+                removed=$((removed + 1))
+            }
+        fi
+        echo ""
+    done
+
+    echo -e "${GREEN}Done!${NC}"
+    echo -e "  Removed: $removed"
+    echo -e "  Kept:    ${#pending[@]}"
+}
+
+# Command: remove
+cmd_remove() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}Error: Worktree name not specified${NC}"
+        echo "Usage: acme-worktree remove <name>"
+        exit 1
+    fi
+
+    local worktree_dir="$WORKTREES_DIR/$name"
+
+    if [ ! -d "$worktree_dir" ]; then
+        echo -e "${RED}Error: Worktree not found: $name${NC}"
+        exit 1
+    fi
+
+    # Get port from metadata, fallback to extracting from name
+    local port=$(get_metadata "$name" "port")
+    if [ -z "$port" ]; then
+        # Legacy: extract from directory name if ends with -XXXX
+        if [[ "$name" =~ -([0-9]{4})$ ]]; then
+            port="${BASH_REMATCH[1]}"
+        fi
+    fi
+
+    # Check if Rails server is running
+    local pidfile="$worktree_dir/tmp/pids/server.pid"
+    if [ -f "$pidfile" ]; then
+        local pid=$(cat "$pidfile")
+        if ps -p "$pid" > /dev/null 2>&1; then
+            echo -e "${RED}Error: Rails server still running (PID $pid)${NC}"
+            echo "Stop the server first or use: kill $pid"
+            exit 1
+        fi
+    fi
+
+    # Kill Sidekiq from worktree if running (avoid orphan jobs)
+    local sidekiq_pids=$(pgrep -f "sidekiq.*$name" 2>/dev/null || true)
+    if [ -n "$sidekiq_pids" ]; then
+        echo -e "${YELLOW}Killing Sidekiq from worktree...${NC}"
+        echo "$sidekiq_pids" | xargs kill 2>/dev/null || true
+        sleep 1
+        echo -e "  ${GREEN}✓ Sidekiq killed${NC}"
+    fi
+
+    # Kill foreman/processes from worktree by port
+    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
+        local port_pids=$(lsof -ti ":$port" 2>/dev/null || true)
+        if [ -n "$port_pids" ]; then
+            echo -e "${YELLOW}Freeing port $port...${NC}"
+            echo "$port_pids" | xargs kill -9 2>/dev/null || true
+            sleep 1
+            echo -e "  ${GREEN}✓ Port $port freed${NC}"
+        fi
+    fi
+
+    echo -e "${YELLOW}Removing worktree: $name${NC}"
+
+    # Get metadata for hooks/Pwtfile
+    local branch=$(get_metadata "$name" "branch")
+    local base=$(get_metadata "$name" "base")
+    local desc=$(get_metadata "$name" "description")
+    local ticket_name=$(echo "$name" | grep -oE 'ACME-[0-9]+' || echo "$name")
+
+    # Set context for Pwtfile and hooks
+    export PWT_WORKTREE="$name"
+    export PWT_WORKTREE_PATH="$worktree_dir"
+    export PWT_BRANCH="$branch"
+    export PWT_PORT="$port"
+    export PWT_TICKET="$ticket_name"
+    export PWT_BASE="$base"
+    export PWT_DESC="$desc"
+    export PWT_PROJECT="$CURRENT_PROJECT"
+    export MAIN_APP="$MAIN_APP"
+
+    # Run Pwtfile teardown (if exists), then hook
+    # (Pwtfile handles project-specific cleanup like databases)
+    run_pwtfile "teardown"
+    run_hook "pre-remove"
+
+    cd "$MAIN_APP"
+    git worktree remove "$worktree_dir" --force
+
+    # Remove metadata
+    remove_metadata "$name"
+
+    echo -e "${GREEN}✓ Worktree removed${NC}"
+}
+
+# Command: server
+# Start the server using Pwtfile's server() function
+cmd_server() {
+    local current_dir=$(pwd)
+
+    # Must be inside a worktree
+    if [[ "$current_dir" != "$WORKTREES_DIR"/* ]]; then
+        echo -e "${RED}Error: Not inside a worktree${NC}"
+        echo "Run this command from inside a worktree directory"
+        exit 1
+    fi
+
+    local worktree_name=$(basename "$current_dir")
+    local port=$(get_metadata "$worktree_name" "port")
+
+    if [ -z "$port" ]; then
+        echo -e "${YELLOW}Warning: Port not found in metadata${NC}"
+        port="3000"
+    fi
+
+    # Set context for Pwtfile
+    export PWT_WORKTREE="$worktree_name"
+    export PWT_WORKTREE_PATH="$current_dir"
+    export PWT_PORT="$port"
+    export PWT_PROJECT="$CURRENT_PROJECT"
+    export MAIN_APP="$MAIN_APP"
+
+    echo -e "${BLUE}Starting server on port $port...${NC}"
+
+    # Run Pwtfile server phase
+    run_pwtfile "server"
+}
+
+# Command: info
+cmd_info() {
+    local name="$1"
+
+    # If no name specified, try to detect from current directory
+    if [ -z "$name" ]; then
+        local current_dir=$(pwd)
+        if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+            name=$(basename "$current_dir")
+        else
+            echo -e "${RED}Error: Worktree name not specified${NC}"
+            echo "Usage: acme-worktree info <name>"
+            echo "Or run from inside a worktree"
+            exit 1
+        fi
+    fi
+
+    local worktree_dir="$WORKTREES_DIR/$name"
+
+    if [ ! -d "$worktree_dir" ]; then
+        echo -e "${RED}Error: Worktree not found: $name${NC}"
+        exit 1
+    fi
+
+    # Extract information
+    local port=$(get_metadata "$name" "port")
+    if [ -z "$port" ]; then
+        # Legacy: extract from directory name if ends with -XXXX
+        if [[ "$name" =~ -([0-9]{4})$ ]]; then
+            port="${BASH_REMATCH[1]}"
+        else
+            port="-"
+        fi
+    fi
+    local ticket=$(echo "$name" | grep -oE 'ACME-[0-9]+' || echo "-")
+    local branch=$(git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "detached")
+    local upstream=$(git -C "$worktree_dir" rev-parse --abbrev-ref "${branch}@{upstream}" 2>/dev/null || echo "-")
+    local commit=$(git -C "$worktree_dir" rev-parse --short HEAD 2>/dev/null || echo "-")
+    local commit_msg=$(git -C "$worktree_dir" log -1 --format='%s' 2>/dev/null | head -c 50)
+
+    # Server status
+    local server_status
+    local pidfile="$worktree_dir/tmp/pids/server.pid"
+    if [ -f "$pidfile" ]; then
+        local pid=$(cat "$pidfile")
+        if ps -p "$pid" > /dev/null 2>&1; then
+            server_status="${GREEN}running${NC} (PID $pid)"
+        else
+            server_status="${YELLOW}stopped${NC}"
+        fi
+    else
+        server_status="${YELLOW}stopped${NC}"
+    fi
+
+    # Symlinks status
+    local links_status
+    if check_symlinks_status "$worktree_dir" > /dev/null 2>&1; then
+        links_status="${GREEN}OK${NC}"
+    else
+        links_status="${RED}incomplete${NC}"
+    fi
+
+    # Commits ahead/behind
+    local ahead_behind=""
+    if [ "$upstream" != "-" ]; then
+        local ahead=$(git -C "$worktree_dir" rev-list --count "${upstream}..${branch}" 2>/dev/null || echo "0")
+        local behind=$(git -C "$worktree_dir" rev-list --count "${branch}..${upstream}" 2>/dev/null || echo "0")
+        if [ "$ahead" -gt 0 ] || [ "$behind" -gt 0 ]; then
+            ahead_behind=" (↑${ahead} ↓${behind})"
+        fi
+    fi
+
+    # Output
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}$name${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  ${BLUE}Ticket:${NC}    $ticket"
+    echo -e "  ${BLUE}Branch:${NC}    $branch"
+    echo -e "  ${BLUE}Based on:${NC}  $upstream$ahead_behind"
+    echo -e "  ${BLUE}Commit:${NC}    $commit - $commit_msg"
+    echo ""
+    echo -e "  ${BLUE}Port:${NC}      $port"
+    echo -e "  ${BLUE}Server:${NC}    $server_status"
+    echo -e "  ${BLUE}Symlinks:${NC}  $links_status"
+    echo -e "  ${BLUE}Directory:${NC} $worktree_dir"
+    echo ""
+
+    # Show modified files if any
+    local modified=$(git -C "$worktree_dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$modified" -gt 0 ]; then
+        echo -e "  ${YELLOW}Modified files:${NC} $modified"
+        git -C "$worktree_dir" status --porcelain 2>/dev/null | head -5 | sed 's/^/    /'
+        if [ "$modified" -gt 5 ]; then
+            echo "    ... and $((modified - 5)) more"
+        fi
+        echo ""
+    fi
+}
+
+# Command: fix-port
+# Reallocate a worktree to a new free port
+cmd_fix_port() {
+    local name="$1"
+
+    # If no name specified, try to detect from current directory
+    if [ -z "$name" ]; then
+        local current_dir=$(pwd)
+        if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+            name=$(basename "$current_dir")
+        else
+            echo -e "${RED}Error: Worktree name not specified${NC}"
+            echo "Usage: pwt fix-port <name>"
+            echo "Or run from inside a worktree"
+            exit 1
+        fi
+    fi
+
+    local worktree_dir="$WORKTREES_DIR/$name"
+
+    if [ ! -d "$worktree_dir" ]; then
+        echo -e "${RED}Error: Worktree not found: $name${NC}"
+        exit 1
+    fi
+
+    # Get current port from metadata, fallback to directory name
+    local old_port=$(get_metadata "$name" "port")
+    if [ -z "$old_port" ]; then
+        # Legacy: extract from directory name if ends with -XXXX
+        if [[ "$name" =~ -([0-9]{4})$ ]]; then
+            old_port="${BASH_REMATCH[1]}"
+        fi
+    fi
+
+    if [ -z "$old_port" ] || ! [[ "$old_port" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Error: Could not find port for worktree: $name${NC}"
+        echo "Check metadata with: pwt meta show $name"
+        exit 1
+    fi
+
+    # Check if current port is actually occupied
+    if is_port_pair_free "$old_port"; then
+        echo -e "${GREEN}Port $old_port is already free!${NC}"
+        echo "No changes needed."
+        exit 0
+    fi
+
+    # Analyze what's occupying the ports
+    local rails_pid=$(lsof -ti ":$old_port" 2>/dev/null)
+    local vite_pid=$(lsof -ti ":$((old_port + 1))" 2>/dev/null)
+    local rails_proc="" vite_proc=""
+    local can_kill_rails=false can_kill_vite=false
+
+    if [ -n "$rails_pid" ]; then
+        rails_proc=$(ps -p $rails_pid -o comm= 2>/dev/null || echo "?")
+        # Rails-compatible processes: ruby*, puma*, unicorn*, bundle
+        if [[ "$rails_proc" =~ ^(ruby|puma|unicorn|bundle) ]]; then
+            can_kill_rails=true
+        fi
+    fi
+
+    if [ -n "$vite_pid" ]; then
+        vite_proc=$(ps -p $vite_pid -o comm= 2>/dev/null || echo "?")
+        # Vite-compatible processes: node*
+        if [[ "$vite_proc" =~ ^node ]]; then
+            can_kill_vite=true
+        fi
+    fi
+
+    echo -e "${YELLOW}Port $old_port is occupied:${NC}"
+    if [ -n "$rails_pid" ]; then
+        local kill_hint=""
+        [ "$can_kill_rails" = true ] && kill_hint=" ${GREEN}(can kill)${NC}"
+        echo -e "  Rails ($old_port): $rails_proc (PID $rails_pid)$kill_hint"
+    fi
+    if [ -n "$vite_pid" ]; then
+        local kill_hint=""
+        [ "$can_kill_vite" = true ] && kill_hint=" ${GREEN}(can kill)${NC}"
+        echo -e "  Vite ($((old_port + 1))): $vite_proc (PID $vite_pid)$kill_hint"
+    fi
+    echo ""
+
+    # If all occupying processes are compatible, offer to kill
+    local all_killable=true
+    [ -n "$rails_pid" ] && [ "$can_kill_rails" = false ] && all_killable=false
+    [ -n "$vite_pid" ] && [ "$can_kill_vite" = false ] && all_killable=false
+
+    if [ "$all_killable" = true ]; then
+        echo -e "${BLUE}Options:${NC}"
+        echo "  1) Kill orphan processes and keep port $old_port"
+        echo "  2) Reallocate to new port"
+        echo "  3) Cancel"
+        echo ""
+        read -p "Choose (1/2/3): " -n 1 -r choice
+        echo ""
+
+        case "$choice" in
+            1)
+                echo ""
+                echo -e "${YELLOW}Killing processes...${NC}"
+                [ -n "$rails_pid" ] && kill -9 "$rails_pid" 2>/dev/null && echo "  ✓ Rails (PID $rails_pid) killed"
+                [ -n "$vite_pid" ] && kill -9 "$vite_pid" 2>/dev/null && echo "  ✓ Vite (PID $vite_pid) killed"
+                sleep 1
+
+                # Check if freed
+                if is_port_pair_free "$old_port"; then
+                    echo ""
+                    echo -e "${GREEN}✓ Port $old_port freed!${NC}"
+                    echo ""
+                    echo "Now you can start the server:"
+                    echo -e "  ${BLUE}acme-server${NC}"
+                    exit 0
+                else
+                    echo -e "${RED}Port still occupied. Reallocating...${NC}"
+                fi
+                ;;
+            2)
+                echo ""
+                echo "Reallocating to new port..."
+                ;;
+            *)
+                echo "Cancelled."
+                exit 0
+                ;;
+        esac
+    else
+        echo -e "${YELLOW}Incompatible processes occupying ports.${NC}"
+        echo "Not safe to kill automatically."
+        echo ""
+        read -p "Reallocate to new port? (y/N) " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Cancelled."
+            exit 0
+        fi
+    fi
+
+    # Find new port
+    local new_port=$(next_available_port)
+
+    echo -e "${BLUE}Reallocating to port $new_port...${NC}"
+    echo "  Port: $old_port → $new_port"
+    echo ""
+
+    # Check if server is running
+    local pidfile="$worktree_dir/tmp/pids/server.pid"
+    if [ -f "$pidfile" ]; then
+        local pid=$(cat "$pidfile")
+        if ps -p "$pid" > /dev/null 2>&1; then
+            echo -e "${RED}Error: Rails server still running (PID $pid)${NC}"
+            echo "Stop the server first."
+            exit 1
+        fi
+    fi
+
+    # 1. Update .env
+    if [ -f "$worktree_dir/.env" ]; then
+        sed -i '' "s/DEFAULT_URL=localhost:$old_port/DEFAULT_URL=localhost:$new_port/" "$worktree_dir/.env"
+        sed -i '' "s/WORKTREE_DB_SUFFIX=_wt$old_port/WORKTREE_DB_SUFFIX=_wt$new_port/" "$worktree_dir/.env"
+        echo -e "  ${GREEN}✓${NC} .env updated"
+    fi
+
+    # 2. Update database.yml
+    if [ -f "$worktree_dir/config/database.yml" ]; then
+        sed -i '' "s/acme_test_wt$old_port/acme_test_wt$new_port/g" "$worktree_dir/config/database.yml"
+        sed -i '' "s/reports_generator_test_wt$old_port/reports_generator_test_wt$new_port/g" "$worktree_dir/config/database.yml"
+        echo -e "  ${GREEN}✓${NC} database.yml updated"
+    fi
+
+    # 3. Update metadata
+    update_metadata "$name" "port" "$new_port"
+    echo -e "  ${GREEN}✓${NC} Metadata updated"
+
+    # 4. Handle test databases
+    echo ""
+    echo -e "${BLUE}Test databases:${NC}"
+    local old_test_db="acme_test_wt$old_port"
+    local new_test_db="acme_test_wt$new_port"
+
+    # Check if old database exists
+    if psql -lqt | cut -d \| -f 1 | grep -qw "$old_test_db"; then
+        echo "  Old database exists: $old_test_db"
+        echo -e "  ${YELLOW}Warning: Renaming PostgreSQL databases is not trivial${NC}"
+        echo "  Recommended: drop old and create new"
+        echo ""
+        read -p "  Drop old databases and create new? (y/N) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # Drop old databases
+            dropdb "$old_test_db" 2>/dev/null || true
+            dropdb "reports_generator_test_wt$old_port" 2>/dev/null || true
+            for i in 2 3 4 5 6 7 8 9; do
+                dropdb "${old_test_db}${i}" 2>/dev/null || true
+                dropdb "reports_generator_test_wt${old_port}${i}" 2>/dev/null || true
+            done
+            echo -e "  ${GREEN}✓${NC} Old databases removed"
+
+            # Create new
+            cd "$worktree_dir"
+            createdb "$new_test_db" 2>/dev/null && {
+                RAILS_ENV=test bundle exec rake db:schema:load 2>/dev/null || true
+                echo -e "  ${GREEN}✓${NC} Database $new_test_db created"
+            }
+            createdb "reports_generator_test_wt$new_port" 2>/dev/null && {
+                RAILS_ENV=test bundle exec rake db:reports_generator:schema:load 2>/dev/null || true
+                echo -e "  ${GREEN}✓${NC} reports_generator database created"
+            }
+
+            # Parallel
+            DISABLE_DATABASE_ENVIRONMENT_CHECK=1 RAILS_ENV=test bundle exec rake parallel:create[8] 2>/dev/null && {
+                RAILS_ENV=test bundle exec rake parallel:prepare[8] 2>/dev/null || true
+                echo -e "  ${GREEN}✓${NC} Parallel databases created"
+            }
+        fi
+    else
+        echo "  Old database not found, creating new..."
+        cd "$worktree_dir"
+        createdb "$new_test_db" 2>/dev/null && {
+            RAILS_ENV=test bundle exec rake db:schema:load 2>/dev/null || true
+        }
+        createdb "reports_generator_test_wt$new_port" 2>/dev/null || true
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓ Port reallocated successfully!${NC}"
+    echo ""
+    echo "To start server:"
+    echo -e "  ${BLUE}acme-server${NC}  # Starts on port $new_port"
+}
+
+# Command: meta
+# View or edit worktree metadata
+cmd_meta() {
+    local action="$1"
+    local name="$2"
+    local field="$3"
+    local value="$4"
+
+    init_metadata
+
+    case "$action" in
+        ""|list)
+            # List all metadata
+            echo -e "${BLUE}Worktree Metadata:${NC}"
+            echo ""
+            jq -r 'to_entries[] | "\(.key):\n  path: \(.value.path)\n  branch: \(.value.branch)\n  base: \(.value.base) @ \(.value.base_commit)\n  port: \(.value.port)\n  description: \(.value.description)\n  created: \(.value.created_at)\n"' "$METADATA_FILE"
+            ;;
+        show)
+            if [ -z "$name" ]; then
+                echo -e "${RED}Error: Worktree name required${NC}"
+                echo "Usage: acme-worktree meta show <name>"
+                exit 1
+            fi
+            local meta=$(jq --arg name "$name" '.[$name]' "$METADATA_FILE")
+            if [ "$meta" = "null" ]; then
+                echo -e "${YELLOW}No metadata found for: $name${NC}"
+            else
+                echo -e "${BLUE}Metadata for $name:${NC}"
+                echo "$meta" | jq '.'
+            fi
+            ;;
+        set)
+            if [ -z "$name" ] || [ -z "$field" ] || [ -z "$value" ]; then
+                echo -e "${RED}Error: Missing arguments${NC}"
+                echo "Usage: acme-worktree meta set <name> <field> <value>"
+                echo ""
+                echo "Fields: base, description, branch"
+                exit 1
+            fi
+            update_metadata "$name" "$field" "$value"
+            echo -e "${GREEN}✓ Updated $name.$field = $value${NC}"
+            ;;
+        import)
+            # Import metadata for existing worktrees
+            echo -e "${BLUE}Importing metadata for existing worktrees...${NC}"
+            if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+                for dir in "$WORKTREES_DIR"/*/; do
+                    [ -d "$dir" ] || continue
+                    local wt_name=$(basename "$dir")
+                    local existing=$(get_metadata "$wt_name" "path")
+                    if [ -z "$existing" ]; then
+                        local wt_branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+                        # Try to extract port from directory name (legacy format)
+                        local wt_port=""
+                        if [[ "$wt_name" =~ -([0-9]{4})$ ]]; then
+                            wt_port="${BASH_REMATCH[1]}"
+                        else
+                            # Allocate new port for new format directories
+                            wt_port=$(next_available_port)
+                        fi
+                        local wt_base_commit=$(git -C "$dir" merge-base HEAD origin/master 2>/dev/null)
+                        local wt_base_short=$(git -C "$dir" rev-parse --short "$wt_base_commit" 2>/dev/null || echo "?")
+                        local wt_desc=$(echo "$wt_branch" | sed -E 's|^[a-z]+/||' | sed -E 's|^ACME-[0-9]+-?||' | tr '-' ' ')
+
+                        save_metadata "$wt_name" "$dir" "$wt_branch" "master" "$wt_base_short" "$wt_port" "$wt_desc"
+                        echo -e "  ${GREEN}✓${NC} Imported: $wt_name (port $wt_port)"
+                    else
+                        echo -e "  ${YELLOW}○${NC} Exists: $wt_name"
+                    fi
+                done
+            fi
+            echo -e "${GREEN}Done!${NC}"
+            ;;
+        *)
+            echo -e "${RED}Unknown action: $action${NC}"
+            echo "Usage: acme-worktree meta [list|show|set|import]"
+            echo ""
+            echo "Commands:"
+            echo "  list              - List all worktree metadata"
+            echo "  show <name>       - Show metadata for a worktree"
+            echo "  set <name> <field> <value> - Update a metadata field"
+            echo "  import            - Import metadata for existing worktrees"
+            exit 1
+            ;;
+    esac
+}
+
+# Command: config
+# Configure current project (zero-config override)
+cmd_config() {
+    local key="$1"
+    local value="$2"
+
+    # Ensure project is detected
+    if [ -z "$CURRENT_PROJECT" ]; then
+        echo -e "${RED}Error: No project detected${NC}"
+        echo "Run from inside a git repository."
+        exit 1
+    fi
+
+    local config_dir="$PWT_PROJECTS_DIR/$CURRENT_PROJECT"
+    local config_file="$config_dir/config.json"
+
+    # Create config dir if needed
+    mkdir -p "$config_dir/hooks"
+
+    # Initialize config file if needed
+    if [ ! -f "$config_file" ]; then
+        echo "{}" > "$config_file"
+    fi
+
+    case "$key" in
+        ""|show)
+            # Show current config
+            echo -e "${BLUE}Project: $CURRENT_PROJECT${NC}"
+            echo ""
+            echo "Current settings:"
+            echo "  main_app:      ${MAIN_APP:-"(auto-detected)"}"
+            echo "  worktrees_dir: ${WORKTREES_DIR:-"(auto-detected)"}"
+            echo "  branch_prefix: ${BRANCH_PREFIX:-"(none)"}"
+            echo "  base_port:     ${BASE_PORT:-5000}"
+            echo ""
+            if [ -f "$config_file" ] && [ "$(cat "$config_file")" != "{}" ]; then
+                echo "Saved overrides ($config_file):"
+                jq '.' "$config_file"
+            else
+                echo "No saved overrides (using auto-detected values)."
+            fi
+            ;;
+        main_app|worktrees_dir|branch_prefix|base_port)
+            if [ -z "$value" ]; then
+                # Show current value
+                local current=$(jq -r ".$key // empty" "$config_file" 2>/dev/null)
+                echo "${current:-"(not set)"}"
+            else
+                # Set value
+                local tmp_file=$(mktemp)
+                jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+                echo -e "${GREEN}✓ Set $key = $value${NC}"
+            fi
+            ;;
+        *)
+            echo -e "${RED}Unknown config key: $key${NC}"
+            echo ""
+            echo "Available keys:"
+            echo "  main_app       - Path to main project"
+            echo "  worktrees_dir  - Path to worktrees directory"
+            echo "  branch_prefix  - Prefix for branches (e.g., jp/)"
+            echo "  base_port      - Base port for allocation"
+            exit 1
+            ;;
+    esac
+}
+
+# Command: project
+# Manage project configurations
+cmd_project() {
+    local action="$1"
+    local project="$2"
+    local arg3="$3"
+    local arg4="$4"
+
+    init_metadata
+
+    case "$action" in
+        ""|list)
+            # List all projects
+            echo -e "${BLUE}Configured Projects:${NC}"
+            echo ""
+            if [ -d "$PROJECTS_DIR" ] && [ "$(ls -A "$PROJECTS_DIR" 2>/dev/null)" ]; then
+                for dir in "$PROJECTS_DIR"/*/; do
+                    [ -d "$dir" ] || continue
+                    local proj_name=$(basename "$dir")
+                    local config_file="$dir/config.json"
+                    if [ -f "$config_file" ]; then
+                        local main_app=$(jq -r '.main_app // "(not set)"' "$config_file")
+                        local prefix=$(jq -r '.branch_prefix // "(not set)"' "$config_file")
+                        echo -e "  ${GREEN}$proj_name${NC}"
+                        echo "    main_app: $main_app"
+                        echo "    branch_prefix: $prefix"
+                        # Count hooks
+                        local hook_count=$(ls "$dir/hooks" 2>/dev/null | wc -l | tr -d ' ')
+                        if [ "$hook_count" -gt 0 ]; then
+                            echo "    hooks: $hook_count"
+                        fi
+                        echo ""
+                    fi
+                done
+            else
+                echo "  No projects configured yet."
+                echo ""
+                echo "  Use: acme-worktree project init <name>"
+            fi
+            ;;
+        init)
+            if [ -z "$project" ]; then
+                echo -e "${RED}Error: Project name required${NC}"
+                echo "Usage: acme-worktree project init <name>"
+                exit 1
+            fi
+            init_project "$project"
+            echo ""
+            echo "Edit the config at: $PROJECTS_DIR/$project/config.json"
+            echo "Add hooks in: $PROJECTS_DIR/$project/hooks/"
+            ;;
+        show)
+            if [ -z "$project" ]; then
+                echo -e "${RED}Error: Project name required${NC}"
+                echo "Usage: acme-worktree project show <name>"
+                exit 1
+            fi
+            local config_file="$PROJECTS_DIR/$project/config.json"
+            if [ ! -f "$config_file" ]; then
+                echo -e "${RED}Project not found: $project${NC}"
+                exit 1
+            fi
+            echo -e "${BLUE}Project: $project${NC}"
+            echo ""
+            echo "Config:"
+            jq '.' "$config_file"
+            echo ""
+            echo "Hooks:"
+            ls -la "$PROJECTS_DIR/$project/hooks/" 2>/dev/null || echo "  (none)"
+            ;;
+        set)
+            if [ -z "$project" ] || [ -z "$arg3" ] || [ -z "$arg4" ]; then
+                echo -e "${RED}Error: Missing arguments${NC}"
+                echo "Usage: acme-worktree project set <name> <key> <value>"
+                exit 1
+            fi
+            local config_file="$PROJECTS_DIR/$project/config.json"
+            if [ ! -f "$config_file" ]; then
+                echo -e "${RED}Project not found: $project${NC}"
+                echo "Use: acme-worktree project init $project"
+                exit 1
+            fi
+            local tmp_file=$(mktemp)
+            jq --arg key "$arg3" --arg value "$arg4" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+            echo -e "${GREEN}✓ Updated $project.$arg3 = $arg4${NC}"
+            ;;
+        path)
+            if [ -z "$project" ]; then
+                echo -e "${RED}Error: Project name required${NC}"
+                exit 1
+            fi
+            echo "$PROJECTS_DIR/$project"
+            ;;
+        *)
+            echo -e "${RED}Unknown action: $action${NC}"
+            echo "Usage: acme-worktree project [list|init|show|set|path]"
+            echo ""
+            echo "Commands:"
+            echo "  list              - List all configured projects"
+            echo "  init <name>       - Initialize a new project config"
+            echo "  show <name>       - Show project config and hooks"
+            echo "  set <name> <k> <v> - Update project config value"
+            echo "  path <name>       - Print project config directory path"
+            exit 1
+            ;;
+    esac
+}
+
+# Command: port
+# Get port for a worktree (used by acme-server)
+cmd_port() {
+    local name="$1"
+
+    # If no name, try to detect from current directory
+    if [ -z "$name" ]; then
+        local current_dir=$(pwd)
+        if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+            name=$(basename "$current_dir")
+        else
+            echo -e "${RED}Error: Not in a worktree directory${NC}" >&2
+            exit 1
+        fi
+    fi
+
+    init_metadata
+    local port=$(get_metadata "$name" "port")
+
+    if [ -z "$port" ]; then
+        echo -e "${RED}Error: No port found for worktree: $name${NC}" >&2
+        exit 1
+    fi
+
+    echo "$port"
+}
+
+# Parse global flags
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --project)
+            CURRENT_PROJECT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            set -- "help"
+            break
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+# Initialize pwt
+init_pwt
+
+# Check if first argument is a project name (before command dispatch)
+# This allows: pwt acme-app list (instead of pwt --project acme-app list)
+if [ -n "${1:-}" ] && [ -d "$PWT_PROJECTS_DIR/${1}" ]; then
+    CURRENT_PROJECT="$1"
+    load_project_config "$1"
+    shift
+fi
+
+# Detect project from current directory (unless already set via --project or first arg)
+detect_project
+
+# Main command dispatch
+case "${1:-}" in
+    create)
+        require_project
+        cmd_create "$2" "$3" "$4"
+        ;;
+    list|ls)
+        require_project
+        cmd_list
+        ;;
+    info|show)
+        require_project
+        cmd_info "$2"
+        ;;
+    remove|rm)
+        require_project
+        cmd_remove "$2"
+        ;;
+    server|s)
+        require_project
+        cmd_server
+        ;;
+    repair|fix)
+        require_project
+        cmd_repair "$2"
+        ;;
+    auto-remove|cleanup)
+        require_project
+        cmd_auto_remove "$2"
+        ;;
+    fix-port)
+        require_project
+        cmd_fix_port "$2"
+        ;;
+    meta)
+        cmd_meta "$2" "$3" "$4" "$5"
+        ;;
+    config)
+        cmd_config "$2" "$3"
+        ;;
+    project)
+        cmd_project "$2" "$3" "$4" "$5"
+        ;;
+    port)
+        cmd_port "$2"
+        ;;
+    help|"")
+        echo "pwt - Power Worktrees"
+        echo "A tool for managing git worktrees across multiple projects"
+        echo ""
+        if [ -n "$CURRENT_PROJECT" ]; then
+            echo -e "Current project: ${GREEN}$CURRENT_PROJECT${NC}"
+            echo ""
+        fi
+        echo "Commands:"
+        echo "  create <branch> [base] [desc]  Create new worktree"
+        echo "  list                           List worktrees and status"
+        echo "  info [name]                    Show worktree details"
+        echo "  remove <name>                  Remove worktree"
+        echo "  fix-port [name]                Fix port conflict"
+        echo "  auto-remove [branch]           Remove merged worktrees"
+        echo "  meta [action] [args]           Manage worktree metadata"
+        echo "  project [action] [args]        Manage project configs"
+        echo ""
+        echo "Project selection (in order of priority):"
+        echo "  1. pwt <project> <command>     Project as first argument"
+        echo "  2. pwt --project <name> ...    Explicit flag"
+        echo "  3. Auto-detect from pwd        Inside project or worktree dir"
+        echo ""
+        echo "First time setup:"
+        echo "  pwt project init myproject"
+        echo "  pwt project set myproject main_app ~/path/to/app"
+        echo "  pwt project set myproject worktrees_dir ~/path/to/worktrees"
+        echo "  pwt project set myproject branch_prefix \"jp/\""
+        echo ""
+        echo "Examples:"
+        echo "  pwt acme-app list                       # Explicit project"
+        echo "  pwt create TICKET-123 master \"fix auth\"   # Auto-detect project"
+        echo "  pwt list                                   # List worktrees"
+        echo "  pwt remove TICKET-123                      # Remove worktree"
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}"
+        echo "Run 'pwt help' for usage"
+        exit 1
+        ;;
+esac

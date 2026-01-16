@@ -23,7 +23,7 @@
 #   pwt project set myproject main_app ~/path/to/main/app
 #   pwt project set myproject worktrees_dir ~/path/to/worktrees
 
-set -eo pipefail
+set -euo pipefail
 
 # PWT directory structure
 PWT_DIR="$HOME/.pwt"
@@ -60,6 +60,33 @@ sed_inplace() {
     else
         sed -i '' "$expr" "$file"     # BSD sed (macOS)
     fi
+}
+
+# Check required command exists
+# Usage: require_cmd <cmd> [optional]
+# If optional=true, just warn instead of exit
+require_cmd() {
+    local cmd="$1"
+    local optional="${2:-false}"
+
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        if [ "$optional" = true ]; then
+            return 1
+        else
+            echo -e "${RED}Error: Required command not found: $cmd${NC}" >&2
+            echo "Please install $cmd to use pwt." >&2
+            exit 1
+        fi
+    fi
+    return 0
+}
+
+# Check dependencies early
+check_dependencies() {
+    require_cmd git
+    require_cmd jq
+    # Optional: lsof (for port checking), fzf (for select)
+    # These are checked where needed, not at startup
 }
 
 # Initialize PWT directory
@@ -111,7 +138,7 @@ detect_default_branch() {
 # Detect project from current directory
 # Sets CURRENT_PROJECT, MAIN_APP, WORKTREES_DIR, BRANCH_PREFIX
 detect_project() {
-    local current_dir="$1"
+    local current_dir="${1:-}"
     [ -z "$current_dir" ] && current_dir=$(pwd)
 
     # Already set via --project flag
@@ -831,7 +858,7 @@ get_remote_divergence() {
 # Returns: 0 if previous, 1 otherwise
 is_previous_worktree() {
     local path="$1"
-    [ -n "$PWT_PREVIOUS_PATH" ] && [ "$PWT_PREVIOUS_PATH" = "$path" ]
+    [ -n "${PWT_PREVIOUS_PATH:-}" ] && [ "$PWT_PREVIOUS_PATH" = "$path" ]
 }
 
 # Calculate visual width of string (accounting for multi-byte Unicode)
@@ -885,7 +912,7 @@ get_base_branch() {
 # Usage: pwtfile_hash_port [name] [base]
 # Output: port number
 pwtfile_hash_port() {
-    local name="${1:-$PWT_WORKTREE}"
+    local name="${1:-${PWT_WORKTREE:-}}"
     local base="${2:-${PORT_BASE:-5000}}"
 
     # Hash the name and take first 4 hex chars for offset 0-65535
@@ -1872,7 +1899,7 @@ cmd_list_statusline() {
     local worktree=""
     local dir=""
 
-    if [ -n "$PWT_WORKTREE" ]; then
+    if [ -n "${PWT_WORKTREE:-}" ]; then
         worktree="$PWT_WORKTREE"
         dir="$WORKTREES_DIR/$worktree"
     else
@@ -2338,7 +2365,7 @@ cmd_remove() {
 
     # If no name, try to use current worktree
     if [ -z "$name" ]; then
-        if [ -n "$PWT_WORKTREE" ]; then
+        if [ -n "${PWT_WORKTREE:-}" ]; then
             name="$PWT_WORKTREE"
         elif [[ "$PWD" == *"-worktrees/"* ]]; then
             name=$(basename "$PWD")
@@ -3546,7 +3573,7 @@ cmd_doctor() {
         fi
 
         # Check Pwtfile
-        if [ -n "$PWTFILE" ] && [ -f "$PWTFILE" ]; then
+        if [ -n "${PWTFILE:-}" ] && [ -f "$PWTFILE" ]; then
             echo -e "${GREEN}✓${NC} Pwtfile: $PWTFILE"
         elif [ -f "$MAIN_APP/Pwtfile" ]; then
             echo -e "${GREEN}✓${NC} Pwtfile: $MAIN_APP/Pwtfile"
@@ -3714,7 +3741,7 @@ cmd_marker() {
 
     # If no target, use current worktree
     if [ -z "$target" ]; then
-        if [ -n "$PWT_WORKTREE" ]; then
+        if [ -n "${PWT_WORKTREE:-}" ]; then
             target="$PWT_WORKTREE"
         else
             # Try to detect from PWD
@@ -4118,10 +4145,13 @@ fi
 # Detect project from current directory (unless already set via --project or first arg)
 detect_project
 
+# Check required dependencies
+check_dependencies
+
 # Main command dispatch
 case "${1:-}" in
     init)
-        cmd_init "$2"
+        cmd_init "${2:-}"
         ;;
     create)
         require_project --clone
@@ -4135,7 +4165,7 @@ case "${1:-}" in
         ;;
     info|show)
         require_project
-        cmd_info "$2"
+        cmd_info "${2:-}"
         ;;
     remove|rm)
         require_project
@@ -4148,7 +4178,7 @@ case "${1:-}" in
         ;;
     repair|fix)
         require_project
-        cmd_repair "$2"
+        cmd_repair "${2:-}"
         ;;
     auto-remove|cleanup)
         require_project
@@ -4157,18 +4187,18 @@ case "${1:-}" in
         ;;
     fix-port)
         require_project
-        cmd_fix_port "$2"
+        cmd_fix_port "${2:-}"
         ;;
     meta)
-        cmd_meta "$2" "$3" "$4" "$5"
+        cmd_meta "${2:-}" "${3:-}" "${4:-}" "${5:-}"
         ;;
     config)
-        cmd_config "$2" "$3"
+        cmd_config "${2:-}" "${3:-}"
         ;;
     _cd)
         # Internal: output path for cd (used by shell function)
         require_project --info-only
-        cmd_cd "$2"
+        cmd_cd "${2:-}"
         ;;
     run)
         require_project
@@ -4177,7 +4207,7 @@ case "${1:-}" in
         ;;
     editor|e)
         require_project
-        cmd_editor "$2"
+        cmd_editor "${2:-}"
         ;;
     ai)
         require_project
@@ -4186,19 +4216,19 @@ case "${1:-}" in
         ;;
     open)
         require_project
-        cmd_open "$2"
+        cmd_open "${2:-}"
         ;;
     diff)
         require_project
-        cmd_diff "$2" "$3"
+        cmd_diff "${2:-}" "${3:-}"
         ;;
     conflicts)
         require_project
-        cmd_conflicts "$2" "$3"
+        cmd_conflicts "${2:-}" "${3:-}"
         ;;
     context)
         require_project
-        cmd_context "$2"
+        cmd_context "${2:-}"
         ;;
     copy|cp)
         require_project
@@ -4229,13 +4259,13 @@ case "${1:-}" in
         cmd__select "$@"
         ;;
     shell-init)
-        cmd_shell_init "$2"
+        cmd_shell_init "${2:-}"
         ;;
     project)
-        cmd_project "$2" "$3" "$4" "$5"
+        cmd_project "${2:-}" "${3:-}" "${4:-}" "${5:-}"
         ;;
     port)
-        cmd_port "$2"
+        cmd_port "${2:-}"
         ;;
     help|"")
         echo "pwt - Power Worktrees"

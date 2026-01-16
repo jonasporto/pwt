@@ -35,18 +35,42 @@ pwt remove feature-branch
 | Command | Description |
 |---------|-------------|
 | `init [url]` | Initialize project (clone from URL or configure current repo) |
-| `create <branch> [base] [desc]` | Create new worktree |
-| `list` | List worktrees and status |
+| `create <branch> [base] [desc]` | Create new worktree (see flags below) |
+| `list [flags]` | List worktrees and status |
 | `info [worktree]` | Show worktree details |
 | `remove <worktree> [flags]` | Remove worktree (see flags below) |
 | `cd [worktree\|@]` | Navigate to worktree (requires shell-init) |
+| `run <worktree> <cmd>` | Run command in worktree without cd'ing |
+| `editor [worktree]` | Open worktree in configured editor |
+| `ai [worktree] [-- args]` | Start AI tool in worktree |
+| `open [worktree]` | Open worktree in Finder |
+| `diff <wt1> [wt2]` | Show diff between worktrees |
+| `copy <src> <dest> <patterns>` | Copy files between worktrees |
 | `server` | Start development server |
 | `fix-port [worktree]` | Resolve port conflict |
-| `auto-remove [target]` | Remove merged worktrees |
+| `auto-remove [target] [flags]` | Remove merged worktrees |
+| `doctor` | Check system health and configuration |
 | `shell-init` | Output shell function for cd integration |
 | `meta [action]` | Manage metadata |
 | `project [action]` | Manage project configs |
 | `config [key] [value]` | Configure current project |
+
+### Create Flags
+
+| Flag | Description |
+|------|-------------|
+| `-e, --editor` | Open editor after creating |
+| `-a, --ai` | Start AI tool after creating |
+| `--from <ref>` | Create from specific ref (tag, commit, branch) |
+| `--from-current` | Create from current branch |
+| `--dry-run, -n` | Show what would be created without creating |
+
+### List Flags
+
+| Flag | Description |
+|------|-------------|
+| `--dirty` | Only show worktrees with uncommitted changes |
+| `--porcelain` | Output machine-readable JSON |
 
 ### Remove Flags
 
@@ -54,6 +78,12 @@ pwt remove feature-branch
 |------|-------------|
 | `--with-branch` | Also delete the branch (if merged) |
 | `--force-branch` | Force delete the branch (even if not merged) |
+
+### Auto-remove Flags
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run, -n` | Show what would be removed without removing |
 
 ## Worktree Naming
 
@@ -209,6 +239,20 @@ pwt cd              # Go to main worktree
 pwt cd @            # Same as above (explicit)
 ```
 
+### Environment Variable
+
+When navigating via `pwt cd`, the `$PWT_WORKTREE` environment variable is set to the worktree name. Useful for:
+- Custom shell prompts
+- Scripts that need to know the current worktree
+- Integration with other tools
+
+```bash
+# Example prompt integration (in ~/.zshrc)
+if [[ -n "$PWT_WORKTREE" ]]; then
+  PROMPT="[$PWT_WORKTREE] $PROMPT"
+fi
+```
+
 ## Examples
 
 ```bash
@@ -222,20 +266,63 @@ pwt init
 # Create worktree for a ticket
 pwt create TICKET-123 master "implement feature"
 
+# Create and open in editor + AI
+pwt create TICKET-123 master "feature" -e -a
+
+# Create from a tag (hotfix)
+pwt create hotfix --from v1.2.3
+
+# Create variant from current branch
+pwt create variant --from-current
+
+# Preview what would be created
+pwt create TICKET-123 master --dry-run
+
 # Navigate to worktree (requires shell-init)
 pwt cd TICKET-123
 
 # List all worktrees with status
 pwt list
 
+# List only dirty worktrees
+pwt list --dirty
+
+# Get JSON output for scripting
+pwt list --porcelain | jq '.worktrees[].name'
+
+# Run command in worktree without cd'ing
+pwt run TICKET-123 npm test
+pwt run @ git status
+
+# Open worktree in editor
+pwt editor TICKET-123
+
+# Start AI tool in worktree
+pwt ai TICKET-123
+
+# Open in Finder
+pwt open TICKET-123
+
+# Compare worktree to main
+pwt diff TICKET-123
+
+# Compare two worktrees
+pwt diff TICKET-123 TICKET-456
+
+# Copy files between worktrees
+pwt copy @ TICKET-123 ".env*"
+
+# Check system health
+pwt doctor
+
 # Start server in current worktree
 pwt server
 
-# Check worktree info
-pwt info TICKET-123
+# Preview merged worktree cleanup
+pwt auto-remove master --dry-run
 
-# Go back to main worktree
-pwt cd @
+# Clean up all merged worktrees
+pwt auto-remove master
 
 # Remove worktree only
 pwt remove TICKET-123
@@ -245,9 +332,6 @@ pwt remove TICKET-123 --with-branch
 
 # Force remove worktree + delete branch
 pwt remove TICKET-123 --force-branch
-
-# Clean up all merged worktrees
-pwt auto-remove master
 
 # Use project alias
 pwt myapp list

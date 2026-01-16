@@ -940,20 +940,91 @@ install_js_deps() {
 }
 
 # Command: create
+# Usage: pwt create <branch> [base-ref] [description] [options]
+# Options:
+#   --dry-run, -n     Show what would be created without creating
+#   -e, --editor      Open editor after creating
+#   -a, --ai          Start AI tool after creating
+#   --from <ref>      Create from specific ref (tag, commit, branch)
+#   --from-current    Create from current branch
 cmd_create() {
-    local branch="$1"
-    local base_ref="$2"
-    local description="$3"
+    local branch=""
+    local base_ref=""
+    local description=""
+    local dry_run=false
+    local open_editor=false
+    local start_ai=false
+    local from_current=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dry-run|-n)
+                dry_run=true
+                shift
+                ;;
+            -e|--editor)
+                open_editor=true
+                shift
+                ;;
+            -a|--ai)
+                start_ai=true
+                shift
+                ;;
+            --from)
+                base_ref="$2"
+                shift 2
+                ;;
+            --from-current)
+                from_current=true
+                shift
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+            *)
+                # Positional arguments: branch, base_ref, description
+                if [ -z "$branch" ]; then
+                    branch="$1"
+                elif [ -z "$base_ref" ]; then
+                    base_ref="$1"
+                else
+                    description="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Handle --from-current: use current branch as base
+    if [ "$from_current" = true ]; then
+        cd "$MAIN_APP"
+        base_ref=$(git branch --show-current 2>/dev/null)
+        if [ -z "$base_ref" ]; then
+            echo -e "${RED}Error: Could not detect current branch${NC}"
+            exit 1
+        fi
+    fi
 
     if [ -z "$branch" ]; then
         echo -e "${RED}Error: Branch/ticket not specified${NC}"
-        echo "Usage: pwt create <branch> [base-ref] [description]"
+        echo "Usage: pwt create <branch> [base-ref] [description] [options]"
+        echo ""
+        echo "Options:"
+        echo "  --dry-run, -n     Show what would be created without creating"
+        echo "  -e, --editor      Open editor after creating"
+        echo "  -a, --ai          Start AI tool after creating"
+        echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
+        echo "  --from-current    Create from current branch"
+        echo ""
         echo "Examples:"
         echo "  pwt create feature/my-feature"
         echo "  pwt create PROJ-123 master"
         echo "  pwt create PROJ-123 master \"add auth flow\""
-        echo ""
-        echo "Description will be added to branch name: jp/PROJ-123-add-auth-flow"
+        echo "  pwt create PROJ-123 --from v1.2.3"
+        echo "  pwt create hotfix --from-current"
+        echo "  pwt create PROJ-123 master -e -a"
         exit 1
     fi
 
@@ -1024,6 +1095,14 @@ cmd_create() {
         git_worktree_args=("$worktree_dir" "$branch")
     fi
 
+    # Dry-run mode: show what would be created without creating
+    if [ "$dry_run" = true ]; then
+        echo -e "${YELLOW}[DRY-RUN] Would create worktree with above settings${NC}"
+        echo ""
+        echo "Run without --dry-run to create."
+        exit 0
+    fi
+
     # Create worktree
     git worktree add "${git_worktree_args[@]}"
 
@@ -1079,6 +1158,18 @@ cmd_create() {
     echo "To use:"
     echo -e "  ${BLUE}cd $worktree_dir${NC}  or  ${BLUE}z ${worktree_name}${NC}"
     echo -e "  Port: ${BLUE}$port${NC}"
+
+    # Open editor if requested
+    if [ "$open_editor" = true ]; then
+        echo ""
+        cmd_editor "$worktree_name"
+    fi
+
+    # Start AI tool if requested
+    if [ "$start_ai" = true ]; then
+        echo ""
+        cmd_ai "$worktree_name"
+    fi
 }
 
 # Check port status for a worktree
@@ -1179,8 +1270,92 @@ check_merge_status() {
     fi
 }
 
+# Command: list (porcelain output)
+# Internal function for JSON output
+cmd_list_porcelain() {
+    local show_dirty_only="${1:-false}"
+    local worktrees=()
+
+    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+
+            local name=$(basename "$dir")
+            local port=$(get_metadata "$name" "port")
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
+            local commit=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "?")
+
+            # Check for uncommitted changes
+            local is_dirty=false
+            local staged=$(git -C "$dir" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
+            local unstaged=$(git -C "$dir" diff --numstat 2>/dev/null | wc -l | tr -d ' ')
+            local untracked=$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
+                is_dirty=true
+            fi
+
+            # Skip if --dirty and not dirty
+            if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
+                continue
+            fi
+
+            local meta_base=$(get_metadata "$name" "base")
+            local meta_desc=$(get_metadata "$name" "description")
+
+            worktrees+=("{\"name\":\"$name\",\"path\":\"$dir\",\"branch\":\"$branch\",\"commit\":\"$commit\",\"port\":\"$port\",\"dirty\":$is_dirty,\"base\":\"$meta_base\",\"description\":\"$meta_desc\"}")
+        done
+    fi
+
+    # Output JSON
+    echo "{"
+    echo "  \"project\": \"$CURRENT_PROJECT\","
+    echo "  \"main_app\": \"$MAIN_APP\","
+    echo "  \"worktrees_dir\": \"$WORKTREES_DIR\","
+    echo "  \"worktrees\": ["
+
+    local first=true
+    for wt in "${worktrees[@]}"; do
+        if [ "$first" = true ]; then
+            first=false
+            echo "    $wt"
+        else
+            echo "    ,$wt"
+        fi
+    done
+
+    echo "  ]"
+    echo "}"
+}
+
 # Command: list
+# Usage: pwt list [--dirty] [--porcelain]
 cmd_list() {
+    local show_dirty_only=false
+    local porcelain=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dirty)
+                show_dirty_only=true
+                shift
+                ;;
+            --porcelain)
+                porcelain=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    # Porcelain mode: output JSON
+    if [ "$porcelain" = true ]; then
+        cmd_list_porcelain "$show_dirty_only"
+        return
+    fi
+
     echo -e "${BLUE}Worktrees (${CURRENT_PROJECT}):${NC}\n"
 
     # Show config info
@@ -1319,15 +1494,22 @@ cmd_list() {
 
                 # Check for uncommitted changes
                 local changes=""
+                local is_dirty=false
                 local staged=$(git -C "$dir" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
                 local unstaged=$(git -C "$dir" diff --numstat 2>/dev/null | wc -l | tr -d ' ')
                 local untracked=$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
                 if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
+                    is_dirty=true
                     local parts=()
                     [ "$staged" -gt 0 ] && parts+=("${staged} staged")
                     [ "$unstaged" -gt 0 ] && parts+=("${unstaged} modified")
                     [ "$untracked" -gt 0 ] && parts+=("${untracked} untracked")
                     changes=$(IFS=', '; echo "${parts[*]}")
+                fi
+
+                # Skip if --dirty and not dirty
+                if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
+                    continue
                 fi
 
                 # Title with description
@@ -1435,8 +1617,28 @@ cmd_repair() {
 }
 
 # Command: auto-remove (cleanup merged worktrees)
+# Usage: pwt auto-remove [target] [--dry-run]
 cmd_auto_remove() {
-    local target_branch="$1"
+    local target_branch=""
+    local dry_run=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dry-run|-n)
+                dry_run=true
+                shift
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+            *)
+                target_branch="$1"
+                shift
+                ;;
+        esac
+    done
 
     # If no branch specified, use current branch from main app
     if [ -z "$target_branch" ]; then
@@ -1503,6 +1705,17 @@ cmd_auto_remove() {
     if [ ${#to_remove[@]} -eq 0 ]; then
         echo -e "${GREEN}No worktrees to remove${NC}"
         echo -e "Kept: ${#pending[@]}"
+        exit 0
+    fi
+
+    # Dry-run mode: just show what would be removed
+    if [ "$dry_run" = true ]; then
+        echo -e "${YELLOW}[DRY-RUN] Would remove ${#to_remove[@]} worktree(s):${NC}"
+        for name in "${to_remove[@]}"; do
+            echo "  - $name"
+        done
+        echo ""
+        echo -e "Would keep: ${#pending[@]}"
         exit 0
     fi
 
@@ -2106,6 +2319,355 @@ cmd_cd() {
     return 1
 }
 
+# Command: run
+# Run a command in a worktree without changing directory
+# Usage: pwt run <worktree> <command...>
+#   @ = main worktree
+cmd_run() {
+    local target="$1"
+    shift
+
+    if [ -z "$target" ]; then
+        echo -e "${RED}Usage: pwt run <worktree> <command...>${NC}"
+        exit 1
+    fi
+
+    if [ $# -eq 0 ]; then
+        echo -e "${RED}No command specified${NC}"
+        exit 1
+    fi
+
+    local worktree_path
+
+    if [ "$target" = "@" ]; then
+        worktree_path="$MAIN_APP"
+    else
+        worktree_path="$WORKTREES_DIR/$target"
+        # Try partial match if not found
+        if [ ! -d "$worktree_path" ]; then
+            local match=$(cmd_cd "$target" 2>/dev/null)
+            if [ -n "$match" ] && [ -d "$match" ]; then
+                worktree_path="$match"
+            fi
+        fi
+    fi
+
+    if [ ! -d "$worktree_path" ]; then
+        echo -e "${RED}Worktree not found: $target${NC}"
+        exit 1
+    fi
+
+    echo -e "${BLUE}Running in $worktree_path:${NC} $*"
+    (cd "$worktree_path" && "$@")
+}
+
+# Command: editor
+# Open worktree in configured editor
+# Usage: pwt editor [worktree]
+#   If no worktree specified, uses current directory or main app
+cmd_editor() {
+    local target="${1:-}"
+    local worktree_path
+
+    # Get editor from config or default to cursor
+    local editor_cmd
+    editor_cmd=$(get_project_config "$CURRENT_PROJECT" "editor" 2>/dev/null)
+    [ -z "$editor_cmd" ] && editor_cmd="${EDITOR:-cursor}"
+
+    if [ -z "$target" ] || [ "$target" = "@" ]; then
+        worktree_path="$MAIN_APP"
+    else
+        worktree_path=$(cmd_cd "$target" 2>/dev/null)
+        if [ -z "$worktree_path" ] || [ ! -d "$worktree_path" ]; then
+            echo -e "${RED}Worktree not found: $target${NC}"
+            exit 1
+        fi
+    fi
+
+    echo -e "${BLUE}Opening in $editor_cmd:${NC} $worktree_path"
+    "$editor_cmd" "$worktree_path"
+}
+
+# Command: ai
+# Start AI coding tool in worktree
+# Usage: pwt ai [worktree] [-- args...]
+cmd_ai() {
+    local target="${1:-}"
+    local worktree_path
+    local ai_args=()
+
+    # Shift past target if provided and not --
+    if [ -n "$target" ] && [ "$target" != "--" ]; then
+        shift
+    else
+        target=""
+    fi
+
+    # Collect args after --
+    if [ "$1" = "--" ]; then
+        shift
+        ai_args=("$@")
+    fi
+
+    # Get AI tool from config or default to claude
+    local ai_cmd
+    ai_cmd=$(get_project_config "$CURRENT_PROJECT" "ai" 2>/dev/null)
+    [ -z "$ai_cmd" ] && ai_cmd="claude"
+
+    if [ -z "$target" ] || [ "$target" = "@" ]; then
+        worktree_path="$MAIN_APP"
+    else
+        worktree_path=$(cmd_cd "$target" 2>/dev/null)
+        if [ -z "$worktree_path" ] || [ ! -d "$worktree_path" ]; then
+            echo -e "${RED}Worktree not found: $target${NC}"
+            exit 1
+        fi
+    fi
+
+    echo -e "${BLUE}Starting $ai_cmd in:${NC} $worktree_path"
+    (cd "$worktree_path" && "$ai_cmd" "${ai_args[@]}")
+}
+
+# Command: open
+# Open worktree in Finder/file manager
+# Usage: pwt open [worktree]
+cmd_open() {
+    local target="${1:-}"
+    local worktree_path
+
+    if [ -z "$target" ] || [ "$target" = "@" ]; then
+        worktree_path="$MAIN_APP"
+    else
+        worktree_path=$(cmd_cd "$target" 2>/dev/null)
+        if [ -z "$worktree_path" ] || [ ! -d "$worktree_path" ]; then
+            echo -e "${RED}Worktree not found: $target${NC}"
+            exit 1
+        fi
+    fi
+
+    echo -e "${BLUE}Opening in Finder:${NC} $worktree_path"
+    open "$worktree_path"
+}
+
+# Command: diff
+# Show diff between worktrees or worktree vs main
+# Usage: pwt diff <worktree1> [worktree2]
+cmd_diff() {
+    local wt1="$1"
+    local wt2="${2:-@}"
+
+    if [ -z "$wt1" ]; then
+        echo -e "${RED}Usage: pwt diff <worktree1> [worktree2]${NC}"
+        echo "  worktree2 defaults to @ (main app)"
+        exit 1
+    fi
+
+    local path1 path2
+
+    # Resolve worktree1
+    if [ "$wt1" = "@" ]; then
+        path1="$MAIN_APP"
+    else
+        path1=$(cmd_cd "$wt1" 2>/dev/null)
+        if [ -z "$path1" ] || [ ! -d "$path1" ]; then
+            echo -e "${RED}Worktree not found: $wt1${NC}"
+            exit 1
+        fi
+    fi
+
+    # Resolve worktree2
+    if [ "$wt2" = "@" ]; then
+        path2="$MAIN_APP"
+    else
+        path2=$(cmd_cd "$wt2" 2>/dev/null)
+        if [ -z "$path2" ] || [ ! -d "$path2" ]; then
+            echo -e "${RED}Worktree not found: $wt2${NC}"
+            exit 1
+        fi
+    fi
+
+    echo -e "${BLUE}Comparing:${NC}"
+    echo "  $wt1: $path1"
+    echo "  $wt2: $path2"
+    echo ""
+
+    # Get branch info
+    local branch1=$(git -C "$path1" branch --show-current 2>/dev/null || echo "?")
+    local branch2=$(git -C "$path2" branch --show-current 2>/dev/null || echo "?")
+
+    echo -e "${BLUE}Branches:${NC} $branch1 vs $branch2"
+    echo ""
+
+    # Show git diff
+    git -C "$path1" diff "$branch2".."$branch1" --stat
+}
+
+# Command: copy
+# Copy files between worktrees
+# Usage: pwt copy <src> <dest> <patterns...>
+#   src/dest can be @ for main app
+cmd_copy() {
+    local src="$1"
+    local dest="$2"
+    shift 2
+
+    if [ -z "$src" ] || [ -z "$dest" ] || [ $# -eq 0 ]; then
+        echo -e "${RED}Usage: pwt copy <src> <dest> <patterns...>${NC}"
+        echo "  src/dest can be @ for main app"
+        echo ""
+        echo "Examples:"
+        echo "  pwt copy @ TICKET-123 \".env*\"          # main → worktree"
+        echo "  pwt copy TICKET-123 @ \".env*\"          # worktree → main"
+        echo "  pwt copy TICKET-123 TICKET-456 \"*.json\" # between worktrees"
+        exit 1
+    fi
+
+    local src_path dest_path
+
+    # Resolve source
+    if [ "$src" = "@" ]; then
+        src_path="$MAIN_APP"
+    else
+        src_path=$(cmd_cd "$src" 2>/dev/null)
+        if [ -z "$src_path" ] || [ ! -d "$src_path" ]; then
+            echo -e "${RED}Worktree not found: $src${NC}"
+            exit 1
+        fi
+    fi
+
+    # Resolve destination
+    if [ "$dest" = "@" ]; then
+        dest_path="$MAIN_APP"
+    else
+        dest_path=$(cmd_cd "$dest" 2>/dev/null)
+        if [ -z "$dest_path" ] || [ ! -d "$dest_path" ]; then
+            echo -e "${RED}Worktree not found: $dest${NC}"
+            exit 1
+        fi
+    fi
+
+    echo -e "${BLUE}Copying from $src to $dest:${NC}"
+
+    local count=0
+    for pattern in "$@"; do
+        # Use find to match patterns
+        while IFS= read -r -d '' file; do
+            local rel_path="${file#$src_path/}"
+            local dest_file="$dest_path/$rel_path"
+
+            # Create parent directory if needed
+            mkdir -p "$(dirname "$dest_file")"
+
+            cp "$file" "$dest_file"
+            echo "  ✓ $rel_path"
+            count=$((count + 1))
+        done < <(find "$src_path" -path "*/$pattern" -type f -print0 2>/dev/null || find "$src_path" -name "$pattern" -type f -print0 2>/dev/null)
+    done
+
+    if [ $count -eq 0 ]; then
+        echo "  No files matched"
+    else
+        echo -e "${GREEN}Copied $count file(s)${NC}"
+    fi
+}
+
+# Command: doctor
+# Check system health and configuration
+# Usage: pwt doctor
+cmd_doctor() {
+    echo -e "${BLUE}pwt doctor${NC}"
+    echo ""
+
+    local errors=0
+
+    # Check git
+    if command -v git &>/dev/null; then
+        local git_version=$(git --version | cut -d' ' -f3)
+        echo -e "${GREEN}✓${NC} Git: $git_version"
+    else
+        echo -e "${RED}✗${NC} Git: not installed"
+        errors=$((errors + 1))
+    fi
+
+    # Check jq
+    if command -v jq &>/dev/null; then
+        local jq_version=$(jq --version 2>/dev/null || echo "?")
+        echo -e "${GREEN}✓${NC} jq: $jq_version"
+    else
+        echo -e "${RED}✗${NC} jq: not installed (required)"
+        errors=$((errors + 1))
+    fi
+
+    # Check lsof
+    if command -v lsof &>/dev/null; then
+        echo -e "${GREEN}✓${NC} lsof: installed"
+    else
+        echo -e "${YELLOW}⚠${NC} lsof: not installed (recommended for port detection)"
+    fi
+
+    echo ""
+
+    # Check project configuration
+    if [ -n "$CURRENT_PROJECT" ]; then
+        echo -e "${GREEN}✓${NC} Project: $CURRENT_PROJECT"
+
+        if [ -n "$MAIN_APP" ] && [ -d "$MAIN_APP" ]; then
+            echo -e "${GREEN}✓${NC} Main app: $MAIN_APP"
+        else
+            echo -e "${RED}✗${NC} Main app: not found"
+            errors=$((errors + 1))
+        fi
+
+        if [ -n "$WORKTREES_DIR" ]; then
+            if [ -d "$WORKTREES_DIR" ]; then
+                local wt_count=$(ls -d "$WORKTREES_DIR"/*/ 2>/dev/null | wc -l | tr -d ' ')
+                echo -e "${GREEN}✓${NC} Worktrees dir: $WORKTREES_DIR ($wt_count worktrees)"
+            else
+                echo -e "${YELLOW}⚠${NC} Worktrees dir: $WORKTREES_DIR (not created yet)"
+            fi
+        fi
+
+        # Check Pwtfile
+        if [ -n "$PWTFILE" ] && [ -f "$PWTFILE" ]; then
+            echo -e "${GREEN}✓${NC} Pwtfile: $PWTFILE"
+        elif [ -f "$MAIN_APP/Pwtfile" ]; then
+            echo -e "${GREEN}✓${NC} Pwtfile: $MAIN_APP/Pwtfile"
+        else
+            echo -e "${YELLOW}⚠${NC} Pwtfile: not found (optional)"
+        fi
+
+        # Check editor config
+        local editor_cfg=$(get_project_config "$CURRENT_PROJECT" "editor" 2>/dev/null)
+        if [ -n "$editor_cfg" ]; then
+            if command -v "$editor_cfg" &>/dev/null; then
+                echo -e "${GREEN}✓${NC} Editor: $editor_cfg"
+            else
+                echo -e "${YELLOW}⚠${NC} Editor: $editor_cfg (not found in PATH)"
+            fi
+        fi
+
+        # Check AI config
+        local ai_cfg=$(get_project_config "$CURRENT_PROJECT" "ai" 2>/dev/null)
+        if [ -n "$ai_cfg" ]; then
+            if command -v "$ai_cfg" &>/dev/null; then
+                echo -e "${GREEN}✓${NC} AI: $ai_cfg"
+            else
+                echo -e "${YELLOW}⚠${NC} AI: $ai_cfg (not found in PATH)"
+            fi
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC} Project: not detected (run from project directory)"
+    fi
+
+    echo ""
+    if [ $errors -gt 0 ]; then
+        echo -e "${RED}$errors error(s) found${NC}"
+        exit 1
+    else
+        echo -e "${GREEN}All checks passed!${NC}"
+    fi
+}
+
 # Command: shell-init
 # Output shell function for cd integration
 # Usage: eval "$(pwt shell-init)"
@@ -2122,6 +2684,12 @@ pwt() {
         target=\$("$pwt_path" _cd "\$2" 2>&1)
         if [[ \$? -eq 0 ]] && [[ -d "\$target" ]]; then
             builtin cd "\$target"
+            # Set PWT_WORKTREE for prompts and scripts
+            if [[ "\$target" == *"-worktrees/"* ]]; then
+                export PWT_WORKTREE=\$(basename "\$target")
+            else
+                unset PWT_WORKTREE
+            fi
         else
             echo "\$target"
             return 1
@@ -2378,11 +2946,13 @@ case "${1:-}" in
         ;;
     create)
         require_project --clone
-        cmd_create "$2" "$3" "$4"
+        shift  # remove "create" from args
+        cmd_create "$@"
         ;;
     list|ls)
         require_project --info-only
-        cmd_list
+        shift  # remove "list" from args
+        cmd_list "$@"
         ;;
     info|show)
         require_project
@@ -2403,7 +2973,8 @@ case "${1:-}" in
         ;;
     auto-remove|cleanup)
         require_project
-        cmd_auto_remove "$2"
+        shift  # remove "auto-remove" from args
+        cmd_auto_remove "$@"
         ;;
     fix-port)
         require_project
@@ -2419,6 +2990,36 @@ case "${1:-}" in
         # Internal: output path for cd (used by shell function)
         require_project --info-only
         cmd_cd "$2"
+        ;;
+    run)
+        require_project
+        shift  # remove "run" from args
+        cmd_run "$@"
+        ;;
+    editor|e)
+        require_project
+        cmd_editor "$2"
+        ;;
+    ai)
+        require_project
+        shift  # remove "ai" from args
+        cmd_ai "$@"
+        ;;
+    open)
+        require_project
+        cmd_open "$2"
+        ;;
+    diff)
+        require_project
+        cmd_diff "$2" "$3"
+        ;;
+    copy|cp)
+        require_project
+        shift  # remove "copy" from args
+        cmd_copy "$@"
+        ;;
+    doctor)
+        cmd_doctor
         ;;
     shell-init)
         cmd_shell_init "$2"
@@ -2439,14 +3040,21 @@ case "${1:-}" in
         fi
         echo "Commands:"
         echo "  init [url]                     Initialize project (clone URL or configure current repo)"
-        echo "  create <branch> [base] [desc]  Create new worktree"
-        echo "  list                           List worktrees and status"
+        echo "  create <branch> [base] [desc]  Create new worktree (-e -a --from --from-current --dry-run)"
+        echo "  list [--dirty] [--porcelain]   List worktrees and status"
         echo "  info [worktree]                Show worktree details"
         echo "  remove <worktree> [flags]      Remove worktree (--with-branch, --force-branch)"
         echo "  cd [worktree|@]                Navigate to worktree (requires shell-init)"
+        echo "  run <worktree> <cmd>           Run command in worktree"
+        echo "  editor [worktree]              Open worktree in editor"
+        echo "  ai [worktree] [-- args]        Start AI tool in worktree"
+        echo "  open [worktree]                Open worktree in Finder"
+        echo "  diff <wt1> [wt2]               Show diff between worktrees"
+        echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
         echo "  server                         Start dev server (from Pwtfile)"
         echo "  fix-port [worktree]            Fix port conflict"
-        echo "  auto-remove [target]           Remove worktrees merged into target"
+        echo "  auto-remove [target] [--dry-run] Remove worktrees merged into target"
+        echo "  doctor                         Check system health and configuration"
         echo "  shell-init                     Output shell function for cd integration"
         echo "  meta [action] [args]           Manage worktree metadata"
         echo "  project [action] [args]        Manage project configs"
@@ -2464,15 +3072,18 @@ case "${1:-}" in
         echo ""
         echo "Examples:"
         echo "  pwt init git@github.com:user/app.git       # Clone and configure"
-        echo "  pwt init                                   # Configure current repo"
-        echo "  pwt create TICKET-123 master \"fix auth\"   # Create worktree"
-        echo "  pwt list                                   # List worktrees"
-        echo "  pwt cd TICKET-123                          # Navigate to worktree"
-        echo "  pwt cd @                                   # Navigate to main app"
-        echo "  pwt remove TICKET-123 --with-branch        # Remove + delete branch"
+        echo "  pwt create TICKET-123 master \"fix\" -e -a  # Create + open editor + start AI"
+        echo "  pwt create hotfix --from v1.2.3            # Create from tag"
+        echo "  pwt list --dirty                           # Only show dirty worktrees"
+        echo "  pwt run TICKET-123 npm test                # Run command in worktree"
+        echo "  pwt diff TICKET-123                        # Diff worktree vs main"
+        echo "  pwt auto-remove master --dry-run           # Preview cleanup"
+        echo "  pwt doctor                                 # Check configuration"
         echo ""
         echo "Shell integration (add to ~/.zshrc):"
         echo "  eval \"\$(pwt shell-init)\""
+        echo ""
+        echo "After shell-init, \$PWT_WORKTREE is set when in a worktree."
         ;;
     *)
         echo -e "${RED}Unknown command: $1${NC}"

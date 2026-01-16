@@ -291,7 +291,37 @@ require_project() {
 }
 
 # Clone project from remote
+# Usage: cmd_clone [url]
+#   If url provided: clone new project from url
+#   If no url: clone configured project from PROJECT_REMOTE
 cmd_clone() {
+    local url="${1:-}"
+
+    # If URL provided, clone new project
+    if [ -n "$url" ]; then
+        # Extract project name from URL
+        local project_name=$(basename "$url" .git)
+        local target_dir="${PWD}/${project_name}"
+
+        if [ -d "$target_dir" ]; then
+            echo -e "${YELLOW}Already exists: $target_dir${NC}"
+            return 0
+        fi
+
+        echo -e "${BLUE}Cloning: $url${NC}"
+        if git clone "$url" "$target_dir"; then
+            echo -e "${GREEN}✓ Cloned to $target_dir${NC}"
+            echo ""
+            echo "To configure as pwt project:"
+            echo -e "  ${GREEN}cd $target_dir && pwt init${NC}"
+        else
+            echo -e "${RED}Error: Failed to clone${NC}"
+            exit 1
+        fi
+        return 0
+    fi
+
+    # Clone configured project
     if [ ! -d "$MAIN_APP" ] && [ -n "$PROJECT_REMOTE" ]; then
         echo -e "${BLUE}Cloning from remote: $PROJECT_REMOTE${NC}"
         local parent_dir=$(dirname "$MAIN_APP")
@@ -306,6 +336,10 @@ cmd_clone() {
         echo -e "${YELLOW}Already cloned: $MAIN_APP${NC}"
     else
         echo -e "${RED}Error: No remote configured for $CURRENT_PROJECT${NC}"
+        echo ""
+        echo "Usage:"
+        echo "  pwt <project> clone     # Clone configured project"
+        echo "  pwt clone <url>         # Clone new project from URL"
         exit 1
     fi
 }
@@ -2134,7 +2168,8 @@ detect_project
 # Main command dispatch
 case "${1:-}" in
     clone)
-        cmd_clone
+        require_project --info-only
+        cmd_clone "$2"
         ;;
     create)
         require_project --clone

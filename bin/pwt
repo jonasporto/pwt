@@ -227,10 +227,16 @@ load_project_config() {
 
 # Require project context for commands that need it
 # Auto-creates worktrees directory if needed
-# Usage: require_project [--clone] to auto-clone from remote
+# Usage: require_project [--clone] [--info-only]
+#   --clone     Auto-clone from remote if not cloned
+#   --info-only Skip clone check (for list/info commands)
 require_project() {
     local auto_clone=false
-    [ "${1:-}" = "--clone" ] && auto_clone=true
+    local info_only=false
+    for arg in "$@"; do
+        [ "$arg" = "--clone" ] && auto_clone=true
+        [ "$arg" = "--info-only" ] && info_only=true
+    done
 
     if [ -z "$CURRENT_PROJECT" ]; then
         echo -e "${RED}Error: No project detected${NC}"
@@ -247,6 +253,9 @@ require_project() {
         echo "  pwt config worktrees_dir /path/to/worktrees"
         exit 1
     fi
+
+    # For info-only mode, skip clone/exist checks
+    [ "$info_only" = true ] && return 0
 
     # Check if main app exists
     if [ ! -d "$MAIN_APP" ]; then
@@ -1055,6 +1064,59 @@ check_merge_status() {
 # Command: list
 cmd_list() {
     echo -e "${BLUE}Worktrees (${CURRENT_PROJECT}):${NC}\n"
+
+    # Show config info
+    echo -e "  ${BLUE}Config:${NC}"
+
+    # Project path
+    if [ -d "$MAIN_APP" ]; then
+        echo -e "    Path:      $MAIN_APP"
+    else
+        echo -e "    Path:      ${YELLOW}$MAIN_APP (not cloned)${NC}"
+        [ -n "$PROJECT_REMOTE" ] && echo -e "    Remote:    $PROJECT_REMOTE"
+    fi
+
+    # Worktrees directory
+    echo -e "    Worktrees: $WORKTREES_DIR"
+
+    # Pwtfiles (show all that would be used)
+    local pwtfiles=()
+    local config_pwtfile=$(get_project_config "$CURRENT_PROJECT" "pwtfile")
+    if [ -n "$config_pwtfile" ]; then
+        config_pwtfile="${config_pwtfile/#\~/$HOME}"
+        [[ "$config_pwtfile" != /* ]] && config_pwtfile="$MAIN_APP/$config_pwtfile"
+        if [ -f "$config_pwtfile" ]; then
+            pwtfiles+=("$config_pwtfile (config)")
+        else
+            pwtfiles+=("${config_pwtfile} ${YELLOW}(config, missing)${NC}")
+        fi
+    fi
+    if [ -f "$MAIN_APP/Pwtfile" ]; then
+        pwtfiles+=("$MAIN_APP/Pwtfile (local)")
+    fi
+    if [ -f "$PWT_DIR/Pwtfile" ]; then
+        pwtfiles+=("$PWT_DIR/Pwtfile (global)")
+    fi
+
+    if [ ${#pwtfiles[@]} -gt 0 ]; then
+        echo -e "    Pwtfile:   ${pwtfiles[0]}"
+        for ((i=1; i<${#pwtfiles[@]}; i++)); do
+            echo -e "               ${pwtfiles[$i]}"
+        done
+    else
+        echo -e "    Pwtfile:   ${YELLOW}(none)${NC}"
+    fi
+    echo ""
+
+    # If project not cloned, show helpful message and exit
+    if [ ! -d "$MAIN_APP" ]; then
+        echo -e "  ${YELLOW}Project not cloned.${NC}"
+        if [ -n "$PROJECT_REMOTE" ]; then
+            echo -e "  Run: ${GREEN}pwt clone${NC} to clone from remote"
+        fi
+        echo ""
+        return 0
+    fi
 
     # Main app - also used as default target for merge status
     local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
@@ -2079,7 +2141,7 @@ case "${1:-}" in
         cmd_create "$2" "$3" "$4"
         ;;
     list|ls)
-        require_project
+        require_project --info-only
         cmd_list
         ;;
     info|show)

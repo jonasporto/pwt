@@ -591,6 +591,134 @@ pwtfile_copy() {
     echo "  ✓ Copied: $path"
 }
 
+# ============================================================
+# List display helpers
+# ============================================================
+
+# Format relative time from Unix timestamp or git date
+# Usage: format_relative_time <timestamp_or_git_date>
+# Output: "30m", "4h", "2d", "3w", "5M"
+format_relative_time() {
+    local input="$1"
+    local now=$(date +%s)
+    local timestamp
+
+    # Handle git date format or Unix timestamp
+    if [[ "$input" =~ ^[0-9]+$ ]]; then
+        timestamp="$input"
+    else
+        timestamp=$(date -j -f "%Y-%m-%d %H:%M:%S %z" "$input" +%s 2>/dev/null || \
+                   date -d "$input" +%s 2>/dev/null || \
+                   echo "$now")
+    fi
+
+    local diff=$((now - timestamp))
+
+    if [ $diff -lt 60 ]; then
+        echo "now"
+    elif [ $diff -lt 3600 ]; then
+        echo "$((diff / 60))m"
+    elif [ $diff -lt 86400 ]; then
+        echo "$((diff / 3600))h"
+    elif [ $diff -lt 604800 ]; then
+        echo "$((diff / 86400))d"
+    elif [ $diff -lt 2592000 ]; then
+        echo "$((diff / 604800))w"
+    else
+        echo "$((diff / 2592000))M"
+    fi
+}
+
+# Get git status symbols
+# Usage: get_status_symbols <dir>
+# Output: "+!?" format (+ staged, ! modified, ? untracked)
+get_status_symbols() {
+    local dir="$1"
+    local symbols=""
+
+    local staged=$(git -C "$dir" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
+    local modified=$(git -C "$dir" diff --numstat 2>/dev/null | wc -l | tr -d ' ')
+    local untracked=$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+
+    [ "$staged" -gt 0 ] && symbols="${symbols}+"
+    [ "$modified" -gt 0 ] && symbols="${symbols}!"
+    [ "$untracked" -gt 0 ] && symbols="${symbols}?"
+
+    echo "$symbols"
+}
+
+# Get divergence from a ref (ahead/behind)
+# Usage: get_divergence <dir> <ref>
+# Output: "↑3" or "↓2" or "↑3↓2" or ""
+get_divergence() {
+    local dir="$1"
+    local ref="$2"
+    local result=""
+
+    local ahead=$(git -C "$dir" rev-list --count "HEAD...$ref" --left-only 2>/dev/null || echo "0")
+    local behind=$(git -C "$dir" rev-list --count "HEAD...$ref" --right-only 2>/dev/null || echo "0")
+
+    # Remove whitespace
+    ahead=$(echo "$ahead" | tr -d ' ')
+    behind=$(echo "$behind" | tr -d ' ')
+
+    [ "$ahead" -gt 0 ] && result="↑${ahead}"
+    [ "$behind" -gt 0 ] && result="${result}↓${behind}"
+
+    echo "$result"
+}
+
+# Get remote divergence (vs upstream)
+# Usage: get_remote_divergence <dir>
+# Output: "⇡3" or "⇣2" or "⇡3⇣2" or ""
+get_remote_divergence() {
+    local dir="$1"
+    local branch=$(git -C "$dir" branch --show-current 2>/dev/null)
+    [ -z "$branch" ] && return
+
+    local upstream=$(git -C "$dir" rev-parse --abbrev-ref "${branch}@{upstream}" 2>/dev/null)
+    [ -z "$upstream" ] && return
+
+    local result=""
+    local ahead=$(git -C "$dir" rev-list --count "${upstream}..HEAD" 2>/dev/null || echo "0")
+    local behind=$(git -C "$dir" rev-list --count "HEAD..${upstream}" 2>/dev/null || echo "0")
+
+    # Remove whitespace
+    ahead=$(echo "$ahead" | tr -d ' ')
+    behind=$(echo "$behind" | tr -d ' ')
+
+    [ "$ahead" -gt 0 ] && result="⇡${ahead}"
+    [ "$behind" -gt 0 ] && result="${result}⇣${behind}"
+
+    echo "$result"
+}
+
+# Check if path is the previous worktree
+# Usage: is_previous_worktree <path>
+# Returns: 0 if previous, 1 otherwise
+is_previous_worktree() {
+    local path="$1"
+    [ -n "$PWT_PREVIOUS_PATH" ] && [ "$PWT_PREVIOUS_PATH" = "$path" ]
+}
+
+# Hash-based port generation (deterministic)
+# Usage: pwtfile_hash_port [name] [base]
+# Output: port number
+pwtfile_hash_port() {
+    local name="${1:-$PWT_WORKTREE}"
+    local base="${2:-${PORT_BASE:-5000}}"
+
+    # Hash the name and take first 4 hex chars for offset 0-65535
+    local hash=$(echo -n "$name" | md5 2>/dev/null || echo -n "$name" | md5sum | cut -d' ' -f1)
+    local offset=$((16#${hash:0:4} % 1000))
+
+    echo $((base + offset))
+}
+
+# ============================================================
+# End list display helpers
+# ============================================================
+
 # Read PORT_BASE from Pwtfile (if defined)
 # Sets BASE_PORT global variable
 read_port_base() {
@@ -1332,6 +1460,8 @@ cmd_list_porcelain() {
 cmd_list() {
     local show_dirty_only=false
     local porcelain=false
+    local verbose=false
+    local statusline=false
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -1344,17 +1474,207 @@ cmd_list() {
                 porcelain=true
                 shift
                 ;;
+            --verbose|-v)
+                verbose=true
+                shift
+                ;;
+            statusline)
+                statusline=true
+                shift
+                ;;
             *)
                 shift
                 ;;
         esac
     done
 
+    # Statusline mode: compact single-line for prompts
+    if [ "$statusline" = true ]; then
+        cmd_list_statusline
+        return
+    fi
+
     # Porcelain mode: output JSON
     if [ "$porcelain" = true ]; then
         cmd_list_porcelain "$show_dirty_only"
         return
     fi
+
+    # Verbose mode: detailed output (original format)
+    if [ "$verbose" = true ]; then
+        cmd_list_verbose "$show_dirty_only"
+        return
+    fi
+
+    # Default: compact tabular format
+    cmd_list_compact "$show_dirty_only"
+}
+
+# Compact tabular list format (default)
+cmd_list_compact() {
+    local show_dirty_only="${1:-false}"
+
+    # If project not cloned, show helpful message and exit
+    if [ ! -d "$MAIN_APP" ]; then
+        echo -e "${BLUE}${CURRENT_PROJECT}${NC}: ${YELLOW}not cloned${NC}"
+        [ -n "$PROJECT_REMOTE" ] && echo -e "  Run: ${GREEN}pwt clone${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}${CURRENT_PROJECT}${NC}"
+    echo ""
+
+    # Print header
+    printf "  %-2s %-20s %-3s %-5s %-7s %-7s %-5s %s\n" "" "Worktree" "Mkr" "Stat" "main↕" "Remote" "Age" "Message"
+    printf "  %-2s %-20s %-3s %-5s %-7s %-7s %-5s %s\n" "--" "--------------------" "---" "-----" "-------" "-------" "-----" "-------------------"
+
+    # Main app row
+    local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
+    local main_status=$(get_status_symbols "$MAIN_APP")
+    local main_age_ts=$(git -C "$MAIN_APP" log -1 --format=%ct 2>/dev/null || echo "0")
+    local main_age=$(format_relative_time "$main_age_ts")
+    local main_msg=$(git -C "$MAIN_APP" log -1 --format=%s 2>/dev/null | cut -c1-22)
+    local main_remote=$(get_remote_divergence "$MAIN_APP")
+
+    # Check if main is current
+    local main_marker=" "
+    if [ "$PWD" = "$MAIN_APP" ]; then
+        main_marker="@"
+    elif is_previous_worktree "$MAIN_APP"; then
+        main_marker="*"
+    fi
+
+    # Format status with color
+    local main_status_colored="$main_status"
+    [ -n "$main_status" ] && main_status_colored="${YELLOW}${main_status}${NC}"
+
+    printf "  ${YELLOW}%-2s${NC} %-20s %-3s %-5s %-7s %-7s %-5s %s\n" \
+        "$main_marker" \
+        "${main_branch:0:20}" \
+        "" \
+        "${main_status:-·}" \
+        "·" \
+        "${main_remote:-·}" \
+        "$main_age" \
+        "$main_msg"
+
+    # Worktrees
+    local has_merged=false
+    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+
+            # Git info
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
+
+            # Status symbols
+            local status=$(get_status_symbols "$dir")
+            local is_dirty=false
+            [ -n "$status" ] && is_dirty=true
+
+            # Skip if --dirty and not dirty
+            if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
+                continue
+            fi
+
+            # Divergence from main
+            local main_div=$(get_divergence "$dir" "origin/master")
+
+            # Remote divergence
+            local remote_div=$(get_remote_divergence "$dir")
+
+            # Age
+            local age_ts=$(git -C "$dir" log -1 --format=%ct 2>/dev/null || echo "0")
+            local age=$(format_relative_time "$age_ts")
+
+            # Markers: @ = current, * = previous
+            local marker=" "
+            if [ "$PWD" = "${dir%/}" ]; then
+                marker="@"
+            elif is_previous_worktree "${dir%/}"; then
+                marker="*"
+            fi
+
+            # Check merge status for tips
+            local merge_status=$(check_merge_status "$dir" "master" 2>/dev/null)
+            if [[ "$merge_status" == *"merged"* ]] || [[ "$merge_status" == *"clean"* ]]; then
+                has_merged=true
+            fi
+
+            # Get custom marker from metadata
+            local custom_marker=$(get_metadata "$name" "marker")
+
+            # Display name (truncate if too long)
+            local display_name="${name:0:20}"
+
+            # Message (truncate)
+            local msg=$(git -C "$dir" log -1 --format=%s 2>/dev/null | cut -c1-22)
+
+            printf "  ${YELLOW}%-2s${NC} %-20s %-3s %-5s %-7s %-7s %-5s %s\n" \
+                "$marker" \
+                "$display_name" \
+                "${custom_marker:-}" \
+                "${status:-·}" \
+                "${main_div:-·}" \
+                "${remote_div:-·}" \
+                "$age" \
+                "$msg"
+        done
+    fi
+
+    echo ""
+
+    # Tips
+    if [ "$has_merged" = true ]; then
+        echo -e "${YELLOW}Tip:${NC} Run ${GREEN}pwt auto-remove${NC} to clean up merged worktrees"
+    fi
+
+    # Legend
+    echo -e "${BLUE}Legend:${NC} @ current  * previous  + staged  ! modified  ? untracked"
+}
+
+# Statusline for shell prompts
+# Usage: pwt list statusline
+# Output: [TICKET-123 +! ↑3 ⇡2] or empty if in main
+cmd_list_statusline() {
+    # Only show if in a worktree
+    local worktree=""
+    local dir=""
+
+    if [ -n "$PWT_WORKTREE" ]; then
+        worktree="$PWT_WORKTREE"
+        dir="$WORKTREES_DIR/$worktree"
+    else
+        # Try to detect from PWD
+        if [[ "$PWD" == *"-worktrees/"* ]]; then
+            worktree=$(basename "$PWD")
+            dir="$PWD"
+        else
+            # In main app or not in worktree - output nothing
+            return 0
+        fi
+    fi
+
+    [ ! -d "$dir" ] && return 0
+
+    local status=$(get_status_symbols "$dir")
+    local main_div=$(get_divergence "$dir" "origin/master")
+    local remote_div=$(get_remote_divergence "$dir")
+
+    # Build statusline
+    local parts=()
+    parts+=("$worktree")
+    [ -n "$status" ] && parts+=("$status")
+    [ -n "$main_div" ] && parts+=("$main_div")
+    [ -n "$remote_div" ] && parts+=("$remote_div")
+
+    echo "[${parts[*]}]"
+}
+
+# Verbose list format (original detailed format)
+cmd_list_verbose() {
+    local show_dirty_only="${1:-false}"
 
     echo -e "${BLUE}Worktrees (${CURRENT_PROJECT}):${NC}\n"
 
@@ -1771,10 +2091,18 @@ cmd_remove() {
         esac
     done
 
+    # If no name, try to use current worktree
     if [ -z "$name" ]; then
-        echo -e "${RED}Error: Worktree not specified${NC}"
-        echo "Usage: pwt remove <worktree> [--with-branch] [--force-branch]"
-        exit 1
+        if [ -n "$PWT_WORKTREE" ]; then
+            name="$PWT_WORKTREE"
+        elif [[ "$PWD" == *"-worktrees/"* ]]; then
+            name=$(basename "$PWD")
+        else
+            echo -e "${RED}Error: Not in a worktree. Specify target.${NC}"
+            echo "Usage: pwt remove [worktree] [--with-branch] [--force-branch]"
+            exit 1
+        fi
+        echo -e "${BLUE}Removing current worktree: $name${NC}"
     fi
 
     local worktree_dir="$WORKTREES_DIR/$name"
@@ -2605,6 +2933,14 @@ cmd_doctor() {
         echo -e "${YELLOW}⚠${NC} lsof: not installed (recommended for port detection)"
     fi
 
+    # Check fzf
+    if command -v fzf &>/dev/null; then
+        local fzf_version=$(fzf --version 2>/dev/null | head -1 || echo "?")
+        echo -e "${GREEN}✓${NC} fzf: $fzf_version"
+    else
+        echo -e "${YELLOW}⚠${NC} fzf: not installed (needed for pwt select)"
+    fi
+
     echo ""
 
     # Check project configuration
@@ -2668,6 +3004,220 @@ cmd_doctor() {
     fi
 }
 
+# Command: select
+# Interactive worktree selector using fzf
+# Usage: pwt select [--preview]
+cmd_select() {
+    local preview=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --preview|-p)
+                preview=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    # Check if fzf is installed
+    if ! command -v fzf &>/dev/null; then
+        echo -e "${RED}Error: fzf is required for pwt select${NC}"
+        echo "Install with: brew install fzf"
+        exit 1
+    fi
+
+    # Build list of worktrees
+    local items=()
+
+    # Add main app
+    if [ -d "$MAIN_APP" ]; then
+        local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "main")
+        items+=("@ (main) - $main_branch")
+    fi
+
+    # Add worktrees
+    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+            local status=$(get_status_symbols "$dir")
+            [ -n "$status" ] && status=" [$status]"
+            items+=("$name - $branch$status")
+        done
+    fi
+
+    if [ ${#items[@]} -eq 0 ]; then
+        echo -e "${YELLOW}No worktrees found${NC}"
+        exit 0
+    fi
+
+    # Run fzf
+    local fzf_opts=(
+        --height=40%
+        --reverse
+        --header="Select worktree (Enter to switch, Esc to cancel)"
+    )
+
+    if [ "$preview" = true ]; then
+        fzf_opts+=(
+            --preview="name=\$(echo {} | cut -d' ' -f1); if [ \"\$name\" = \"@\" ]; then git -C \"$MAIN_APP\" diff --stat 2>/dev/null | head -20; else git -C \"$WORKTREES_DIR/\$name\" diff --stat 2>/dev/null | head -20; fi"
+            --preview-window=right:50%
+        )
+    fi
+
+    local selected
+    selected=$(printf '%s\n' "${items[@]}" | fzf "${fzf_opts[@]}")
+
+    if [ -z "$selected" ]; then
+        exit 0
+    fi
+
+    # Extract worktree name (first word before " - ")
+    local target=$(echo "$selected" | cut -d' ' -f1)
+
+    # Output for shell function to cd
+    if [ "$target" = "@" ]; then
+        echo "$MAIN_APP"
+    else
+        echo "$WORKTREES_DIR/$target"
+    fi
+}
+
+# Internal command: _select
+# Used by shell function to get selection and cd
+cmd__select() {
+    local result
+    result=$(cmd_select "$@")
+    echo "$result"
+}
+
+# Command: marker
+# Set/get/clear marker on worktree
+# Usage: pwt marker [worktree] [marker]
+#        pwt marker TICKET-123 🚧      # set marker
+#        pwt marker TICKET-123         # show marker
+#        pwt marker --clear            # clear current worktree marker
+#        pwt marker TICKET-123 --clear # clear specific marker
+cmd_marker() {
+    local target=""
+    local marker=""
+    local clear=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --clear|-c)
+                clear=true
+                shift
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+            *)
+                if [ -z "$target" ]; then
+                    target="$1"
+                else
+                    marker="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # If no target, use current worktree
+    if [ -z "$target" ]; then
+        if [ -n "$PWT_WORKTREE" ]; then
+            target="$PWT_WORKTREE"
+        else
+            # Try to detect from PWD
+            if [[ "$PWD" == *"-worktrees/"* ]]; then
+                target=$(basename "$PWD")
+            else
+                echo -e "${RED}Error: Not in a worktree. Specify target.${NC}"
+                exit 1
+            fi
+        fi
+    fi
+
+    # Verify worktree exists
+    local worktree_dir="$WORKTREES_DIR/$target"
+    if [ ! -d "$worktree_dir" ]; then
+        echo -e "${RED}Error: Worktree not found: $target${NC}"
+        exit 1
+    fi
+
+    # Clear marker
+    if [ "$clear" = true ]; then
+        update_metadata "$target" "marker" ""
+        echo -e "${GREEN}✓${NC} Cleared marker for $target"
+        return 0
+    fi
+
+    # Show current marker
+    if [ -z "$marker" ]; then
+        local current=$(get_metadata "$target" "marker")
+        if [ -n "$current" ]; then
+            echo "$current"
+        else
+            echo "(no marker)"
+        fi
+        return 0
+    fi
+
+    # Set marker
+    update_metadata "$target" "marker" "$marker"
+    echo -e "${GREEN}✓${NC} Set marker for $target: $marker"
+}
+
+# Command: for-each
+# Run command in all worktrees
+# Usage: pwt for-each <command...>
+cmd_for_each() {
+    if [ $# -eq 0 ]; then
+        echo -e "${RED}Error: No command specified${NC}"
+        echo "Usage: pwt for-each <command...>"
+        exit 1
+    fi
+
+    local cmd="$*"
+    local count=0
+
+    # Run in main app
+    echo -e "${BLUE}=== @ (main) ===${NC}"
+    (
+        cd "$MAIN_APP" || exit 1
+        unset PWT_WORKTREE
+        eval "$cmd"
+    )
+    echo ""
+
+    # Run in worktrees
+    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            count=$((count + 1))
+
+            echo -e "${BLUE}=== $name ===${NC}"
+            (
+                cd "$dir" || exit 1
+                export PWT_WORKTREE="$name"
+                export PWT_WORKTREE_PATH="$dir"
+                eval "$cmd"
+            )
+            echo ""
+        done
+    fi
+
+    echo -e "${GREEN}✓ Ran in $((count + 1)) worktrees${NC}"
+}
+
 # Command: shell-init
 # Output shell function for cd integration
 # Usage: eval "$(pwt shell-init)"
@@ -2680,19 +3230,63 @@ cmd_shell_init() {
 # Add to ~/.zshrc: eval "\$(pwt shell-init)"
 pwt() {
     if [[ "\$1" == "cd" ]]; then
+        local input="\$2"
         local target
-        target=\$("$pwt_path" _cd "\$2" 2>&1)
-        if [[ \$? -eq 0 ]] && [[ -d "\$target" ]]; then
-            builtin cd "\$target"
-            # Set PWT_WORKTREE for prompts and scripts
-            if [[ "\$target" == *"-worktrees/"* ]]; then
-                export PWT_WORKTREE=\$(basename "\$target")
-            else
-                unset PWT_WORKTREE
+
+        # Handle "-" for previous worktree (like cd -)
+        if [[ "\$input" == "-" ]]; then
+            if [[ -z "\$PWT_PREVIOUS_PATH" ]]; then
+                echo "No previous worktree" >&2
+                return 1
             fi
+            target="\$PWT_PREVIOUS_PATH"
         else
+            target=\$("$pwt_path" _cd "\$input" 2>&1)
+            if [[ \$? -ne 0 ]] || [[ ! -d "\$target" ]]; then
+                echo "\$target"
+                return 1
+            fi
+        fi
+
+        # Save current path as previous (if different)
+        if [[ "\$PWD" != "\$target" ]]; then
+            export PWT_PREVIOUS_PATH="\$PWD"
+        fi
+
+        builtin cd "\$target"
+
+        # Set PWT_WORKTREE for prompts and scripts
+        if [[ "\$target" == *"-worktrees/"* ]]; then
+            export PWT_WORKTREE=\$(basename "\$target")
+        else
+            unset PWT_WORKTREE
+        fi
+    elif [[ "\$1" == "select" ]]; then
+        # Interactive selection with cd
+        shift
+        local target
+        target=\$("$pwt_path" _select "\$@" 2>&1)
+        if [[ \$? -ne 0 ]] || [[ -z "\$target" ]]; then
+            [[ -n "\$target" ]] && echo "\$target"
+            return 0
+        fi
+        if [[ ! -d "\$target" ]]; then
             echo "\$target"
             return 1
+        fi
+
+        # Save current path as previous (if different)
+        if [[ "\$PWD" != "\$target" ]]; then
+            export PWT_PREVIOUS_PATH="\$PWD"
+        fi
+
+        builtin cd "\$target"
+
+        # Set PWT_WORKTREE for prompts and scripts
+        if [[ "\$target" == *"-worktrees/"* ]]; then
+            export PWT_WORKTREE=\$(basename "\$target")
+        else
+            unset PWT_WORKTREE
         fi
     else
         "$pwt_path" "\$@"
@@ -3018,8 +3612,28 @@ case "${1:-}" in
         shift  # remove "copy" from args
         cmd_copy "$@"
         ;;
+    marker)
+        require_project
+        shift  # remove "marker" from args
+        cmd_marker "$@"
+        ;;
+    for-each)
+        require_project
+        shift  # remove "for-each" from args
+        cmd_for_each "$@"
+        ;;
     doctor)
         cmd_doctor
+        ;;
+    select)
+        require_project --info-only
+        shift  # remove "select" from args
+        cmd_select "$@"
+        ;;
+    _select)
+        require_project --info-only
+        shift
+        cmd__select "$@"
         ;;
     shell-init)
         cmd_shell_init "$2"
@@ -3041,16 +3655,20 @@ case "${1:-}" in
         echo "Commands:"
         echo "  init [url]                     Initialize project (clone URL or configure current repo)"
         echo "  create <branch> [base] [desc]  Create new worktree (-e -a --from --from-current --dry-run)"
-        echo "  list [--dirty] [--porcelain]   List worktrees and status"
+        echo "  list [flags]                   List worktrees (-v/--verbose, --dirty, --porcelain)"
+        echo "  list statusline                Output for shell prompts"
+        echo "  select [--preview]             Interactive worktree selector (fzf)"
         echo "  info [worktree]                Show worktree details"
-        echo "  remove <worktree> [flags]      Remove worktree (--with-branch, --force-branch)"
-        echo "  cd [worktree|@]                Navigate to worktree (requires shell-init)"
+        echo "  remove [worktree] [flags]      Remove worktree (--with-branch, --force-branch)"
+        echo "  cd [worktree|@|-]              Navigate to worktree (@ main, - previous)"
         echo "  run <worktree> <cmd>           Run command in worktree"
+        echo "  for-each <cmd>                 Run command in all worktrees"
         echo "  editor [worktree]              Open worktree in editor"
         echo "  ai [worktree] [-- args]        Start AI tool in worktree"
         echo "  open [worktree]                Open worktree in Finder"
         echo "  diff <wt1> [wt2]               Show diff between worktrees"
         echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
+        echo "  marker [worktree] [emoji]      Set/show worktree marker (--clear)"
         echo "  server                         Start dev server (from Pwtfile)"
         echo "  fix-port [worktree]            Fix port conflict"
         echo "  auto-remove [target] [--dry-run] Remove worktrees merged into target"
@@ -3083,7 +3701,9 @@ case "${1:-}" in
         echo "Shell integration (add to ~/.zshrc):"
         echo "  eval \"\$(pwt shell-init)\""
         echo ""
-        echo "After shell-init, \$PWT_WORKTREE is set when in a worktree."
+        echo "After shell-init:"
+        echo "  \$PWT_WORKTREE      Current worktree name (when in worktree)"
+        echo "  \$PWT_PREVIOUS_PATH Previous path (enables 'pwt cd -')"
         ;;
     *)
         echo -e "${RED}Unknown command: $1${NC}"

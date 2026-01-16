@@ -9,6 +9,7 @@ A generic tool for managing git worktrees across multiple projects.
 | git | ✅ | Core worktree management |
 | jq | ✅ | JSON metadata storage |
 | lsof | Recommended | Port conflict detection |
+| fzf | Recommended | Interactive selection (pwt select) |
 | bun/node | Optional | Pwtfile.js support |
 | ruby | Optional | Pwtfile.rb support |
 
@@ -36,21 +37,24 @@ pwt remove feature-branch
 |---------|-------------|
 | `init [url]` | Initialize project (clone from URL or configure current repo) |
 | `create <branch> [base] [desc]` | Create new worktree (see flags below) |
-| `list [flags]` | List worktrees and status |
+| `list [flags]` | List worktrees and status (see flags below) |
+| `select [--preview]` | Interactive worktree selector (requires fzf) |
 | `info [worktree]` | Show worktree details |
-| `remove <worktree> [flags]` | Remove worktree (see flags below) |
-| `cd [worktree\|@]` | Navigate to worktree (requires shell-init) |
+| `remove [worktree] [flags]` | Remove worktree (current if no arg) |
+| `cd [worktree\|@\|-]` | Navigate to worktree (@ main, - previous) |
 | `run <worktree> <cmd>` | Run command in worktree without cd'ing |
+| `for-each <cmd>` | Run command in all worktrees |
 | `editor [worktree]` | Open worktree in configured editor |
 | `ai [worktree] [-- args]` | Start AI tool in worktree |
 | `open [worktree]` | Open worktree in Finder |
 | `diff <wt1> [wt2]` | Show diff between worktrees |
 | `copy <src> <dest> <patterns>` | Copy files between worktrees |
+| `marker [worktree] [emoji]` | Set/show worktree marker |
 | `server` | Start development server |
 | `fix-port [worktree]` | Resolve port conflict |
 | `auto-remove [target] [flags]` | Remove merged worktrees |
 | `doctor` | Check system health and configuration |
-| `shell-init` | Output shell function for cd integration |
+| `shell-init` | Output shell function for cd/select integration |
 | `meta [action]` | Manage metadata |
 | `project [action]` | Manage project configs |
 | `config [key] [value]` | Configure current project |
@@ -69,8 +73,16 @@ pwt remove feature-branch
 
 | Flag | Description |
 |------|-------------|
+| `-v, --verbose` | Show detailed output (original format) |
 | `--dirty` | Only show worktrees with uncommitted changes |
 | `--porcelain` | Output machine-readable JSON |
+| `statusline` | Output for shell prompts |
+
+### Marker Flags
+
+| Flag | Description |
+|------|-------------|
+| `--clear, -c` | Clear marker from worktree |
 
 ### Remove Flags
 
@@ -147,6 +159,7 @@ server() {
 | `pwtfile_copy <path>` | Copy from main app (.env, config files) |
 | `pwtfile_env <var> <value>` | Set environment variable |
 | `pwtfile_run <cmd>` | Run command (silent on error) |
+| `pwtfile_hash_port [name] [base]` | Deterministic port from worktree name |
 
 ```bash
 # Pwtfile
@@ -237,11 +250,28 @@ Then restart your terminal or run `source ~/.zshrc`.
 pwt cd TICKET-123   # Go to worktree
 pwt cd              # Go to main worktree
 pwt cd @            # Same as above (explicit)
+pwt cd -            # Go to previous worktree (like cd -)
 ```
 
-### Environment Variable
+The `-` shortcut works across projects:
 
-When navigating via `pwt cd`, the `$PWT_WORKTREE` environment variable is set to the worktree name. Useful for:
+```bash
+pwt acme cd TICKET-123      # Go to acme worktree
+pwt planning-center cd TASK-1  # Go to planning-center worktree
+pwt cd -                       # Back to acme/TICKET-123
+pwt cd -                       # Back to planning-center/TASK-1
+```
+
+### Environment Variables
+
+When navigating via `pwt cd`, these environment variables are set:
+
+| Variable | Description |
+|----------|-------------|
+| `$PWT_WORKTREE` | Current worktree name (unset when in main app) |
+| `$PWT_PREVIOUS_PATH` | Previous directory path (enables `pwt cd -`) |
+
+Useful for:
 - Custom shell prompts
 - Scripts that need to know the current worktree
 - Integration with other tools
@@ -280,6 +310,7 @@ pwt create TICKET-123 master --dry-run
 
 # Navigate to worktree (requires shell-init)
 pwt cd TICKET-123
+pwt cd -              # Go back to previous location
 
 # List all worktrees with status
 pwt list
@@ -327,11 +358,30 @@ pwt auto-remove master
 # Remove worktree only
 pwt remove TICKET-123
 
+# Remove current worktree (when inside one)
+pwt remove
+
 # Remove worktree + delete branch (if merged)
 pwt remove TICKET-123 --with-branch
 
 # Force remove worktree + delete branch
 pwt remove TICKET-123 --force-branch
+
+# Interactive worktree selection (fzf)
+pwt select
+pwt select --preview        # with diff preview
+
+# Run command in all worktrees
+pwt for-each git status -s
+pwt for-each npm test
+
+# Set worktree markers
+pwt marker TICKET-123 🚧     # set marker
+pwt marker                   # show current marker
+pwt marker --clear           # clear marker
+
+# Get statusline for shell prompts
+pwt list statusline          # outputs: [TICKET-123 +! ↑3]
 
 # Use project alias
 pwt myapp list

@@ -15,10 +15,18 @@ A generic tool for managing git worktrees across multiple projects.
 ## Quick Start
 
 ```bash
-# Zero-config: just run from any git project
+# Option 1: Clone and configure in one step
+pwt init git@github.com:user/myapp.git
+pwt myapp create feature-branch master "my feature"
+
+# Option 2: Configure existing repo
 cd ~/Projects/myapp
+pwt init
 pwt create feature-branch master "my feature"
+
+# Basic workflow
 pwt list
+pwt server
 pwt remove feature-branch
 ```
 
@@ -26,6 +34,7 @@ pwt remove feature-branch
 
 | Command | Description |
 |---------|-------------|
+| `init [url]` | Initialize project (clone from URL or configure current repo) |
 | `create <branch> [base] [desc]` | Create new worktree |
 | `list` | List worktrees and status |
 | `info [worktree]` | Show worktree details |
@@ -108,10 +117,28 @@ setup() {
 ### Project Config
 
 ```bash
-pwt project init myproject
-pwt project set myproject main_app ~/Projects/myapp
-pwt project set myproject worktrees_dir ~/Projects/myapp-worktrees
-pwt project set myproject branch_prefix "jp/"
+# Initialize from URL (clone + configure)
+pwt init git@github.com:user/myapp.git
+
+# Or initialize existing repo
+cd ~/Projects/myapp
+pwt init
+
+# Customize config
+pwt config branch_prefix "jp/"
+pwt config worktrees_dir ~/Projects/myapp-worktrees
+```
+
+Config is stored in `~/.pwt/projects/<name>/config.json`:
+
+```json
+{
+  "path": "/Users/you/Projects/myapp",
+  "remote": "git@github.com:user/myapp.git",
+  "worktrees_dir": "/Users/you/Projects/myapp-worktrees",
+  "branch_prefix": "jp/",
+  "aliases": ["app", "myapp"]
+}
 ```
 
 ### Directory Structure
@@ -152,6 +179,13 @@ source ~/.zshrc
 ## Examples
 
 ```bash
+# Initialize new project from URL
+pwt init git@github.com:company/project.git
+
+# Initialize existing repo
+cd ~/Projects/existing-project
+pwt init
+
 # Create worktree for a ticket
 pwt create TICKET-123 master "implement feature"
 
@@ -169,5 +203,9 @@ pwt remove TICKET-123
 
 # Clean up all merged worktrees
 pwt auto-remove master
+
+# Use project alias
+pwt myapp list
+pwt myapp create feature master "new feature"
 ```
 

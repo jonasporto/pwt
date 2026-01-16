@@ -167,9 +167,19 @@ auto_detect_project() {
 
 # Load project configuration into global variables
 # Falls back to auto-detect if config doesn't exist
+# Supports aliases: config can have "alias": "real-project-name"
 load_project_config() {
     local project="$1"
     local config_file="$PWT_PROJECTS_DIR/$project/config.json"
+
+    # Check for alias resolution
+    if [ -f "$config_file" ]; then
+        local alias_target=$(jq -r '.alias // empty' "$config_file")
+        if [ -n "$alias_target" ]; then
+            project="$alias_target"
+            config_file="$PWT_PROJECTS_DIR/$project/config.json"
+        fi
+    fi
 
     CURRENT_PROJECT="$project"
 
@@ -383,11 +393,17 @@ pwtfile_run() {
 read_port_base() {
     local pwtfile=""
 
-    # Find Pwtfile in project root
-    if [ -n "$MAIN_APP" ]; then
-        if [ -f "$MAIN_APP/Pwtfile" ]; then
-            pwtfile="$MAIN_APP/Pwtfile"
-        fi
+    # Check project config for custom pwtfile path first
+    local config_pwtfile=$(get_project_config "$CURRENT_PROJECT" "pwtfile")
+    if [ -n "$config_pwtfile" ]; then
+        config_pwtfile="${config_pwtfile/#\~/$HOME}"
+        [[ "$config_pwtfile" != /* ]] && config_pwtfile="$MAIN_APP/$config_pwtfile"
+        [ -f "$config_pwtfile" ] && pwtfile="$config_pwtfile"
+    fi
+
+    # Fallback to default location
+    if [ -z "$pwtfile" ] && [ -n "$MAIN_APP" ] && [ -f "$MAIN_APP/Pwtfile" ]; then
+        pwtfile="$MAIN_APP/Pwtfile"
     fi
 
     [ -z "$pwtfile" ] && return 0
@@ -471,13 +487,26 @@ run_pwtfile() {
     export PROJECT="$PWT_PROJECT"
 
     # Find and run project Pwtfile
+    # Check project config for custom pwtfile path first
     local project_pwtfile=""
-    if [ -f "$MAIN_APP/Pwtfile" ]; then
-        project_pwtfile="$MAIN_APP/Pwtfile"
-    elif [ -f "$MAIN_APP/Pwtfile.rb" ]; then
-        project_pwtfile="$MAIN_APP/Pwtfile.rb"
-    elif [ -f "$MAIN_APP/Pwtfile.js" ]; then
-        project_pwtfile="$MAIN_APP/Pwtfile.js"
+    local config_pwtfile=$(get_project_config "$CURRENT_PROJECT" "pwtfile")
+
+    if [ -n "$config_pwtfile" ]; then
+        # Expand ~ and resolve relative paths from MAIN_APP
+        config_pwtfile="${config_pwtfile/#\~/$HOME}"
+        [[ "$config_pwtfile" != /* ]] && config_pwtfile="$MAIN_APP/$config_pwtfile"
+        [ -f "$config_pwtfile" ] && project_pwtfile="$config_pwtfile"
+    fi
+
+    # Fallback to default locations
+    if [ -z "$project_pwtfile" ]; then
+        if [ -f "$MAIN_APP/Pwtfile" ]; then
+            project_pwtfile="$MAIN_APP/Pwtfile"
+        elif [ -f "$MAIN_APP/Pwtfile.rb" ]; then
+            project_pwtfile="$MAIN_APP/Pwtfile.rb"
+        elif [ -f "$MAIN_APP/Pwtfile.js" ]; then
+            project_pwtfile="$MAIN_APP/Pwtfile.js"
+        fi
     fi
 
     [ -n "$project_pwtfile" ] && run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile"

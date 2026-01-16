@@ -18,11 +18,11 @@ pwt remove feature-branch
 |---------|-------------|
 | `create <branch> [base] [desc]` | Create new worktree |
 | `list` | List worktrees and status |
-| `info [name]` | Show worktree details |
-| `remove <name>` | Remove worktree |
+| `info [worktree]` | Show worktree details |
+| `remove <worktree>` | Remove worktree |
 | `server` | Start development server |
-| `fix-port [name]` | Resolve port conflict |
-| `auto-remove [branch]` | Remove merged worktrees |
+| `fix-port [worktree]` | Resolve port conflict |
+| `auto-remove [target]` | Remove merged worktrees |
 | `meta [action]` | Manage metadata |
 | `project [action]` | Manage project configs |
 | `config [key] [value]` | Configure current project |

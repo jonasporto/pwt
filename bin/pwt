@@ -40,6 +40,7 @@ CURRENT_PROJECT=""
 MAIN_APP=""
 WORKTREES_DIR=""
 BRANCH_PREFIX=""
+PROJECT_REMOTE=""
 BASE_PORT=5000
 
 # Colors
@@ -226,7 +227,11 @@ load_project_config() {
 
 # Require project context for commands that need it
 # Auto-creates worktrees directory if needed
+# Usage: require_project [--clone] to auto-clone from remote
 require_project() {
+    local auto_clone=false
+    [ "${1:-}" = "--clone" ] && auto_clone=true
+
     if [ -z "$CURRENT_PROJECT" ]; then
         echo -e "${RED}Error: No project detected${NC}"
         echo ""
@@ -243,10 +248,56 @@ require_project() {
         exit 1
     fi
 
+    # Check if main app exists
+    if [ ! -d "$MAIN_APP" ]; then
+        if [ -n "$PROJECT_REMOTE" ]; then
+            if [ "$auto_clone" = true ]; then
+                echo -e "${BLUE}Cloning from remote: $PROJECT_REMOTE${NC}"
+                local parent_dir=$(dirname "$MAIN_APP")
+                mkdir -p "$parent_dir"
+                if git clone "$PROJECT_REMOTE" "$MAIN_APP"; then
+                    echo -e "${GREEN}✓ Cloned successfully${NC}"
+                else
+                    echo -e "${RED}Error: Failed to clone from $PROJECT_REMOTE${NC}"
+                    exit 1
+                fi
+            else
+                echo -e "${RED}Error: Project not cloned${NC}"
+                echo ""
+                echo "Run: pwt clone $CURRENT_PROJECT"
+                echo "Or:  pwt $CURRENT_PROJECT create <branch> <base> <desc>"
+                exit 1
+            fi
+        else
+            echo -e "${RED}Error: Main app directory not found: $MAIN_APP${NC}"
+            exit 1
+        fi
+    fi
+
     # Auto-create worktrees directory if it doesn't exist
     if [ ! -d "$WORKTREES_DIR" ]; then
         echo -e "${BLUE}Creating worktrees directory: $WORKTREES_DIR${NC}"
         mkdir -p "$WORKTREES_DIR"
+    fi
+}
+
+# Clone project from remote
+cmd_clone() {
+    if [ ! -d "$MAIN_APP" ] && [ -n "$PROJECT_REMOTE" ]; then
+        echo -e "${BLUE}Cloning from remote: $PROJECT_REMOTE${NC}"
+        local parent_dir=$(dirname "$MAIN_APP")
+        mkdir -p "$parent_dir"
+        if git clone "$PROJECT_REMOTE" "$MAIN_APP"; then
+            echo -e "${GREEN}✓ Cloned successfully to $MAIN_APP${NC}"
+        else
+            echo -e "${RED}Error: Failed to clone from $PROJECT_REMOTE${NC}"
+            exit 1
+        fi
+    elif [ -d "$MAIN_APP" ]; then
+        echo -e "${YELLOW}Already cloned: $MAIN_APP${NC}"
+    else
+        echo -e "${RED}Error: No remote configured for $CURRENT_PROJECT${NC}"
+        exit 1
     fi
 }
 
@@ -2020,8 +2071,11 @@ detect_project
 
 # Main command dispatch
 case "${1:-}" in
+    clone)
+        cmd_clone
+        ;;
     create)
-        require_project
+        require_project --clone
         cmd_create "$2" "$3" "$4"
         ;;
     list|ls)

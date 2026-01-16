@@ -524,3 +524,76 @@ pwtfile_symlink "vendor/some-submodule"  # ❌ Bad
 # DO symlink their dependencies
 pwtfile_symlink "vendor/some-submodule/node_modules"  # ✅ OK
 ```
+
+---
+
+## How do I access my worktree remotely?
+
+**Use case:** You're at the mechanic, coffee shop, or on your phone and want to access your running dev server.
+
+### pwt Doesn't Handle This (Out of Scope)
+
+pwt is a local worktree manager. For remote access, use dedicated tunneling tools:
+
+| Tool | Best For |
+|------|----------|
+| [ngrok](https://ngrok.com) | Quick temporary tunnels |
+| [Tailscale](https://tailscale.com) | Permanent VPN to your machines |
+| [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) | Production-grade, free |
+| VS Code Remote | Full IDE access |
+
+### Option 1: ngrok (Quick & Temporary)
+
+```bash
+# Pwtfile
+server() {
+    PORT="$PWT_PORT" bin/dev &
+    ngrok http "$PWT_PORT"
+    # Prints: https://abc123.ngrok.io → localhost:5002
+}
+```
+
+Access from phone: `https://abc123.ngrok.io`
+
+### Option 2: Tailscale (Permanent VPN)
+
+```bash
+# Install tailscale on dev machine and phone
+# Then access directly:
+curl http://my-macbook:5002
+```
+
+No tunnels needed - devices see each other directly.
+
+### Option 3: Cloudflare Tunnel (Free & Permanent)
+
+```bash
+# One-time setup
+cloudflared tunnel create dev-tunnel
+
+# Pwtfile
+server() {
+    PORT="$PWT_PORT" bin/dev &
+    cloudflared tunnel run --url "http://localhost:$PWT_PORT" dev-tunnel
+}
+```
+
+### Option 4: SSH + Port Forwarding
+
+```bash
+# From phone/laptop, forward remote port to local
+ssh -L 5002:localhost:5002 user@dev-machine
+
+# Then access localhost:5002 on your phone
+```
+
+### Recommendation
+
+| Situation | Use |
+|-----------|-----|
+| Quick demo/testing | ngrok |
+| Always need access | Tailscale |
+| Public URL needed | Cloudflare Tunnel |
+| Already have SSH | Port forwarding |
+
+**Note:** Some tools mentioned (like the one with "encrypted remote relay") bundle this functionality. pwt intentionally stays focused on worktree management and delegates networking to specialized tools.

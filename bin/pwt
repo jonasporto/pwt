@@ -290,14 +290,14 @@ require_project() {
     fi
 }
 
-# Clone project from remote
-# Usage: cmd_clone [url]
-#   If url provided: clone new project from url
-#   If no url: clone configured project from PROJECT_REMOTE
-cmd_clone() {
+# Initialize a project (clone from URL or configure current directory)
+# Usage: cmd_init [url]
+#   With url: clone and configure as pwt project
+#   Without url: configure current git repo as pwt project
+cmd_init() {
     local url="${1:-}"
 
-    # If URL provided, clone new project
+    # If URL provided, clone and configure
     if [ -n "$url" ]; then
         # Extract project name from URL
         local project_name=$(basename "$url" .git)
@@ -305,43 +305,83 @@ cmd_clone() {
 
         if [ -d "$target_dir" ]; then
             echo -e "${YELLOW}Already exists: $target_dir${NC}"
+            echo "To configure: cd $target_dir && pwt init"
             return 0
         fi
 
         echo -e "${BLUE}Cloning: $url${NC}"
-        if git clone "$url" "$target_dir"; then
-            echo -e "${GREEN}✓ Cloned to $target_dir${NC}"
-            echo ""
-            echo "To configure as pwt project:"
-            echo -e "  ${GREEN}cd $target_dir && pwt init${NC}"
-        else
+        if ! git clone "$url" "$target_dir"; then
             echo -e "${RED}Error: Failed to clone${NC}"
             exit 1
         fi
+
+        # Configure the project
+        local project_dir="$PWT_PROJECTS_DIR/$project_name"
+        mkdir -p "$project_dir"
+
+        cat > "$project_dir/config.json" << EOF
+{
+  "path": "$target_dir",
+  "remote": "$url",
+  "worktrees_dir": "${target_dir}-worktrees"
+}
+EOF
+
+        echo -e "${GREEN}✓ Cloned and configured: $project_name${NC}"
+        echo ""
+        echo "Usage:"
+        echo -e "  ${GREEN}pwt $project_name list${NC}"
+        echo -e "  ${GREEN}pwt $project_name create TICKET base \"description\"${NC}"
         return 0
     fi
 
-    # Clone configured project
-    if [ ! -d "$MAIN_APP" ] && [ -n "$PROJECT_REMOTE" ]; then
-        echo -e "${BLUE}Cloning from remote: $PROJECT_REMOTE${NC}"
-        local parent_dir=$(dirname "$MAIN_APP")
-        mkdir -p "$parent_dir"
-        if git clone "$PROJECT_REMOTE" "$MAIN_APP"; then
-            echo -e "${GREEN}✓ Cloned successfully to $MAIN_APP${NC}"
-        else
-            echo -e "${RED}Error: Failed to clone from $PROJECT_REMOTE${NC}"
-            exit 1
-        fi
-    elif [ -d "$MAIN_APP" ]; then
-        echo -e "${YELLOW}Already cloned: $MAIN_APP${NC}"
-    else
-        echo -e "${RED}Error: No remote configured for $CURRENT_PROJECT${NC}"
+    # No URL - configure current directory
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        echo -e "${RED}Error: Not a git repository${NC}"
         echo ""
         echo "Usage:"
-        echo "  pwt <project> clone     # Clone configured project"
-        echo "  pwt clone <url>         # Clone new project from URL"
+        echo "  pwt init <url>    # Clone and configure new project"
+        echo "  cd <repo> && pwt init  # Configure existing repo"
         exit 1
     fi
+
+    local repo_root=$(git rev-parse --show-toplevel)
+    local project_name=$(basename "$repo_root")
+    local remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+
+    # Check if already configured
+    if [ -f "$PWT_PROJECTS_DIR/$project_name/config.json" ]; then
+        echo -e "${YELLOW}Already configured: $project_name${NC}"
+        echo ""
+        cat "$PWT_PROJECTS_DIR/$project_name/config.json"
+        return 0
+    fi
+
+    # Create config
+    local project_dir="$PWT_PROJECTS_DIR/$project_name"
+    mkdir -p "$project_dir"
+
+    local config="{
+  \"path\": \"$repo_root\",
+  \"worktrees_dir\": \"${repo_root}-worktrees\""
+
+    if [ -n "$remote_url" ]; then
+        config="$config,
+  \"remote\": \"$remote_url\""
+    fi
+
+    config="$config
+}"
+
+    echo "$config" > "$project_dir/config.json"
+
+    echo -e "${GREEN}✓ Configured: $project_name${NC}"
+    echo ""
+    cat "$project_dir/config.json"
+    echo ""
+    echo "Usage:"
+    echo -e "  ${GREEN}pwt $project_name list${NC}"
+    echo -e "  ${GREEN}pwt $project_name create TICKET base \"description\"${NC}"
 }
 
 # Atomic write to metadata file with file locking
@@ -2167,9 +2207,8 @@ detect_project
 
 # Main command dispatch
 case "${1:-}" in
-    clone)
-        require_project --info-only
-        cmd_clone "$2"
+    init)
+        cmd_init "$2"
         ;;
     create)
         require_project --clone

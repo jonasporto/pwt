@@ -1525,8 +1525,8 @@ cmd_list_compact() {
     echo ""
 
     # Print header
-    printf "  %-2s %-20s %-3s %-5s %-7s %-7s %-5s %s\n" "" "Worktree" "Mkr" "Stat" "main↕" "Remote" "Age" "Message"
-    printf "  %-2s %-20s %-3s %-5s %-7s %-7s %-5s %s\n" "--" "--------------------" "---" "-----" "-------" "-------" "-----" "-------------------"
+    printf "  %-2s %-20s %-3s %-5s %-11s %-11s %-5s %s\n" "" "Worktree" "Mkr" "Stat" "main↕" "Remote" "Age" "Message"
+    printf "  %-2s %-20s %-3s %-5s %-11s %-11s %-5s %s\n" "--" "--------------------" "---" "-----" "-----------" "-----------" "-----" "-------------------"
 
     # Main app row
     local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
@@ -1548,7 +1548,7 @@ cmd_list_compact() {
     local main_status_colored="$main_status"
     [ -n "$main_status" ] && main_status_colored="${YELLOW}${main_status}${NC}"
 
-    printf "  ${YELLOW}%-2s${NC} %-20s %-3s %-5s %-7s %-7s %-5s %s\n" \
+    printf "  ${YELLOW}%-2s${NC} %-20s %-3s %-5s %-11s %-11s %-5s %s\n" \
         "$main_marker" \
         "${main_branch:0:20}" \
         "" \
@@ -1611,7 +1611,7 @@ cmd_list_compact() {
             # Message (truncate)
             local msg=$(git -C "$dir" log -1 --format=%s 2>/dev/null | cut -c1-22)
 
-            printf "  ${YELLOW}%-2s${NC} %-20s %-3s %-5s %-7s %-7s %-5s %s\n" \
+            printf "  ${YELLOW}%-2s${NC} %-20s %-3s %-5s %-11s %-11s %-5s %s\n" \
                 "$marker" \
                 "$display_name" \
                 "${custom_marker:-}" \

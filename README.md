@@ -2,6 +2,16 @@
 
 A generic tool for managing git worktrees across multiple projects.
 
+## Dependencies
+
+| Dependency | Required | Purpose |
+|------------|----------|---------|
+| git | ✅ | Core worktree management |
+| jq | ✅ | JSON metadata storage |
+| lsof | Recommended | Port conflict detection |
+| bun/node | Optional | Pwtfile.js support |
+| ruby | Optional | Pwtfile.rb support |
+
 ## Quick Start
 
 ```bash
@@ -26,6 +36,20 @@ pwt remove feature-branch
 | `meta [action]` | Manage metadata |
 | `project [action]` | Manage project configs |
 | `config [key] [value]` | Configure current project |
+
+## Worktree Naming
+
+The `<worktree>` identifier is derived from the `<branch>` input:
+
+| Branch Input | Worktree Name |
+|--------------|---------------|
+| `PROJ-1234` | `PROJ-1234` |
+| `feature/PROJ-1234-auth` | `PROJ-1234` |
+| `jp/PROJ-1234-fix-bug` | `PROJ-1234` |
+| `feature/my-feature` | `my-feature` |
+| `bugfix/fix_something` | `fix_something` |
+
+Ticket pattern is extracted when present. Otherwise, the branch suffix is sanitized for directory use.
 
 ## Project Selection
 
@@ -66,7 +90,7 @@ server() {
 | `$PWT_WORKTREE` | Worktree name |
 | `$PWT_WORKTREE_PATH` | Full path to worktree |
 | `$PWT_BRANCH` | Git branch name |
-| `$PWT_TICKET` | Extracted ticket (e.g., ACME-1234) |
+| `$PWT_TICKET` | Extracted ticket (e.g., PROJ-1234) |
 | `$PWT_PROJECT` | Project name |
 | `$MAIN_APP` | Path to main app |
 
@@ -150,14 +174,3 @@ pwt remove TICKET-123
 pwt auto-remove master
 ```
 
-## Migration from acme-worktree
-
-pwt is the evolution of acme-worktree with multi-project support:
-
-| Old | New |
-|-----|-----|
-| `acme-worktree create` | `pwt create` |
-| `acme-worktree list` | `pwt list` |
-| `acme-worktree remove` | `pwt remove` |
-
-The metadata and configuration are fully compatible.

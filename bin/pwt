@@ -49,6 +49,17 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Cross-platform sed in-place edit (BSD/GNU compatible)
+sed_inplace() {
+    local expr="$1"
+    local file="$2"
+    if sed --version >/dev/null 2>&1; then
+        sed -i "$expr" "$file"        # GNU sed
+    else
+        sed -i '' "$expr" "$file"     # BSD sed (macOS)
+    fi
+}
+
 # Initialize PWT directory
 init_pwt() {
     # Create directory structure if it doesn't exist
@@ -336,7 +347,7 @@ pwtfile_env() {
     local value="$2"
     if [ -f .env ]; then
         if grep -q "^${key}=" .env; then
-            sed -i '' "s|^${key}=.*|${key}=${value}|" .env
+            sed_inplace "s|^${key}=.*|${key}=${value}|" .env
         else
             echo "${key}=${value}" >> .env
         fi
@@ -347,7 +358,7 @@ pwtfile_replace() {
     local file="$1"
     local from="$2"
     local to="$3"
-    [ -f "$file" ] && sed -i '' "s|${from}|${to}|g" "$file"
+    [ -f "$file" ] && sed_inplace "s|${from}|${to}|g" "$file"
 }
 
 pwtfile_database() {
@@ -442,7 +453,16 @@ run_single_pwtfile() {
 run_pwtfile() {
     local phase="$1"
 
-    # Export context for Pwtfiles
+    # Export canonical PWT_* variables (always available)
+    export PWT_PORT="${PWT_PORT:-}"
+    export PWT_WORKTREE="${PWT_WORKTREE:-}"
+    export PWT_WORKTREE_PATH="${PWT_WORKTREE_PATH:-}"
+    export PWT_BRANCH="${PWT_BRANCH:-}"
+    export PWT_TICKET="${PWT_TICKET:-}"
+    export PWT_PROJECT="${PWT_PROJECT:-$CURRENT_PROJECT}"
+    export MAIN_APP="${MAIN_APP:-}"
+
+    # Back-compat aliases (short names)
     export PORT="$PWT_PORT"
     export WORKTREE="$PWT_WORKTREE"
     export WORKTREE_PATH="$PWT_WORKTREE_PATH"
@@ -531,7 +551,7 @@ init_project() {
   "pre_remove_commands": []
 }
 EOF
-        sed -i '' "s/PROJECT_NAME/$project/" "$project_dir/config.json"
+        sed_inplace "s/PROJECT_NAME/$project/" "$project_dir/config.json"
         echo -e "${GREEN}✓ Created project config: $project_dir${NC}"
     fi
 }
@@ -815,9 +835,17 @@ cmd_create() {
     # Ensure worktrees_dir exists
     mkdir -p "$WORKTREES_DIR"
 
-    # Extract name for directory (without port)
+    # Extract worktree name for directory
+    # If branch has ticket (ACME-XXXXX), use ticket as worktree name
+    # Otherwise, sanitize branch name for directory use
     local ticket_name=$(extract_ticket_name "$branch")
-    local worktree_name="${ticket_name}"
+    local worktree_name
+    if [[ "$ticket_name" =~ ^ACME-[0-9]+$ ]]; then
+        worktree_name="$ticket_name"
+    else
+        # Sanitize branch name: remove path prefix, replace invalid chars with dash
+        worktree_name=$(echo "$branch" | sed -E 's|.*/||; s|[^A-Za-z0-9._-]|-|g')
+    fi
     local worktree_dir="$WORKTREES_DIR/$worktree_name"
 
     # Check if worktree already exists
@@ -1004,6 +1032,7 @@ check_port_status() {
 # IMPORTANT: Also checks for uncommitted changes to avoid data loss
 check_merge_status() {
     local dir="$1"
+    local target="${2:-master}"
     local wt_commit=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
 
     if [ -z "$wt_commit" ]; then
@@ -1024,19 +1053,19 @@ check_merge_status() {
         return
     fi
 
-    # Fetch master to have updated reference
+    # Fetch target branch to have updated reference
     cd "$MAIN_APP"
-    git fetch origin master --quiet 2>/dev/null || true
+    git fetch origin "$target" --quiet 2>/dev/null || true
 
-    if git merge-base --is-ancestor "$wt_commit" "origin/master" 2>/dev/null; then
-        # Check if branch ever diverged from master
+    if git merge-base --is-ancestor "$wt_commit" "origin/$target" 2>/dev/null; then
+        # Check if branch ever diverged from target
         # If merge-base equals HEAD, branch never had unique commits
-        local merge_base=$(git -C "$dir" merge-base HEAD origin/master 2>/dev/null)
+        local merge_base=$(git -C "$dir" merge-base HEAD "origin/$target" 2>/dev/null)
         if [ "$merge_base" = "$wt_commit" ]; then
             # Branch never diverged - no work done yet
             echo -e "${BLUE}[clean]${NC}"
         else
-            # Branch had commits that are now in master
+            # Branch had commits that are now in target
             echo -e "${GREEN}[merged]${NC}"
         fi
     else
@@ -1048,8 +1077,9 @@ check_merge_status() {
 cmd_list() {
     echo -e "${BLUE}Worktrees (${CURRENT_PROJECT}):${NC}\n"
 
-    # Main app
+    # Main app - also used as default target for merge status
     local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
+    local default_target="${main_branch:-master}"
     local main_commit=$(git -C "$MAIN_APP" rev-parse --short HEAD 2>/dev/null || echo "?")
     echo -e "  ${YELLOW}${CURRENT_PROJECT}${NC} (main)"
     echo -e "    Branch: $main_branch @ $main_commit"
@@ -1180,7 +1210,7 @@ cmd_list() {
 
                 # Merge status
                 echo -n "    Status: "
-                local merge_status=$(check_merge_status "$dir")
+                local merge_status=$(check_merge_status "$dir" "$default_target")
                 echo -e "$merge_status"
                 if [[ "$merge_status" == *"merged"* ]] || [[ "$merge_status" == *"clean"* ]]; then
                     has_merged=true
@@ -1734,15 +1764,15 @@ cmd_fix_port() {
 
     # 1. Update .env
     if [ -f "$worktree_dir/.env" ]; then
-        sed -i '' "s/DEFAULT_URL=localhost:$old_port/DEFAULT_URL=localhost:$new_port/" "$worktree_dir/.env"
-        sed -i '' "s/WORKTREE_DB_SUFFIX=_wt$old_port/WORKTREE_DB_SUFFIX=_wt$new_port/" "$worktree_dir/.env"
+        sed_inplace "s/DEFAULT_URL=localhost:$old_port/DEFAULT_URL=localhost:$new_port/" "$worktree_dir/.env"
+        sed_inplace "s/WORKTREE_DB_SUFFIX=_wt$old_port/WORKTREE_DB_SUFFIX=_wt$new_port/" "$worktree_dir/.env"
         echo -e "  ${GREEN}✓${NC} .env updated"
     fi
 
     # 2. Update database.yml
     if [ -f "$worktree_dir/config/database.yml" ]; then
-        sed -i '' "s/acme_test_wt$old_port/acme_test_wt$new_port/g" "$worktree_dir/config/database.yml"
-        sed -i '' "s/reports_generator_test_wt$old_port/reports_generator_test_wt$new_port/g" "$worktree_dir/config/database.yml"
+        sed_inplace "s/acme_test_wt$old_port/acme_test_wt$new_port/g" "$worktree_dir/config/database.yml"
+        sed_inplace "s/reports_generator_test_wt$old_port/reports_generator_test_wt$new_port/g" "$worktree_dir/config/database.yml"
         echo -e "  ${GREEN}✓${NC} database.yml updated"
     fi
 

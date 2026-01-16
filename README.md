@@ -388,3 +388,36 @@ pwt myapp list
 pwt myapp create feature master "new feature"
 ```
 
+## FAQ
+
+### How does pwt handle dependencies across worktrees?
+
+Each worktree is an independent checkout, so dependencies (node_modules, vendor/bundle) need to be managed. pwt offers two strategies via **Pwtfile helpers**:
+
+**1. Symlinks (Share Dependencies)**
+```bash
+setup() {
+    pwtfile_symlink "node_modules"   # Share with main app
+    pwtfile_symlink "vendor/bundle"  # Share Ruby gems
+}
+```
+Creates symlinks to main app's dependencies. Saves disk space and install time.
+
+**2. Copy (Independent Config)**
+```bash
+setup() {
+    pwtfile_copy ".env"              # Copy env file
+    pwtfile_copy "config/master.key" # Copy secrets
+}
+```
+For files that might need per-worktree customization.
+
+**Trade-offs:**
+
+| Strategy | Pros | Cons |
+|----------|------|------|
+| Symlink | Saves disk, instant setup | Changes affect all worktrees |
+| Copy | Independent per worktree | Uses more disk, can get stale |
+
+**Note:** If your branch changes `package.json` or `Gemfile`, symlinked dependencies may not match. Run `npm install` or `bundle install` in the worktree to create local copies.
+

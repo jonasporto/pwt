@@ -100,7 +100,7 @@ detect_project() {
             local config_file="$project_dir/config.json"
             [ -f "$config_file" ] || continue
 
-            local main_app=$(jq -r '.main_app // empty' "$config_file")
+            local main_app=$(jq -r '.path // .main_app // empty' "$config_file")
             local worktrees_dir=$(jq -r '.worktrees_dir // empty' "$config_file")
 
             # Check if current dir is main_app or inside worktrees_dir
@@ -699,6 +699,52 @@ get_remote_divergence() {
 is_previous_worktree() {
     local path="$1"
     [ -n "$PWT_PREVIOUS_PATH" ] && [ "$PWT_PREVIOUS_PATH" = "$path" ]
+}
+
+# Calculate visual width of string (accounting for multi-byte Unicode)
+# Usage: visual_width <string>
+visual_width() {
+    local str="$1"
+    # Use LC_ALL=C to count actual characters, not bytes
+    # This counts Unicode code points as 1 char each
+    printf "%s" "$str" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' '
+}
+
+# Pad string to fixed visual width
+# Usage: pad_visual <string> <width>
+pad_visual() {
+    local str="$1"
+    local width="$2"
+    local visual=$(visual_width "$str")
+    printf "%s" "$str"
+    local i
+    for ((i=visual; i<width; i++)); do
+        printf " "
+    done
+}
+
+# Get short commit hash
+# Usage: get_short_hash <dir>
+get_short_hash() {
+    local dir="$1"
+    git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "?"
+}
+
+# Get base branch from metadata or detect from reflog
+# Usage: get_base_branch <worktree_name> <dir>
+get_base_branch() {
+    local name="$1"
+    local dir="$2"
+
+    # First try metadata
+    local base=$(get_metadata "$name" "base")
+    if [ -n "$base" ]; then
+        echo "$base"
+        return
+    fi
+
+    # Try to detect from branch name or default to master
+    echo "master"
 }
 
 # Hash-based port generation (deterministic)
@@ -1510,6 +1556,37 @@ cmd_list() {
     cmd_list_compact "$show_dirty_only"
 }
 
+# Print a table row with fixed column widths
+# Usage: print_table_row <marker> <name> <hash> <base> <mkr> <stat> <main_div> <remote_div> <age> <msg>
+print_table_row() {
+    local marker="$1"
+    local name="$2"
+    local hash="$3"
+    local base="$4"
+    local mkr="$5"
+    local stat="$6"
+    local main_div="$7"
+    local remote_div="$8"
+    local age="$9"
+    local msg="${10}"
+
+    # Build row with proper visual padding for Unicode columns
+    # Format: marker(2) name(20) hash(8) base(8) mkr(3) stat(4) main(10) remote(10) age(4) msg
+    printf "  %-2s " "$marker"
+    pad_visual "${name:0:20}" 20
+    printf " "
+    printf "%-8s " "${hash:0:8}"
+    pad_visual "${base:0:8}" 8
+    printf " "
+    printf "%-3s " "${mkr:-·}"
+    printf "%-4s " "${stat:-·}"
+    pad_visual "${main_div:-·}" 10
+    printf " "
+    pad_visual "${remote_div:-·}" 10
+    printf " "
+    printf "%-4s %s\n" "$age" "$msg"
+}
+
 # Compact tabular list format (default)
 cmd_list_compact() {
     local show_dirty_only="${1:-false}"
@@ -1525,15 +1602,16 @@ cmd_list_compact() {
     echo ""
 
     # Print header
-    printf "  %-2s %-20s %-3s %-5s %-11s %-11s %-5s %s\n" "" "Worktree" "Mkr" "Stat" "main↕" "Remote" "Age" "Message"
-    printf "  %-2s %-20s %-3s %-5s %-11s %-11s %-5s %s\n" "--" "--------------------" "---" "-----" "-----------" "-----------" "-----" "-------------------"
+    print_table_row "" "Worktree" "Hash" "Base" "Mkr" "Stat" "main↕" "Remote" "Age" "Message"
+    print_table_row "--" "--------------------" "--------" "--------" "---" "----" "----------" "----------" "----" "--------------------"
 
     # Main app row
     local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
+    local main_hash=$(get_short_hash "$MAIN_APP")
     local main_status=$(get_status_symbols "$MAIN_APP")
     local main_age_ts=$(git -C "$MAIN_APP" log -1 --format=%ct 2>/dev/null || echo "0")
     local main_age=$(format_relative_time "$main_age_ts")
-    local main_msg=$(git -C "$MAIN_APP" log -1 --format=%s 2>/dev/null | cut -c1-22)
+    local main_msg=$(git -C "$MAIN_APP" log -1 --format=%s 2>/dev/null | cut -c1-20)
     local main_remote=$(get_remote_divergence "$MAIN_APP")
 
     # Check if main is current
@@ -1544,19 +1622,7 @@ cmd_list_compact() {
         main_marker="*"
     fi
 
-    # Format status with color
-    local main_status_colored="$main_status"
-    [ -n "$main_status" ] && main_status_colored="${YELLOW}${main_status}${NC}"
-
-    printf "  ${YELLOW}%-2s${NC} %-20s %-3s %-5s %-11s %-11s %-5s %s\n" \
-        "$main_marker" \
-        "${main_branch:0:20}" \
-        "" \
-        "${main_status:-·}" \
-        "·" \
-        "${main_remote:-·}" \
-        "$main_age" \
-        "$main_msg"
+    print_table_row "$main_marker" "${main_branch:0:20}" "$main_hash" "·" "" "${main_status:-·}" "·" "${main_remote:-·}" "$main_age" "$main_msg"
 
     # Worktrees
     local has_merged=false
@@ -1567,6 +1633,8 @@ cmd_list_compact() {
 
             # Git info
             local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
+            local hash=$(get_short_hash "$dir")
+            local base=$(get_base_branch "$name" "$dir")
 
             # Status symbols
             local status=$(get_status_symbols "$dir")
@@ -1605,21 +1673,10 @@ cmd_list_compact() {
             # Get custom marker from metadata
             local custom_marker=$(get_metadata "$name" "marker")
 
-            # Display name (truncate if too long)
-            local display_name="${name:0:20}"
-
             # Message (truncate)
-            local msg=$(git -C "$dir" log -1 --format=%s 2>/dev/null | cut -c1-22)
+            local msg=$(git -C "$dir" log -1 --format=%s 2>/dev/null | cut -c1-20)
 
-            printf "  ${YELLOW}%-2s${NC} %-20s %-3s %-5s %-11s %-11s %-5s %s\n" \
-                "$marker" \
-                "$display_name" \
-                "${custom_marker:-}" \
-                "${status:-·}" \
-                "${main_div:-·}" \
-                "${remote_div:-·}" \
-                "$age" \
-                "$msg"
+            print_table_row "$marker" "$name" "$hash" "$base" "${custom_marker:-}" "${status:-·}" "${main_div:-·}" "${remote_div:-·}" "$age" "$msg"
         done
     fi
 
@@ -2830,6 +2887,285 @@ cmd_diff() {
     git -C "$path1" diff "$branch2".."$branch1" --stat
 }
 
+# Command: conflicts
+# Show file overlap between worktrees (files modified in multiple worktrees)
+# Usage: pwt conflicts [worktree1] [worktree2]
+#   No args: show all overlaps
+#   Two args: compare specific pair
+cmd_conflicts() {
+    require_project --info-only
+
+    local wt1="$1"
+    local wt2="$2"
+
+    if [ -n "$wt1" ] && [ -n "$wt2" ]; then
+        # Compare specific pair
+        compare_worktree_conflicts "$wt1" "$wt2"
+    else
+        # Compare all worktrees
+        show_all_conflicts
+    fi
+}
+
+# Helper: get modified files for a worktree (vs origin/master)
+get_modified_files() {
+    local dir="$1"
+    git -C "$dir" diff --name-only origin/master 2>/dev/null || true
+}
+
+# Helper: compare two worktrees for conflicts
+compare_worktree_conflicts() {
+    local wt1="$1"
+    local wt2="$2"
+
+    local path1 path2
+
+    # Resolve paths
+    if [ "$wt1" = "@" ]; then
+        path1="$MAIN_APP"
+    else
+        path1="$WORKTREES_DIR/$wt1"
+    fi
+
+    if [ "$wt2" = "@" ]; then
+        path2="$MAIN_APP"
+    else
+        path2="$WORKTREES_DIR/$wt2"
+    fi
+
+    if [ ! -d "$path1" ]; then
+        echo -e "${RED}Worktree not found: $wt1${NC}"
+        exit 1
+    fi
+    if [ ! -d "$path2" ]; then
+        echo -e "${RED}Worktree not found: $wt2${NC}"
+        exit 1
+    fi
+
+    echo -e "${BLUE}Comparing:${NC} $wt1 vs $wt2"
+    echo ""
+
+    local files1=$(get_modified_files "$path1")
+    local files2=$(get_modified_files "$path2")
+
+    local conflicts=$(comm -12 <(echo "$files1" | sort) <(echo "$files2" | sort))
+
+    if [ -z "$conflicts" ]; then
+        echo -e "${GREEN}No file conflicts found${NC}"
+    else
+        local count=$(echo "$conflicts" | wc -l | tr -d ' ')
+        echo -e "${YELLOW}⚠️  $count file(s) modified in both worktrees:${NC}"
+        echo "$conflicts" | while read -r file; do
+            echo "  $file"
+        done
+    fi
+}
+
+# Helper: show all conflicts across all worktrees
+show_all_conflicts() {
+    if [ ! -d "$WORKTREES_DIR" ]; then
+        echo -e "${YELLOW}No worktrees found${NC}"
+        return 0
+    fi
+
+    local tmpfile=$(mktemp)
+    trap "rm -f '$tmpfile'" EXIT
+
+    # Collect all modified files with their worktree names
+    for dir in "$WORKTREES_DIR"/*/; do
+        [ -d "$dir" ] || continue
+        local name=$(basename "$dir")
+        get_modified_files "$dir" | while read -r file; do
+            [ -n "$file" ] && echo "$name:$file" >> "$tmpfile"
+        done
+    done
+
+    if [ ! -s "$tmpfile" ]; then
+        echo -e "${GREEN}No modified files in any worktree${NC}"
+        return 0
+    fi
+
+    # Find files that appear in multiple worktrees
+    local duplicates=$(cut -d: -f2 "$tmpfile" | sort | uniq -d)
+
+    if [ -z "$duplicates" ]; then
+        echo -e "${GREEN}No file conflicts found${NC}"
+        echo ""
+        echo -e "${BLUE}Summary:${NC}"
+        echo "  Worktrees with changes: $(cut -d: -f1 "$tmpfile" | sort -u | wc -l | tr -d ' ')"
+        echo "  Total files modified: $(cut -d: -f2 "$tmpfile" | sort -u | wc -l | tr -d ' ')"
+    else
+        local count=$(echo "$duplicates" | wc -l | tr -d ' ')
+        echo -e "${YELLOW}⚠️  $count file(s) modified in multiple worktrees:${NC}"
+        echo ""
+        echo "$duplicates" | while read -r file; do
+            echo -e "${YELLOW}$file${NC}"
+            grep ":$file$" "$tmpfile" | cut -d: -f1 | sed 's/^/  /'
+        done
+    fi
+}
+
+# Command: context
+# Generate markdown context for AI agents about worktrees
+# Usage: pwt context [worktree]
+#   No args: context for all worktrees
+#   worktree: context focused on specific worktree
+cmd_context() {
+    require_project --info-only
+
+    local focus_wt="$1"
+
+    echo "# Worktree Context: ${CURRENT_PROJECT}"
+    echo ""
+    echo "Generated: $(date '+%Y-%m-%d %H:%M')"
+    echo ""
+
+    # Project info
+    echo "## Project"
+    echo ""
+    echo "| Key | Value |"
+    echo "|-----|-------|"
+    echo "| Project | ${CURRENT_PROJECT} |"
+    echo "| Main App | ${MAIN_APP} |"
+    echo "| Worktrees Dir | ${WORKTREES_DIR} |"
+    [ -n "$PROJECT_REMOTE" ] && echo "| Remote | ${PROJECT_REMOTE} |"
+    echo ""
+
+    # Active worktrees
+    echo "## Active Worktrees"
+    echo ""
+    echo "| Worktree | Branch | Base | Status | Ahead/Behind |"
+    echo "|----------|--------|------|--------|--------------|"
+
+    # Main app
+    local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
+    local main_hash=$(get_short_hash "$MAIN_APP")
+    local main_status=$(get_status_symbols "$MAIN_APP")
+    echo "| @ (main) | ${main_branch} | - | ${main_status:-clean} | - |"
+
+    # Worktrees
+    if [ -d "$WORKTREES_DIR" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+            local base=$(get_base_branch "$name" "$dir")
+            local status=$(get_status_symbols "$dir")
+            local divergence=$(get_divergence "$dir" "origin/master")
+
+            # Get description from metadata
+            local desc=$(get_metadata "$name" "description")
+
+            echo "| ${name} | ${branch} | ${base} | ${status:-clean} | ${divergence:-synced} |"
+        done
+    fi
+    echo ""
+
+    # Worktree descriptions
+    echo "## Worktree Details"
+    echo ""
+    if [ -d "$WORKTREES_DIR" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+
+            # If focus_wt is set, only show that worktree
+            if [ -n "$focus_wt" ] && [ "$name" != "$focus_wt" ]; then
+                continue
+            fi
+
+            local desc=$(get_metadata "$name" "description")
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+            local base=$(get_base_branch "$name" "$dir")
+
+            echo "### ${name}"
+            echo ""
+            [ -n "$desc" ] && echo "**Purpose:** ${desc}"
+            echo ""
+            echo "- **Branch:** ${branch}"
+            echo "- **Base:** ${base}"
+            echo "- **Path:** ${dir}"
+            echo ""
+
+            # Recent commits (last 5)
+            echo "**Recent commits:**"
+            echo ""
+            echo '```'
+            git -C "$dir" log --oneline -5 2>/dev/null || echo "No commits"
+            echo '```'
+            echo ""
+
+            # Modified files (summary)
+            local modified=$(git -C "$dir" diff --name-only origin/master 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$modified" -gt 0 ]; then
+                echo "**Modified files:** ${modified} file(s) changed from ${base}"
+                echo ""
+                if [ "$modified" -le 20 ]; then
+                    echo '```'
+                    git -C "$dir" diff --name-only origin/master 2>/dev/null
+                    echo '```'
+                else
+                    echo '```'
+                    git -C "$dir" diff --name-only origin/master 2>/dev/null | head -15
+                    echo "... and $((modified - 15)) more files"
+                    echo '```'
+                fi
+                echo ""
+            fi
+        done
+    fi
+
+    # Conflicts section
+    if [ -z "$focus_wt" ]; then
+        echo "## Potential Conflicts"
+        echo ""
+        echo "Files modified in multiple worktrees:"
+        echo ""
+
+        local tmpfile=$(mktemp)
+        trap "rm -f '$tmpfile'" EXIT
+
+        # Collect all modified files
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            get_modified_files "$dir" | while read -r file; do
+                [ -n "$file" ] && echo "$name:$file" >> "$tmpfile"
+            done
+        done
+
+        if [ -s "$tmpfile" ]; then
+            local duplicates=$(cut -d: -f2 "$tmpfile" | sort | uniq -d)
+            if [ -n "$duplicates" ]; then
+                local count=$(echo "$duplicates" | wc -l | tr -d ' ')
+                echo "⚠️ **${count} file(s)** have potential merge conflicts:"
+                echo ""
+                echo '```'
+                echo "$duplicates" | head -20
+                [ $(echo "$duplicates" | wc -l) -gt 20 ] && echo "... and more"
+                echo '```'
+            else
+                echo "✅ No conflicting files detected."
+            fi
+        else
+            echo "No modified files in worktrees."
+        fi
+        echo ""
+    fi
+
+    # Instructions for AI
+    echo "## Instructions for AI Agents"
+    echo ""
+    echo "When working in a worktree:"
+    echo ""
+    echo "1. **Stay focused** on the worktree's purpose (see description above)"
+    echo "2. **Avoid modifying** files that are being changed in other worktrees (see conflicts)"
+    echo "3. **Coordinate** if you need to touch a conflicting file"
+    echo "4. **Base branch** - always create PRs against the base branch shown"
+    echo "5. **Status symbols:** + = staged, ! = modified, ? = untracked"
+    echo ""
+}
+
 # Command: copy
 # Copy files between worktrees
 # Usage: pwt copy <src> <dest> <patterns...>
@@ -3607,6 +3943,14 @@ case "${1:-}" in
         require_project
         cmd_diff "$2" "$3"
         ;;
+    conflicts)
+        require_project
+        cmd_conflicts "$2" "$3"
+        ;;
+    context)
+        require_project
+        cmd_context "$2"
+        ;;
     copy|cp)
         require_project
         shift  # remove "copy" from args
@@ -3667,6 +4011,8 @@ case "${1:-}" in
         echo "  ai [worktree] [-- args]        Start AI tool in worktree"
         echo "  open [worktree]                Open worktree in Finder"
         echo "  diff <wt1> [wt2]               Show diff between worktrees"
+        echo "  conflicts [wt1] [wt2]          Show file overlap between worktrees"
+        echo "  context [worktree]             Generate markdown context for AI"
         echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
         echo "  marker [worktree] [emoji]      Set/show worktree marker (--clear)"
         echo "  server                         Start dev server (from Pwtfile)"

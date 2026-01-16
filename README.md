@@ -48,6 +48,8 @@ pwt remove feature-branch
 | `ai [worktree] [-- args]` | Start AI tool in worktree |
 | `open [worktree]` | Open worktree in Finder |
 | `diff <wt1> [wt2]` | Show diff between worktrees |
+| `conflicts [wt1] [wt2]` | Show file overlap between worktrees |
+| `context [worktree]` | Generate markdown context for AI agents |
 | `copy <src> <dest> <patterns>` | Copy files between worktrees |
 | `marker [worktree] [emoji]` | Set/show worktree marker |
 | `server` | Start development server |

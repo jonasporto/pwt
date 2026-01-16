@@ -38,13 +38,22 @@ pwt remove feature-branch
 | `create <branch> [base] [desc]` | Create new worktree |
 | `list` | List worktrees and status |
 | `info [worktree]` | Show worktree details |
-| `remove <worktree>` | Remove worktree |
+| `remove <worktree> [flags]` | Remove worktree (see flags below) |
+| `cd [worktree\|@]` | Navigate to worktree (requires shell-init) |
 | `server` | Start development server |
 | `fix-port [worktree]` | Resolve port conflict |
 | `auto-remove [target]` | Remove merged worktrees |
+| `shell-init` | Output shell function for cd integration |
 | `meta [action]` | Manage metadata |
 | `project [action]` | Manage project configs |
 | `config [key] [value]` | Configure current project |
+
+### Remove Flags
+
+| Flag | Description |
+|------|-------------|
+| `--with-branch` | Also delete the branch (if merged) |
+| `--force-branch` | Force delete the branch (even if not merged) |
 
 ## Worktree Naming
 
@@ -99,6 +108,24 @@ server() {
 | `$PWT_TICKET` | Same as worktree name (customize via Pwtfile) |
 | `$PWT_PROJECT` | Project name |
 | `$MAIN_APP` | Path to main app |
+
+### Pwtfile Helpers
+
+| Helper | Description |
+|--------|-------------|
+| `pwtfile_symlink <path>` | Symlink from main app (share node_modules, .cache) |
+| `pwtfile_copy <path>` | Copy from main app (.env, config files) |
+| `pwtfile_env <var> <value>` | Set environment variable |
+| `pwtfile_run <cmd>` | Run command (silent on error) |
+
+```bash
+# Pwtfile
+setup() {
+    pwtfile_copy ".env"              # Copy .env from main
+    pwtfile_symlink "node_modules"   # Share node_modules (save disk space)
+    pwtfile_symlink ".cache"         # Share cache
+}
+```
 
 ### Global Pwtfile
 
@@ -159,21 +186,27 @@ Config is stored in `~/.pwt/projects/<name>/config.json`:
 - Use `pwt fix-port` to resolve conflicts
 - `pwt list` shows port status (free/conflict)
 
-## Tab Completion
+## Shell Integration
 
-### Zsh
-
-Add to your `~/.zshrc`:
+Enable `pwt cd` navigation by adding to your `~/.zshrc`:
 
 ```bash
+# pwt shell integration (enables pwt cd)
+eval "$(pwt shell-init)"
+
+# Tab completion
 fpath=(~/dotfiles/pwt/completions $fpath)
 autoload -Uz compinit && compinit
 ```
 
-Then restart your terminal or run:
+Then restart your terminal or run `source ~/.zshrc`.
+
+### Navigation
 
 ```bash
-source ~/.zshrc
+pwt cd TICKET-123   # Go to worktree
+pwt cd              # Go to main worktree
+pwt cd @            # Same as above (explicit)
 ```
 
 ## Examples
@@ -189,6 +222,9 @@ pwt init
 # Create worktree for a ticket
 pwt create TICKET-123 master "implement feature"
 
+# Navigate to worktree (requires shell-init)
+pwt cd TICKET-123
+
 # List all worktrees with status
 pwt list
 
@@ -198,8 +234,17 @@ pwt server
 # Check worktree info
 pwt info TICKET-123
 
-# Remove when done
+# Go back to main worktree
+pwt cd @
+
+# Remove worktree only
 pwt remove TICKET-123
+
+# Remove worktree + delete branch (if merged)
+pwt remove TICKET-123 --with-branch
+
+# Force remove worktree + delete branch
+pwt remove TICKET-123 --force-branch
 
 # Clean up all merged worktrees
 pwt auto-remove master

@@ -547,6 +547,50 @@ pwtfile_run() {
     "$@" 2>/dev/null || true
 }
 
+# Symlink from main app to current worktree
+# Usage: pwtfile_symlink <path>
+# Example: pwtfile_symlink "node_modules"
+pwtfile_symlink() {
+    local path="$1"
+    local source="$MAIN_APP/$path"
+    local target="$PWD/$path"
+
+    if [ ! -e "$source" ]; then
+        echo "  ! Source not found: $source"
+        return 1
+    fi
+
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+        echo "  ! Target exists (not a symlink): $target"
+        return 1
+    fi
+
+    rm -f "$target" 2>/dev/null
+    ln -sf "$source" "$target"
+    echo "  ✓ Symlinked: $path"
+}
+
+# Copy from main app to current worktree
+# Usage: pwtfile_copy <path>
+# Example: pwtfile_copy ".env"
+pwtfile_copy() {
+    local path="$1"
+    local source="$MAIN_APP/$path"
+    local target="$PWD/$path"
+
+    if [ ! -e "$source" ]; then
+        echo "  ! Source not found: $source"
+        return 1
+    fi
+
+    if [ -d "$source" ]; then
+        cp -r "$source" "$target"
+    else
+        cp "$source" "$target"
+    fi
+    echo "  ✓ Copied: $path"
+}
+
 # Read PORT_BASE from Pwtfile (if defined)
 # Sets BASE_PORT global variable
 read_port_base() {
@@ -1487,11 +1531,36 @@ cmd_auto_remove() {
 
 # Command: remove
 cmd_remove() {
-    local name="$1"
+    local name=""
+    local with_branch=false
+    local force_branch=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --with-branch)
+                with_branch=true
+                shift
+                ;;
+            --force-branch)
+                with_branch=true
+                force_branch=true
+                shift
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+            *)
+                name="$1"
+                shift
+                ;;
+        esac
+    done
 
     if [ -z "$name" ]; then
         echo -e "${RED}Error: Worktree not specified${NC}"
-        echo "Usage: pwt remove <worktree>"
+        echo "Usage: pwt remove <worktree> [--with-branch] [--force-branch]"
         exit 1
     fi
 
@@ -1571,6 +1640,29 @@ cmd_remove() {
     remove_metadata "$name"
 
     echo -e "${GREEN}✓ Worktree removed${NC}"
+
+    # Delete branch if requested
+    if [ "$with_branch" = true ] && [ -n "$branch" ]; then
+        # Check if branch is merged (unless forcing)
+        if [ "$force_branch" = false ]; then
+            if ! git branch --merged master 2>/dev/null | grep -q "^\s*${branch}$" && \
+               ! git branch --merged main 2>/dev/null | grep -q "^\s*${branch}$"; then
+                echo -e "${YELLOW}Branch '$branch' is not merged. Use --force-branch to delete anyway.${NC}"
+                return 0
+            fi
+        fi
+
+        # Delete local branch
+        if git branch -D "$branch" 2>/dev/null; then
+            echo -e "${GREEN}✓ Local branch deleted: $branch${NC}"
+        fi
+
+        # Delete remote branch
+        local remote_branch="${BRANCH_PREFIX}${branch#${BRANCH_PREFIX}}"
+        if git push origin --delete "$branch" 2>/dev/null; then
+            echo -e "${GREEN}✓ Remote branch deleted: origin/$branch${NC}"
+        fi
+    fi
 }
 
 # Command: server
@@ -1967,6 +2059,80 @@ cmd_meta() {
     esac
 }
 
+# Command: cd (internal)
+# Output path for worktree navigation
+# Usage: pwt _cd [worktree|@]
+#   @ or empty = main worktree
+#   worktree = specific worktree
+cmd_cd() {
+    local target="${1:-@}"
+
+    # @ or empty = main worktree
+    if [ "$target" = "@" ] || [ -z "$target" ]; then
+        echo "$MAIN_APP"
+        return 0
+    fi
+
+    # Check if it's a worktree name
+    local worktree_path="$WORKTREES_DIR/$target"
+    if [ -d "$worktree_path" ]; then
+        echo "$worktree_path"
+        return 0
+    fi
+
+    # Try partial match
+    local matches=()
+    if [ -d "$WORKTREES_DIR" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            local name=$(basename "$dir")
+            if [[ "$name" == *"$target"* ]]; then
+                matches+=("$dir")
+            fi
+        done
+    fi
+
+    if [ ${#matches[@]} -eq 1 ]; then
+        echo "${matches[0]%/}"
+        return 0
+    elif [ ${#matches[@]} -gt 1 ]; then
+        echo "Multiple matches for '$target':" >&2
+        for m in "${matches[@]}"; do
+            echo "  $(basename "${m%/}")" >&2
+        done
+        return 1
+    fi
+
+    echo "Worktree not found: $target" >&2
+    return 1
+}
+
+# Command: shell-init
+# Output shell function for cd integration
+# Usage: eval "$(pwt shell-init)"
+cmd_shell_init() {
+    local pwt_path
+    pwt_path=$(which pwt 2>/dev/null || echo "$0")
+
+    cat << EOF
+# pwt shell integration
+# Add to ~/.zshrc: eval "\$(pwt shell-init)"
+pwt() {
+    if [[ "\$1" == "cd" ]]; then
+        local target
+        target=\$("$pwt_path" _cd "\$2" 2>&1)
+        if [[ \$? -eq 0 ]] && [[ -d "\$target" ]]; then
+            builtin cd "\$target"
+        else
+            echo "\$target"
+            return 1
+        fi
+    else
+        "$pwt_path" "\$@"
+    fi
+}
+EOF
+}
+
 # Command: config
 # Configure current project (zero-config override)
 cmd_config() {
@@ -2224,7 +2390,8 @@ case "${1:-}" in
         ;;
     remove|rm)
         require_project
-        cmd_remove "$2"
+        shift  # remove "remove" from args
+        cmd_remove "$@"
         ;;
     server|s)
         require_project
@@ -2248,6 +2415,14 @@ case "${1:-}" in
     config)
         cmd_config "$2" "$3"
         ;;
+    _cd)
+        # Internal: output path for cd (used by shell function)
+        require_project --info-only
+        cmd_cd "$2"
+        ;;
+    shell-init)
+        cmd_shell_init "$2"
+        ;;
     project)
         cmd_project "$2" "$3" "$4" "$5"
         ;;
@@ -2263,13 +2438,16 @@ case "${1:-}" in
             echo ""
         fi
         echo "Commands:"
+        echo "  init [url]                     Initialize project (clone URL or configure current repo)"
         echo "  create <branch> [base] [desc]  Create new worktree"
         echo "  list                           List worktrees and status"
         echo "  info [worktree]                Show worktree details"
-        echo "  remove <worktree>              Remove worktree"
+        echo "  remove <worktree> [flags]      Remove worktree (--with-branch, --force-branch)"
+        echo "  cd [worktree|@]                Navigate to worktree (requires shell-init)"
         echo "  server                         Start dev server (from Pwtfile)"
         echo "  fix-port [worktree]            Fix port conflict"
         echo "  auto-remove [target]           Remove worktrees merged into target"
+        echo "  shell-init                     Output shell function for cd integration"
         echo "  meta [action] [args]           Manage worktree metadata"
         echo "  project [action] [args]        Manage project configs"
         echo ""
@@ -2285,10 +2463,16 @@ case "${1:-}" in
         echo "  pwt project set myproject branch_prefix \"jp/\""
         echo ""
         echo "Examples:"
-        echo "  pwt myproject list                         # Explicit project"
-        echo "  pwt create TICKET-123 master \"fix auth\"   # Auto-detect project"
+        echo "  pwt init git@github.com:user/app.git       # Clone and configure"
+        echo "  pwt init                                   # Configure current repo"
+        echo "  pwt create TICKET-123 master \"fix auth\"   # Create worktree"
         echo "  pwt list                                   # List worktrees"
-        echo "  pwt remove TICKET-123                      # Remove worktree"
+        echo "  pwt cd TICKET-123                          # Navigate to worktree"
+        echo "  pwt cd @                                   # Navigate to main app"
+        echo "  pwt remove TICKET-123 --with-branch        # Remove + delete branch"
+        echo ""
+        echo "Shell integration (add to ~/.zshrc):"
+        echo "  eval \"\$(pwt shell-init)\""
         ;;
     *)
         echo -e "${RED}Unknown command: $1${NC}"

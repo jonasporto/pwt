@@ -597,3 +597,265 @@ ssh -L 5002:localhost:5002 user@dev-machine
 | Already have SSH | Port forwarding |
 
 **Note:** Some tools mentioned (like the one with "encrypted remote relay") bundle this functionality. pwt intentionally stays focused on worktree management and delegates networking to specialized tools.
+
+---
+
+## Why doesn't pwt have tighter AI agent integration?
+
+**The feedback:** "You want tighter integration between agent and worktree. You don't want to manage this yourself at all."
+
+### Two Valid Philosophies
+
+| Approach | Philosophy |
+|----------|------------|
+| **pwt (current)** | Agnostic tool - you manage, works with any AI |
+| **Tight integration** | AI-first - worktree is invisible implementation detail |
+
+### Why pwt Stays Agnostic
+
+1. **Works with any AI tool** - Claude, Cursor, Copilot, Aider, etc.
+2. **Transparent** - You understand what's happening
+3. **Unix philosophy** - Do one thing well, compose with others
+4. **No lock-in** - Switch AI tools without changing workflow
+5. **Simple** - Shell script, no daemon, no runtime
+
+### Trade-offs
+
+| pwt (agnostic) | Tight integration |
+|----------------|-------------------|
+| ✅ Works with any AI | ❌ Locked to specific AI |
+| ✅ You understand the system | ⚠️ "Magic" can confuse |
+| ✅ More control | ✅ Less friction |
+| ✅ Simple shell tool | ❌ Needs runtime/daemon |
+| ⚠️ Manual management | ✅ Automatic |
+
+### The Middle Ground
+
+pwt is designed as a **building block**. Tighter integration can be built **on top** of pwt:
+
+```bash
+# Example: AI-first wrapper
+ai-work() {
+    local ticket="$1"
+    pwt create "$ticket" master "AI task" --ai
+    # AI agent starts automatically in worktree
+    # On exit, auto-commits and opens PR
+    pwt remove "$ticket" --with-branch
+}
+```
+
+Or an AI tool could use pwt internally:
+```bash
+# Inside Claude Code / Cursor / etc.
+pwt create "$TASK_ID" master "$TASK_DESC"
+cd "$(pwt info "$TASK_ID" --path)"
+# ... AI does work ...
+pwt remove "$TASK_ID" --with-branch
+```
+
+### When Tight Integration Makes Sense
+
+- **Single AI tool** - You only use Claude Code
+- **Team standardization** - Everyone uses same setup
+- **Fully automated pipelines** - No human in the loop
+
+### When pwt's Approach Makes Sense
+
+- **Multiple AI tools** - Different tools for different tasks
+- **Learning/transparency** - Want to understand the system
+- **Flexibility** - Workflow changes frequently
+- **Simplicity** - Just want worktree management, not a framework
+
+**Bottom line:** pwt is a screwdriver, not a power drill. Both are valid tools for different situations.
+
+---
+
+## How do I give Claude context about other worktrees to avoid rebase hell?
+
+**The problem:** You have multiple worktrees with parallel work. Claude doesn't know what's happening in other branches, leading to conflicts when rebasing/merging.
+
+### What You Can Do Today
+
+**1. Feed pwt output to Claude:**
+```bash
+# In your CLAUDE.md or prompt:
+## Active Worktrees
+Run `pwt list --porcelain` to see current work:
+$(pwt list --porcelain)
+
+## Files Being Modified
+$(pwt for-each "echo '### $PWT_WORKTREE' && git diff --name-only master" 2>/dev/null)
+```
+
+**2. Check conflicts before starting work:**
+```bash
+# Add to your workflow prompt:
+Before modifying a file, check if other worktrees touch it:
+$ pwt for-each git diff --name-only master | sort | uniq -d
+```
+
+**3. Create a context file:**
+```bash
+# Script to generate context
+pwt-context() {
+    echo "# Active Worktrees"
+    echo ""
+    pwt list
+    echo ""
+    echo "# Files Modified Per Worktree"
+    pwt for-each "echo '## '\$PWT_WORKTREE && git diff --name-only master | head -20"
+    echo ""
+    echo "# Potential Conflicts (same file in multiple worktrees)"
+    pwt for-each git diff --name-only master 2>/dev/null | sort | uniq -d
+}
+
+# Run before starting work
+pwt-context > .worktree-context.md
+# Then tell Claude to read it
+```
+
+### Example CLAUDE.md Addition
+
+```markdown
+## Parallel Work Awareness
+
+Before modifying files, check for conflicts with other worktrees:
+
+\`\`\`bash
+# See all active worktrees
+pwt list
+
+# See which files each worktree is modifying
+pwt for-each git diff --name-only master
+
+# Find files modified in multiple worktrees (conflict risk!)
+pwt for-each git diff --name-only master 2>/dev/null | sort | uniq -d
+\`\`\`
+
+If a file appears in multiple worktrees, coordinate before modifying it.
+\`\`\`
+
+### Future: Could pwt Help More?
+
+Potential features (see BACKLOG.md):
+
+```bash
+# Hypothetical
+pwt context              # Generate markdown context for AI
+pwt context --clipboard  # Copy to clipboard for pasting
+pwt watch                # Auto-update context file on changes
+```
+
+### The Real Solution: Smaller PRs
+
+The best way to avoid rebase hell:
+1. **Merge frequently** - Don't let branches diverge
+2. **Small focused PRs** - One concern per worktree
+3. **Rebase before starting** - `pwt for-each git rebase origin/master`
+4. **Communicate** - If you're touching shared files, tell the team/AI
+
+---
+
+## "Worktrees solve the wrong problem" - Is this true?
+
+**The critique:** "If your AI agents need isolated filesystems to avoid stepping on each other, the issue is state management, not branch switching."
+
+### The Argument
+
+| Worktrees Approach | State Management Approach |
+|--------------------|---------------------------|
+| Isolate at filesystem level | Isolate at application level |
+| Each agent gets a directory | Agents share directory, manage state |
+| Git handles branching | Application handles branching |
+| Simple, battle-tested | More complex, more flexible |
+
+### When the Critique is Valid
+
+- **Ephemeral tasks** - Agent does one thing and exits
+- **No git history needed** - Just want to run code
+- **Container-based isolation** - Docker handles everything
+- **Virtual filesystems** - FUSE, overlayfs, etc.
+
+### When Worktrees Make Sense
+
+- **Need git history** - Commits, diffs, blame
+- **Long-running work** - Multiple sessions over days
+- **Human + AI collaboration** - Both need to see the code
+- **Existing git workflow** - PRs, code review, CI/CD
+- **Debugging** - Can inspect any worktree manually
+
+### The Real Answer
+
+**Both are valid for different use cases:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Use Case                    │ Better Approach           │
+├─────────────────────────────┼───────────────────────────┤
+│ Quick AI task, no history   │ State management/sandbox  │
+│ Feature development + PR    │ Git worktrees             │
+│ Parallel AI experiments     │ Containers/VMs            │
+│ Human + AI collaboration    │ Git worktrees             │
+│ CI/CD integration           │ Git worktrees             │
+└─────────────────────────────────────────────────────────┘
+```
+
+pwt doesn't claim worktrees are the only solution. It's a tool for people who've already decided worktrees fit their workflow.
+
+---
+
+## What makes pwt better than plain git worktree commands?
+
+**The question:** "What's the moat? LLMs are trained on git worktree commands."
+
+### Plain Git Worktree Commands
+
+```bash
+# Create worktree
+git worktree add ../my-feature -b feature/my-feature
+
+# List
+git worktree list
+
+# Remove
+git worktree remove ../my-feature
+```
+
+### What pwt Adds
+
+| Feature | Plain Git | pwt |
+|---------|-----------|-----|
+| Create worktree | `git worktree add path -b branch` | `pwt create ticket` |
+| Auto branch naming | Manual | `branch_prefix` config |
+| Lifecycle hooks | ❌ | `setup()`, `teardown()`, `server()` |
+| Dependency management | ❌ | `pwtfile_symlink`, `pwtfile_copy` |
+| Port allocation | ❌ | `$PWT_PORT`, `pwtfile_hash_port` |
+| Multi-project | ❌ | Project configs, aliases |
+| Navigation | `cd ../path` | `pwt cd ticket`, `pwt cd -` |
+| Metadata | ❌ | Descriptions, markers, custom data |
+| Server management | ❌ | `pwt server` with Pwtfile |
+| Cleanup | `git worktree remove` | `pwt auto-remove` (merged branches) |
+| Interactive picker | ❌ | `pwt select` (fzf) |
+
+### The Real Value
+
+1. **Convention over configuration** - Consistent worktree locations
+2. **Lifecycle automation** - Don't forget to `npm install`
+3. **Multi-project management** - Same workflow across repos
+4. **Quality of life** - `pwt cd -`, markers, descriptions
+
+### When Plain Git is Fine
+
+- Single project
+- No setup needed per worktree
+- Already have your own scripts
+- Learning git (better to understand fundamentals)
+
+### When pwt Helps
+
+- Multiple projects
+- Complex setup (dependencies, env files)
+- Parallel development servers
+- Team standardization
+
+**Bottom line:** pwt is to git worktree what oh-my-zsh is to zsh. Not required, but makes common tasks easier.

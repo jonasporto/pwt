@@ -165,35 +165,60 @@ auto_detect_project() {
     return 0
 }
 
-# Load project configuration into global variables
-# Falls back to auto-detect if config doesn't exist
-# Supports aliases: config can have "alias": "real-project-name"
-load_project_config() {
-    local project="$1"
-    local config_file="$PWT_PROJECTS_DIR/$project/config.json"
+# Resolve project alias to real project name
+# Scans all project configs for "aliases" array
+resolve_project_alias() {
+    local name="$1"
 
-    # Check for alias resolution
-    if [ -f "$config_file" ]; then
-        local alias_target=$(jq -r '.alias // empty' "$config_file")
-        if [ -n "$alias_target" ]; then
-            project="$alias_target"
-            config_file="$PWT_PROJECTS_DIR/$project/config.json"
+    # First check if it's a real project
+    if [ -f "$PWT_PROJECTS_DIR/$name/config.json" ]; then
+        # Check it's not just an alias pointer (legacy)
+        local has_main=$(jq -r '.main_app // empty' "$PWT_PROJECTS_DIR/$name/config.json")
+        if [ -n "$has_main" ]; then
+            echo "$name"
+            return 0
         fi
     fi
+
+    # Scan all projects for aliases
+    for config in "$PWT_PROJECTS_DIR"/*/config.json; do
+        [ -f "$config" ] || continue
+        if jq -e --arg name "$name" '.aliases // [] | index($name) != null' "$config" >/dev/null 2>&1; then
+            basename "$(dirname "$config")"
+            return 0
+        fi
+    done
+
+    # Not found, return original (might be auto-detected)
+    echo "$name"
+}
+
+# Load project configuration into global variables
+# Falls back to auto-detect if config doesn't exist
+# Supports aliases: config can have "aliases": ["pc", "planning-center"]
+load_project_config() {
+    local project="$1"
+
+    # Resolve alias to real project name
+    project=$(resolve_project_alias "$project")
+    local config_file="$PWT_PROJECTS_DIR/$project/config.json"
 
     CURRENT_PROJECT="$project"
 
     if [ -f "$config_file" ]; then
         # Load from config file
-        local cfg_main=$(jq -r '.main_app // empty' "$config_file")
+        # path is preferred, main_app for backwards compatibility
+        local cfg_path=$(jq -r '.path // .main_app // empty' "$config_file")
         local cfg_wt=$(jq -r '.worktrees_dir // empty' "$config_file")
         local cfg_prefix=$(jq -r '.branch_prefix // empty' "$config_file")
         local cfg_port=$(jq -r '.base_port // empty' "$config_file")
+        local cfg_remote=$(jq -r '.remote // empty' "$config_file")
 
-        [ -n "$cfg_main" ] && MAIN_APP="$cfg_main"
+        [ -n "$cfg_path" ] && MAIN_APP="$cfg_path"
         [ -n "$cfg_wt" ] && WORKTREES_DIR="$cfg_wt"
         [ -n "$cfg_prefix" ] && BRANCH_PREFIX="$cfg_prefix"
         [ -n "$cfg_port" ] && BASE_PORT="$cfg_port"
+        [ -n "$cfg_remote" ] && PROJECT_REMOTE="$cfg_remote"
     fi
 
     return 0
@@ -1978,12 +2003,16 @@ done
 # Initialize pwt
 init_pwt
 
-# Check if first argument is a project name (before command dispatch)
+# Check if first argument is a project name or alias (before command dispatch)
 # This allows: pwt myproject list (instead of pwt --project myproject list)
-if [ -n "${1:-}" ] && [ -d "$PWT_PROJECTS_DIR/${1}" ]; then
-    CURRENT_PROJECT="$1"
-    load_project_config "$1"
-    shift
+if [ -n "${1:-}" ]; then
+    _resolved=$(resolve_project_alias "$1")
+    if [ -d "$PWT_PROJECTS_DIR/${_resolved}" ]; then
+        CURRENT_PROJECT="$_resolved"
+        load_project_config "$_resolved"
+        shift
+    fi
+    unset _resolved
 fi
 
 # Detect project from current directory (unless already set via --project or first arg)

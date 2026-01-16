@@ -39,17 +39,14 @@ pwt remove feature-branch
 
 ## Worktree Naming
 
-The `<worktree>` identifier is derived from the `<branch>` input:
+The `<worktree>` identifier is derived from the `<branch>` input by removing path prefix and sanitizing:
 
 | Branch Input | Worktree Name |
 |--------------|---------------|
-| `PROJ-1234` | `PROJ-1234` |
-| `feature/PROJ-1234-auth` | `PROJ-1234` |
-| `jp/PROJ-1234-fix-bug` | `PROJ-1234` |
+| `my-feature` | `my-feature` |
 | `feature/my-feature` | `my-feature` |
+| `jp/TICKET-123-fix-bug` | `TICKET-123-fix-bug` |
 | `bugfix/fix_something` | `fix_something` |
-
-Ticket pattern is extracted when present. Otherwise, the branch suffix is sanitized for directory use.
 
 ## Project Selection
 
@@ -90,7 +87,7 @@ server() {
 | `$PWT_WORKTREE` | Worktree name |
 | `$PWT_WORKTREE_PATH` | Full path to worktree |
 | `$PWT_BRANCH` | Git branch name |
-| `$PWT_TICKET` | Extracted ticket (e.g., PROJ-1234) |
+| `$PWT_TICKET` | Same as worktree name (customize via Pwtfile) |
 | `$PWT_PROJECT` | Project name |
 | `$MAIN_APP` | Path to main app |
 

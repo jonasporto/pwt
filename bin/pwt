@@ -495,7 +495,7 @@ run_pwtfile() {
 #   PWT_WORKTREE_PATH - Full path to worktree
 #   PWT_BRANCH       - Git branch name
 #   PWT_PORT         - Allocated port
-#   PWT_TICKET       - Ticket name (e.g., ACME-14586)
+#   PWT_TICKET       - Ticket/worktree name
 #   PWT_BASE         - Base branch
 #   PWT_DESC         - Description
 run_hook() {
@@ -556,10 +556,11 @@ EOF
     fi
 }
 
-# Extract ticket name from branch (e.g.: feature/ACME-14400 -> ACME-14400)
-extract_ticket_name() {
+# Extract worktree name from branch
+# Removes path prefix (feature/, jp/, etc) and sanitizes for directory use
+extract_worktree_name() {
     local branch="$1"
-    echo "$branch" | sed -E 's|.*/||; s|^(ACME-[0-9]+).*|\1|'
+    echo "$branch" | sed -E 's|.*/||; s|[^A-Za-z0-9._-]|-|g'
 }
 
 # Check if a port (and its Vite port +1) are free
@@ -666,114 +667,6 @@ check_server_status() {
     echo -e "${YELLOW}[stopped]${NC}"
 }
 
-# Check md-docs symlinks status in a directory
-# Returns: 0 = all OK, 1 = some missing
-check_symlinks_status() {
-    local dir="$1"
-    local missing=0
-    local items=(.claude md-docs CLAUDE.md AGENTS.md)
-
-    if [ -d "$CODEX_DIR" ] || [ -L "$CODEX_DIR" ]; then
-        items+=(.codex)
-    fi
-
-    local expected=${#items[@]}
-
-    for item in "${items[@]}"; do
-        if [ ! -L "$dir/$item" ] || [ ! -e "$dir/$item" ]; then
-            missing=$((missing + 1))
-        fi
-    done
-
-    if [ $missing -eq 0 ]; then
-        echo -e "${GREEN}[links OK]${NC}"
-        return 0
-    elif [ $missing -eq $expected ]; then
-        echo -e "${RED}[no links]${NC}"
-        return 1
-    else
-        echo -e "${YELLOW}[$missing missing]${NC}"
-        return 1
-    fi
-}
-
-# Repair md-docs symlinks in a directory
-repair_symlinks() {
-    local dir="$1"
-    local name=$(basename "$dir")
-
-    echo -e "${BLUE}Repairing symlinks in: $name${NC}"
-
-    cd "$dir"
-    if command -v md-docs >/dev/null 2>&1; then
-        md-docs init acme
-    else
-        # Manual fallback
-        for item in .claude md-docs CLAUDE.md AGENTS.md; do
-            [ -L "$item" ] && rm "$item"
-        done
-        ln -sf "$MD_DOCS_DIR/claude" ".claude"
-        ln -sf "$MD_DOCS_DIR" "md-docs"
-        ln -sf "$MD_DOCS_DIR/CLAUDE.md" "CLAUDE.md"
-        ln -sf "$MD_DOCS_DIR/AGENTS.md" "AGENTS.md"
-        echo -e "  ${GREEN}✓ Symlinks created manually${NC}"
-    fi
-
-    ensure_codex_symlink "$dir"
-    cd - > /dev/null
-}
-
-ensure_codex_symlink() {
-    local dir="$1"
-
-    if [ -d "$CODEX_DIR" ] || [ -L "$CODEX_DIR" ]; then
-        ln -sf "$CODEX_DIR" "$dir/.codex"
-        echo "  ✓ .codex"
-        sync_codex_skills
-    fi
-}
-
-sync_codex_skills() {
-    if [ ! -d "$ACME_CODEX_SKILLS_DIR" ]; then
-        return 0
-    fi
-
-    if [ ! -d "$CODEX_DIR" ] && [ ! -L "$CODEX_DIR" ]; then
-        return 0
-    fi
-
-    mkdir -p "$CODEX_SKILLS_DIR"
-
-    local synced=0
-    local skipped=0
-
-    for skill_dir in "$ACME_CODEX_SKILLS_DIR"/*; do
-        [ -d "$skill_dir" ] || continue
-        local skill_name=$(basename "$skill_dir")
-        local target="$CODEX_SKILLS_DIR/$skill_name"
-
-        if [ -L "$target" ]; then
-            local current
-            current=$(readlink "$target" 2>/dev/null || echo "")
-            if [ "$current" != "$skill_dir" ]; then
-                ln -sf "$skill_dir" "$target"
-                synced=$((synced + 1))
-            fi
-        elif [ -e "$target" ]; then
-            skipped=$((skipped + 1))
-        else
-            ln -sf "$skill_dir" "$target"
-            synced=$((synced + 1))
-        fi
-    done
-
-    if [ $synced -gt 0 ]; then
-        echo "  ✓ Codex skills synced ($synced)"
-    fi
-    if [ $skipped -gt 0 ]; then
-        echo -e "  ${YELLOW}!${NC} Codex skills skipped ($skipped existing)"
-    fi
-}
 
 
 # Ensure JS dependencies (devDependencies) are installed.
@@ -824,28 +717,19 @@ cmd_create() {
         echo -e "${RED}Error: Branch/ticket not specified${NC}"
         echo "Usage: pwt create <branch> [base-ref] [description]"
         echo "Examples:"
-        echo "  pwt create feature/ACME-14400"
-        echo "  pwt create ACME-17652 master"
-        echo "  pwt create ACME-17652 master \"batch forms multi contracts\""
+        echo "  pwt create feature/my-feature"
+        echo "  pwt create PROJ-123 master"
+        echo "  pwt create PROJ-123 master \"add auth flow\""
         echo ""
-        echo "Description will be added to branch name: jp/ACME-17652-batch-forms-multi-contracts"
+        echo "Description will be added to branch name: jp/PROJ-123-add-auth-flow"
         exit 1
     fi
 
     # Ensure worktrees_dir exists
     mkdir -p "$WORKTREES_DIR"
 
-    # Extract worktree name for directory
-    # If branch has ticket (ACME-XXXXX), use ticket as worktree name
-    # Otherwise, sanitize branch name for directory use
-    local ticket_name=$(extract_ticket_name "$branch")
-    local worktree_name
-    if [[ "$ticket_name" =~ ^ACME-[0-9]+$ ]]; then
-        worktree_name="$ticket_name"
-    else
-        # Sanitize branch name: remove path prefix, replace invalid chars with dash
-        worktree_name=$(echo "$branch" | sed -E 's|.*/||; s|[^A-Za-z0-9._-]|-|g')
-    fi
+    # Extract worktree name from branch (removes path prefix, sanitizes)
+    local worktree_name=$(extract_worktree_name "$branch")
     local worktree_dir="$WORKTREES_DIR/$worktree_name"
 
     # Check if worktree already exists
@@ -870,25 +754,15 @@ cmd_create() {
     local new_branch_name=""
     local git_worktree_args=()
 
-    # Auto-detect: if branch looks like ticket ACME-XXXXX and doesn't exist, assume master as base
-    if [ -z "$base_ref" ] && [[ "$branch" =~ ^ACME-[0-9]+$ ]]; then
-        # Check if branch exists locally or remotely
-        if ! git rev-parse --verify "$branch" >/dev/null 2>&1 && \
-           ! git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
-            echo -e "${YELLOW}Branch '$branch' doesn't exist. Creating from master...${NC}"
-            base_ref="master"
-        fi
-    fi
-
     if [ -n "$base_ref" ]; then
         # Base ref provided: create new branch from it
         # Format: [prefix]ticket-name or [prefix]ticket-name-description-slug
         if [ -n "$description" ]; then
             # Convert description to slug: lowercase, spaces -> hyphens, remove special chars
             local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
-            new_branch_name="${BRANCH_PREFIX}${ticket_name}-${slug}"
+            new_branch_name="${BRANCH_PREFIX}${worktree_name}-${slug}"
         else
-            new_branch_name="${BRANCH_PREFIX}${ticket_name}"
+            new_branch_name="${BRANCH_PREFIX}${worktree_name}"
         fi
 
         # Fetch base ref if remote
@@ -958,7 +832,7 @@ cmd_create() {
     export PWT_WORKTREE_PATH="$worktree_dir"
     export PWT_BRANCH="$final_branch"
     export PWT_PORT="$port"
-    export PWT_TICKET="$ticket_name"
+    export PWT_TICKET="$worktree_name"  # User can customize via Pwtfile
     export PWT_BASE="$final_base"
     export PWT_DESC="$final_desc"
     export PWT_PROJECT="$CURRENT_PROJECT"
@@ -1154,7 +1028,7 @@ cmd_list() {
                 if [ -n "$meta_desc" ]; then
                     desc="$meta_desc"
                 elif [ -n "$branch" ] && [ "$branch" != "detached" ]; then
-                    desc=$(echo "$branch" | sed -E 's|^[a-z]+/||' | sed -E 's|^ACME-[0-9]+-?||')
+                    desc=$(echo "$branch" | sed -E 's|^[a-z]+/||')
                     desc=$(echo "$desc" | tr '-' ' ')
                 fi
 
@@ -1235,7 +1109,8 @@ cmd_list() {
     fi
 }
 
-# Comando: repair
+# Command: repair
+# Runs post-create hook on worktrees (project-specific repairs via Pwtfile)
 cmd_repair() {
     local name="$1"
 
@@ -1246,46 +1121,32 @@ cmd_repair() {
             echo -e "${RED}Error: Worktree not found: $name${NC}"
             exit 1
         fi
-        repair_symlinks "$worktree_dir"
+        echo -e "${BLUE}Repairing: $name${NC}"
+        export PWT_WORKTREE="$name"
+        export PWT_WORKTREE_PATH="$worktree_dir"
+        cd "$worktree_dir"
+        run_pwtfile "repair"
+        run_hook "repair"
     else
         # Repair all worktrees
-        echo -e "${BLUE}Checking symlinks in all worktrees...${NC}\n"
+        echo -e "${BLUE}Repairing all worktrees...${NC}\n"
 
-        local repaired=0
-        local ok=0
-
-        # Main app
-        if check_symlinks_status "$MAIN_APP" > /dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} ${CURRENT_PROJECT} (main) - OK"
-            ok=$((ok + 1))
-        else
-            repair_symlinks "$MAIN_APP"
-            repaired=$((repaired + 1))
-        fi
-
-        # Worktrees
         if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
             for dir in "$WORKTREES_DIR"/*/; do
                 [ -d "$dir" ] || continue
                 local wt_name=$(basename "$dir")
-
-                if check_symlinks_status "$dir" > /dev/null 2>&1; then
-                    echo -e "  ${GREEN}✓${NC} $wt_name - OK"
-                    ok=$((ok + 1))
-                else
-                    repair_symlinks "$dir"
-                    repaired=$((repaired + 1))
-                fi
+                echo -e "  ${YELLOW}$wt_name${NC}"
+                export PWT_WORKTREE="$wt_name"
+                export PWT_WORKTREE_PATH="$dir"
+                cd "$dir"
+                run_pwtfile "repair"
+                run_hook "repair"
             done
         fi
 
         echo ""
         echo -e "${GREEN}Done!${NC}"
-        echo -e "  OK: $ok"
-        echo -e "  Repaired: $repaired"
     fi
-
-    sync_codex_skills
 }
 
 # Command: auto-remove (cleanup merged worktrees)
@@ -1446,14 +1307,12 @@ cmd_remove() {
     local branch=$(get_metadata "$name" "branch")
     local base=$(get_metadata "$name" "base")
     local desc=$(get_metadata "$name" "description")
-    local ticket_name=$(echo "$name" | grep -oE 'ACME-[0-9]+' || echo "$name")
-
     # Set context for Pwtfile and hooks
     export PWT_WORKTREE="$name"
     export PWT_WORKTREE_PATH="$worktree_dir"
     export PWT_BRANCH="$branch"
     export PWT_PORT="$port"
-    export PWT_TICKET="$ticket_name"
+    export PWT_TICKET="$name"  # User can customize via Pwtfile
     export PWT_BASE="$base"
     export PWT_DESC="$desc"
     export PWT_PROJECT="$CURRENT_PROJECT"
@@ -1540,7 +1399,7 @@ cmd_info() {
             port="-"
         fi
     fi
-    local ticket=$(echo "$name" | grep -oE 'ACME-[0-9]+' || echo "-")
+    local ticket="$name"
     local branch=$(git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "detached")
     local upstream=$(git -C "$worktree_dir" rev-parse --abbrev-ref "${branch}@{upstream}" 2>/dev/null || echo "-")
     local commit=$(git -C "$worktree_dir" rev-parse --short HEAD 2>/dev/null || echo "-")
@@ -1558,14 +1417,6 @@ cmd_info() {
         fi
     else
         server_status="${YELLOW}stopped${NC}"
-    fi
-
-    # Symlinks status
-    local links_status
-    if check_symlinks_status "$worktree_dir" > /dev/null 2>&1; then
-        links_status="${GREEN}OK${NC}"
-    else
-        links_status="${RED}incomplete${NC}"
     fi
 
     # Commits ahead/behind
@@ -1591,7 +1442,6 @@ cmd_info() {
     echo ""
     echo -e "  ${BLUE}Port:${NC}      $port"
     echo -e "  ${BLUE}Server:${NC}    $server_status"
-    echo -e "  ${BLUE}Symlinks:${NC}  $links_status"
     echo -e "  ${BLUE}Directory:${NC} $worktree_dir"
     echo ""
 
@@ -1717,7 +1567,7 @@ cmd_fix_port() {
                     echo -e "${GREEN}✓ Port $old_port freed!${NC}"
                     echo ""
                     echo "Now you can start the server:"
-                    echo -e "  ${BLUE}acme-server${NC}"
+                    echo -e "  ${BLUE}pwt server${NC}"
                     exit 0
                 else
                     echo -e "${RED}Port still occupied. Reallocating...${NC}"
@@ -1762,79 +1612,31 @@ cmd_fix_port() {
         fi
     fi
 
-    # 1. Update .env
+    # 1. Update .env (generic patterns)
     if [ -f "$worktree_dir/.env" ]; then
-        sed_inplace "s/DEFAULT_URL=localhost:$old_port/DEFAULT_URL=localhost:$new_port/" "$worktree_dir/.env"
-        sed_inplace "s/WORKTREE_DB_SUFFIX=_wt$old_port/WORKTREE_DB_SUFFIX=_wt$new_port/" "$worktree_dir/.env"
+        sed_inplace "s/localhost:$old_port/localhost:$new_port/g" "$worktree_dir/.env"
+        sed_inplace "s/_wt$old_port/_wt$new_port/g" "$worktree_dir/.env"
         echo -e "  ${GREEN}✓${NC} .env updated"
     fi
 
-    # 2. Update database.yml
-    if [ -f "$worktree_dir/config/database.yml" ]; then
-        sed_inplace "s/acme_test_wt$old_port/acme_test_wt$new_port/g" "$worktree_dir/config/database.yml"
-        sed_inplace "s/reports_generator_test_wt$old_port/reports_generator_test_wt$new_port/g" "$worktree_dir/config/database.yml"
-        echo -e "  ${GREEN}✓${NC} database.yml updated"
-    fi
-
-    # 3. Update metadata
+    # 2. Update metadata
     update_metadata "$name" "port" "$new_port"
     echo -e "  ${GREEN}✓${NC} Metadata updated"
 
-    # 4. Handle test databases
-    echo ""
-    echo -e "${BLUE}Test databases:${NC}"
-    local old_test_db="acme_test_wt$old_port"
-    local new_test_db="acme_test_wt$new_port"
+    # 3. Set context for hook
+    export PWT_OLD_PORT="$old_port"
+    export PWT_PORT="$new_port"
+    export PWT_WORKTREE="$name"
+    export PWT_WORKTREE_PATH="$worktree_dir"
 
-    # Check if old database exists
-    if psql -lqt | cut -d \| -f 1 | grep -qw "$old_test_db"; then
-        echo "  Old database exists: $old_test_db"
-        echo -e "  ${YELLOW}Warning: Renaming PostgreSQL databases is not trivial${NC}"
-        echo "  Recommended: drop old and create new"
-        echo ""
-        read -p "  Drop old databases and create new? (y/N) " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            # Drop old databases
-            dropdb "$old_test_db" 2>/dev/null || true
-            dropdb "reports_generator_test_wt$old_port" 2>/dev/null || true
-            for i in 2 3 4 5 6 7 8 9; do
-                dropdb "${old_test_db}${i}" 2>/dev/null || true
-                dropdb "reports_generator_test_wt${old_port}${i}" 2>/dev/null || true
-            done
-            echo -e "  ${GREEN}✓${NC} Old databases removed"
-
-            # Create new
-            cd "$worktree_dir"
-            createdb "$new_test_db" 2>/dev/null && {
-                RAILS_ENV=test bundle exec rake db:schema:load 2>/dev/null || true
-                echo -e "  ${GREEN}✓${NC} Database $new_test_db created"
-            }
-            createdb "reports_generator_test_wt$new_port" 2>/dev/null && {
-                RAILS_ENV=test bundle exec rake db:reports_generator:schema:load 2>/dev/null || true
-                echo -e "  ${GREEN}✓${NC} reports_generator database created"
-            }
-
-            # Parallel
-            DISABLE_DATABASE_ENVIRONMENT_CHECK=1 RAILS_ENV=test bundle exec rake parallel:create[8] 2>/dev/null && {
-                RAILS_ENV=test bundle exec rake parallel:prepare[8] 2>/dev/null || true
-                echo -e "  ${GREEN}✓${NC} Parallel databases created"
-            }
-        fi
-    else
-        echo "  Old database not found, creating new..."
-        cd "$worktree_dir"
-        createdb "$new_test_db" 2>/dev/null && {
-            RAILS_ENV=test bundle exec rake db:schema:load 2>/dev/null || true
-        }
-        createdb "reports_generator_test_wt$new_port" 2>/dev/null || true
-    fi
+    # 4. Run project hook (for database/config updates)
+    run_hook "post-fix-port"
 
     echo ""
     echo -e "${GREEN}✓ Port reallocated successfully!${NC}"
     echo ""
     echo "To start server:"
-    echo -e "  ${BLUE}acme-server${NC}  # Starts on port $new_port"
+    echo -e "  ${BLUE}pwt server${NC}  # Starts on port $new_port"
 }
 
 # Command: meta
@@ -1899,7 +1701,7 @@ cmd_meta() {
                         fi
                         local wt_base_commit=$(git -C "$dir" merge-base HEAD origin/master 2>/dev/null)
                         local wt_base_short=$(git -C "$dir" rev-parse --short "$wt_base_commit" 2>/dev/null || echo "?")
-                        local wt_desc=$(echo "$wt_branch" | sed -E 's|^[a-z]+/||' | sed -E 's|^ACME-[0-9]+-?||' | tr '-' ' ')
+                        local wt_desc=$(echo "$wt_branch" | sed -E 's|^[a-z]+/||' | tr '-' ' ')
 
                         save_metadata "$wt_name" "$dir" "$wt_branch" "master" "$wt_base_short" "$wt_port" "$wt_desc"
                         echo -e "  ${GREEN}✓${NC} Imported: $wt_name (port $wt_port)"
@@ -2100,7 +1902,7 @@ cmd_project() {
 }
 
 # Command: port
-# Get port for a worktree (used by acme-server)
+# Get port for a worktree
 cmd_port() {
     local name="$1"
 
@@ -2148,7 +1950,7 @@ done
 init_pwt
 
 # Check if first argument is a project name (before command dispatch)
-# This allows: pwt acme-app list (instead of pwt --project acme-app list)
+# This allows: pwt myproject list (instead of pwt --project myproject list)
 if [ -n "${1:-}" ] && [ -d "$PWT_PROJECTS_DIR/${1}" ]; then
     CURRENT_PROJECT="$1"
     load_project_config "$1"
@@ -2235,7 +2037,7 @@ case "${1:-}" in
         echo "  pwt project set myproject branch_prefix \"jp/\""
         echo ""
         echo "Examples:"
-        echo "  pwt acme-app list                       # Explicit project"
+        echo "  pwt myproject list                         # Explicit project"
         echo "  pwt create TICKET-123 master \"fix auth\"   # Auto-detect project"
         echo "  pwt list                                   # List worktrees"
         echo "  pwt remove TICKET-123                      # Remove worktree"

@@ -50,6 +50,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m' # No Color
 
@@ -2825,15 +2826,33 @@ cmd_remove() {
 # Start the server using Pwtfile's server() function
 cmd_server() {
     local current_dir=$(pwd)
+    local worktree_name=""
+    local worktree_path=""
+    local via_symlink=false
 
-    # Must be inside a worktree
-    if [[ "$current_dir" != "$WORKTREES_DIR"/* ]]; then
-        echo -e "${RED}Error: Not inside a worktree${NC}"
-        echo "Run this command from inside a worktree directory"
+    # 1. Check if inside a worktree directly
+    if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+        worktree_name=$(basename "$current_dir")
+        worktree_path="$current_dir"
+    # 2. Check if current symlink is set
+    elif worktree_name=$(get_current_from_symlink 2>/dev/null); then
+        # @ = main (can't run server from main)
+        if [ "$worktree_name" = "@" ]; then
+            echo -e "${RED}Error: current points to main (@)${NC}"
+            echo "Use: pwt use <worktree>  # switch to a worktree first"
+            exit 1
+        fi
+        worktree_path="$WORKTREES_DIR/$worktree_name"
+        via_symlink=true
+    else
+        echo -e "${RED}Error: Not inside a worktree and no current set${NC}"
+        echo ""
+        echo "Options:"
+        echo "  cd into a worktree directory"
+        echo "  pwt use <worktree>  # set current first"
         exit 1
     fi
 
-    local worktree_name=$(basename "$current_dir")
     local port=$(get_metadata "$worktree_name" "port")
 
     if [ -z "$port" ]; then
@@ -2841,14 +2860,24 @@ cmd_server() {
         port="3000"
     fi
 
+    # Warning if running via symlink
+    if [ "$via_symlink" = true ]; then
+        echo -e "${YELLOW}Note: Starting server for current ($worktree_name)${NC}"
+        echo -e "${DIM}Tip: Run from worktree path for better LSP/watcher support${NC}"
+        echo ""
+    fi
+
     # Set context for Pwtfile
     export PWT_WORKTREE="$worktree_name"
-    export PWT_WORKTREE_PATH="$current_dir"
+    export PWT_WORKTREE_PATH="$worktree_path"
     export PWT_PORT="$port"
     export PWT_PROJECT="$CURRENT_PROJECT"
     export MAIN_APP="$MAIN_APP"
 
     echo -e "${BLUE}Starting server on port $port...${NC}"
+
+    # Actually cd to worktree path (for Pwtfile commands that use pwd)
+    cd "$worktree_path" || exit 1
 
     # Run Pwtfile server phase
     run_pwtfile "server"
@@ -2883,6 +2912,8 @@ cmd_current() {
     # 1. Try symlink first (works from anywhere)
     if name=$(get_current_from_symlink 2>/dev/null); then
         from_symlink=true
+        # @ means symlink points to main
+        [ "$name" = "@" ] && is_main=true
     # 2. Fall back to pwd detection
     elif [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
         name=$(basename "$current_dir")
@@ -2991,12 +3022,19 @@ get_current_symlink_path() {
 }
 
 # Read current worktree from symlink
+# Returns "@" if pointing to MAIN_APP, otherwise worktree name
 get_current_from_symlink() {
     local symlink_path=$(get_current_symlink_path)
     [ -L "$symlink_path" ] || return 1
     local target=$(readlink "$symlink_path" 2>/dev/null) || return 1
     [ -d "$target" ] || return 1
-    basename "$target"
+
+    # Check if pointing to main app
+    if [ "$target" = "$MAIN_APP" ]; then
+        echo "@"
+    else
+        basename "$target"
+    fi
 }
 
 # Update symlink atomically
@@ -3071,10 +3109,13 @@ cmd_use() {
 
     # @ = main worktree (special case)
     if [ "$target" = "@" ]; then
-        # Clear symlink for main (we don't symlink main)
-        clear_current_symlink
+        # Point symlink to main app (always have a current)
+        local symlink_path=$(get_current_symlink_path)
+        mkdir -p "$(dirname "$symlink_path")"
+        ln -sfn "$MAIN_APP" "$symlink_path"
         save_last_used "@"
-        echo -e "current → ${BLUE}@ (main)${NC}"
+        local branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
+        echo -e "current → ${BLUE}@ (main)${NC} (branch ${GREEN}$branch${NC})"
         return 0
     fi
 
@@ -4502,7 +4543,7 @@ cmd_topology() {
                 echo "  pwt topology              # uses default (claude)"
                 echo "  pwt topology codex        # use codex"
                 echo ""
-                echo "Note: Takes ~20-30s (LLM processing time)"
+                echo "Note: Runs an LLM, may take a moment"
                 return 0
                 ;;
             -*)

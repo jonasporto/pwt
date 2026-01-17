@@ -97,6 +97,47 @@ pwt create feature master --clone      # Creates clone instead
 | bun/node | Optional | Pwtfile.js support |
 | ruby | Optional | Pwtfile.rb support |
 
+## Install
+
+```bash
+# Clone the repo
+git clone https://github.com/youruser/pwt.git ~/dotfiles/pwt
+
+# Add to PATH (add to ~/.zshrc or ~/.bashrc)
+export PATH="$HOME/dotfiles/pwt/bin:$PATH"
+
+# Enable shell integration (add to ~/.zshrc)
+eval "$(pwt shell-init)"
+
+# Verify installation
+pwt doctor
+```
+
+**Update:**
+```bash
+cd ~/dotfiles/pwt && git pull
+```
+
+## 30-Second Demo
+
+```bash
+# Initialize your project
+cd ~/Projects/myapp
+pwt init
+
+# Create a worktree and open it
+pwt create TICKET-123 main "fix login bug"
+cd "$(pwt current)"
+
+# Switch context instantly
+pwt use TICKET-456
+
+# Always know where you are
+pwt ps1   # pwt@TICKET-456
+```
+
+**The key insight:** `pwt use` swaps a symlink. Your editor stays open, pointing to `$(pwt current)`. When you switch, the editor sees different code — no new windows.
+
 ## Quick Start
 
 ```bash
@@ -143,6 +184,8 @@ pwt remove feature-branch
 | `server` | Start development server |
 | `fix-port [worktree]` | Resolve port conflict |
 | `auto-remove [target] [flags]` | Remove merged worktrees |
+| `tree [flags]` | Visual tree view of worktrees (`--all`, `--dirty`, `--ports`) |
+| `topology [ai_tool]` | LLM-powered analysis of shared vs per-worktree services |
 | `doctor` | Check system health and configuration |
 | `benchmark` | Compare worktree vs clone disk usage |
 | `shell-init` | Output shell function for cd/select integration |
@@ -587,6 +630,15 @@ set -g status-right '#(pwt ps1)'
 - Guarantee watcher consistency
 
 The symlink is a **convenience for editing**, not a safety mechanism.
+
+### Do / Don't
+
+| ✅ Do | ⚠️ Don't |
+|-------|----------|
+| Open editor via `$(pwt current)` | Run servers from `current` path |
+| Use `pwt use` to switch context | Expect LSP to auto-reload on switch |
+| Run `pwt server` from worktree directory | Assume watchers follow symlinks |
+| Use `pwt ps1` for prompt context | Store state in `current` path |
 
 ## Philosophy: rvm-like Context Switching
 

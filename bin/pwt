@@ -26,7 +26,8 @@
 set -euo pipefail
 
 # PWT directory structure
-PWT_DIR="$HOME/.pwt"
+# PWT_DIR can be overridden via environment for testing/sandbox
+PWT_DIR="${PWT_DIR:-$HOME/.pwt}"
 PWT_META_FILE="$PWT_DIR/meta.json"
 PWT_PROJECTS_DIR="$PWT_DIR/projects"
 
@@ -74,7 +75,32 @@ require_cmd() {
             return 1
         else
             echo -e "${RED}Error: Required command not found: $cmd${NC}" >&2
-            echo "Please install $cmd to use pwt." >&2
+            # Provide install hints for common tools
+            case "$cmd" in
+                git)
+                    echo "Install: https://git-scm.com/downloads" >&2
+                    echo "  macOS:  xcode-select --install" >&2
+                    echo "  Ubuntu: sudo apt install git" >&2
+                    ;;
+                jq)
+                    echo "Install: https://jqlang.github.io/jq/download/" >&2
+                    echo "  macOS:  brew install jq" >&2
+                    echo "  Ubuntu: sudo apt install jq" >&2
+                    ;;
+                fzf)
+                    echo "Install: https://github.com/junegunn/fzf" >&2
+                    echo "  macOS:  brew install fzf" >&2
+                    echo "  Ubuntu: sudo apt install fzf" >&2
+                    ;;
+                lsof)
+                    echo "Install:" >&2
+                    echo "  macOS:  (pre-installed)" >&2
+                    echo "  Ubuntu: sudo apt install lsof" >&2
+                    ;;
+                *)
+                    echo "Please install $cmd to use this feature." >&2
+                    ;;
+            esac
             exit 1
         fi
     fi
@@ -87,6 +113,52 @@ check_dependencies() {
     require_cmd jq
     # Optional: lsof (for port checking), fzf (for select)
     # These are checked where needed, not at startup
+}
+
+# Ask user for confirmation (returns 0 for yes, 1 for no)
+confirm_action() {
+    local prompt="${1:-Continue?}"
+    local response
+    echo -n "$prompt [y/N] "
+    read -r response
+    case "$response" in
+        [yY]|[yY][eE][sS]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Check if lsof is available (cache result for performance)
+_lsof_available=""
+has_lsof() {
+    if [ -z "$_lsof_available" ]; then
+        if command -v lsof >/dev/null 2>&1; then
+            _lsof_available="yes"
+        else
+            _lsof_available="no"
+        fi
+    fi
+    [ "$_lsof_available" = "yes" ]
+}
+
+# Get PIDs using a port (returns empty if lsof unavailable)
+# Usage: get_pids_on_port <port>
+get_pids_on_port() {
+    local port="$1"
+    if has_lsof; then
+        lsof -ti ":$port" 2>/dev/null || true
+    fi
+    # Without lsof, we can't detect - return empty (assume free)
+}
+
+# Check if a port is occupied (returns 1 if occupied or unknown, 0 if free)
+# Usage: is_port_free <port>
+is_port_free() {
+    local port="$1"
+    if ! has_lsof; then
+        # Without lsof, assume port is free (best effort)
+        return 0
+    fi
+    ! lsof -ti ":$port" > /dev/null 2>&1
 }
 
 # Initialize PWT directory
@@ -1145,13 +1217,13 @@ is_port_pair_free() {
     local rails_port="$1"
     local vite_port=$((rails_port + 1))
 
-    # Check if Rails port is occupied
-    if lsof -ti ":$rails_port" > /dev/null 2>&1; then
+    # Check if Rails port is occupied (uses is_port_free helper, degrades gracefully)
+    if ! is_port_free "$rails_port"; then
         return 1
     fi
 
     # Check if Vite port is occupied
-    if lsof -ti ":$vite_port" > /dev/null 2>&1; then
+    if ! is_port_free "$vite_port"; then
         return 1
     fi
 
@@ -1559,8 +1631,14 @@ check_port_status() {
         return
     fi
 
-    local rails_pid=$(lsof -ti ":$port" 2>/dev/null)
-    local vite_pid=$(lsof -ti ":$vite_port" 2>/dev/null)
+    # Without lsof, we can't check port status
+    if ! has_lsof; then
+        echo -e "${YELLOW}[port $port]${NC}"
+        return
+    fi
+
+    local rails_pid=$(get_pids_on_port "$port")
+    local vite_pid=$(get_pids_on_port "$vite_port")
 
     # If no port occupied, it's free
     if [ -z "$rails_pid" ] && [ -z "$vite_pid" ]; then
@@ -2341,6 +2419,9 @@ cmd_remove() {
     local name=""
     local with_branch=false
     local force_branch=false
+    local kill_port=false
+    local kill_sidekiq=false
+    local auto_yes=false
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -2352,6 +2433,23 @@ cmd_remove() {
             --force-branch)
                 with_branch=true
                 force_branch=true
+                shift
+                ;;
+            --kill-port)
+                kill_port=true
+                shift
+                ;;
+            --kill-sidekiq)
+                kill_sidekiq=true
+                shift
+                ;;
+            --kill-all)
+                kill_port=true
+                kill_sidekiq=true
+                shift
+                ;;
+            -y|--yes)
+                auto_yes=true
                 shift
                 ;;
             -*)
@@ -2395,67 +2493,99 @@ cmd_remove() {
         fi
     fi
 
-    # Check if Rails server is running
+    # Check if Rails server is running (from pidfile)
     local pidfile="$worktree_dir/tmp/pids/server.pid"
     if [ -f "$pidfile" ]; then
         local pid=$(cat "$pidfile")
         if ps -p "$pid" > /dev/null 2>&1; then
             echo -e "${RED}Error: Rails server still running (PID $pid)${NC}"
-            echo "Stop the server first or use: kill $pid"
+            echo "Stop the server first, or use one of:"
+            echo "  kill $pid"
+            echo "  pwt remove $name --kill-port"
             exit 1
         fi
     fi
 
-    # Kill Sidekiq from worktree if running (avoid orphan jobs)
-    # Only kill if process is running from this worktree directory
-    if [ -d "$worktree_dir" ]; then
-        local sidekiq_pids=""
+    # Detect Sidekiq processes from this worktree
+    local sidekiq_pids=""
+    local sidekiq_info=""
+    if command -v lsof >/dev/null 2>&1 && [ -d "$worktree_dir" ]; then
         while IFS= read -r pid; do
-            # Verify the process is actually from this worktree
+            [ -z "$pid" ] && continue
+            # Verify the process is actually from this worktree by checking cwd
             local proc_cwd=$(lsof -p "$pid" 2>/dev/null | grep cwd | awk '{print $NF}')
             if [[ "$proc_cwd" == "$worktree_dir"* ]]; then
                 sidekiq_pids="${sidekiq_pids}${sidekiq_pids:+ }$pid"
+                local proc_cmd=$(ps -p "$pid" -o args= 2>/dev/null || echo "sidekiq")
+                sidekiq_info="${sidekiq_info}  PID $pid: $proc_cmd\n"
             fi
         done < <(pgrep -f "sidekiq" 2>/dev/null || true)
+    fi
 
-        if [ -n "$sidekiq_pids" ]; then
-            echo -e "${YELLOW}Killing Sidekiq from worktree...${NC}"
-            echo "$sidekiq_pids" | xargs kill 2>/dev/null || true
-            sleep 1
-            echo -e "  ${GREEN}✓ Sidekiq killed${NC}"
+    # Detect processes on port
+    local port_pids=""
+    local port_info=""
+    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && command -v lsof >/dev/null 2>&1; then
+        local pids_on_port=$(lsof -ti ":$port" 2>/dev/null || true)
+        for pid in $pids_on_port; do
+            local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+            local proc_cmd=$(ps -p "$pid" -o args= 2>/dev/null || echo "unknown")
+            port_pids="${port_pids}${port_pids:+ }$pid"
+            port_info="${port_info}  PID $pid ($proc_name): $proc_cmd\n"
+        done
+    fi
+
+    # Handle blocking processes
+    local has_blockers=false
+
+    if [ -n "$sidekiq_pids" ]; then
+        if [ "$kill_sidekiq" = true ]; then
+            echo -e "${YELLOW}Sidekiq processes detected:${NC}"
+            echo -e "$sidekiq_info"
+            if [ "$auto_yes" = true ] || confirm_action "Kill these Sidekiq processes?"; then
+                echo "$sidekiq_pids" | xargs kill 2>/dev/null || true
+                sleep 1
+                echo -e "  ${GREEN}✓ Sidekiq killed${NC}"
+            else
+                echo -e "${RED}Aborted.${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${RED}Error: Sidekiq processes detected from this worktree:${NC}"
+            echo -e "$sidekiq_info"
+            echo "Stop Sidekiq first, or use: pwt remove $name --kill-sidekiq"
+            has_blockers=true
         fi
     fi
 
-    # Kill foreman/processes from worktree by port
-    # Only kill known safe processes (ruby, node, puma, etc.)
-    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
-        local port_pids=$(lsof -ti ":$port" 2>/dev/null || true)
-        if [ -n "$port_pids" ]; then
-            local safe_to_kill=true
-            local pid_list=""
-            for pid in $port_pids; do
-                local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
-                # Only kill known server processes
-                case "$proc_name" in
-                    ruby|node|puma|rails|foreman|npm|bun|python*)
-                        pid_list="${pid_list}${pid_list:+ }$pid"
-                        ;;
-                    *)
-                        echo -e "${YELLOW}Warning: Unknown process on port $port: $proc_name (PID $pid)${NC}"
-                        safe_to_kill=false
-                        ;;
-                esac
-            done
-
-            if [ "$safe_to_kill" = true ] && [ -n "$pid_list" ]; then
-                echo -e "${YELLOW}Freeing port $port...${NC}"
-                echo "$pid_list" | xargs kill -9 2>/dev/null || true
+    if [ -n "$port_pids" ]; then
+        if [ "$kill_port" = true ]; then
+            echo -e "${YELLOW}Processes on port $port:${NC}"
+            echo -e "$port_info"
+            if [ "$auto_yes" = true ] || confirm_action "Kill these processes?"; then
+                echo "$port_pids" | xargs kill -9 2>/dev/null || true
                 sleep 1
                 echo -e "  ${GREEN}✓ Port $port freed${NC}"
-            elif [ "$safe_to_kill" = false ]; then
-                echo -e "${YELLOW}Skipping port cleanup (unknown processes)${NC}"
+            else
+                echo -e "${RED}Aborted.${NC}"
+                exit 1
             fi
+        else
+            echo -e "${RED}Error: Processes detected on port $port:${NC}"
+            echo -e "$port_info"
+            echo "Stop them first, or use: pwt remove $name --kill-port"
+            has_blockers=true
         fi
+    fi
+
+    if [ "$has_blockers" = true ]; then
+        echo ""
+        echo "Options:"
+        echo "  pwt remove $name --kill-port      # Kill port processes"
+        echo "  pwt remove $name --kill-sidekiq   # Kill Sidekiq"
+        echo "  pwt remove $name --kill-all       # Kill both"
+        echo "  pwt remove $name --kill-all -y    # Kill both without confirmation"
+        exit 1
     fi
 
     echo -e "${YELLOW}Removing worktree: $name${NC}"
@@ -2700,9 +2830,20 @@ cmd_fix_port() {
         exit 0
     fi
 
+    # Require lsof for detailed port analysis
+    if ! has_lsof; then
+        echo -e "${YELLOW}Warning: lsof not available for detailed port analysis${NC}"
+        echo "Cannot identify which processes are using the port."
+        echo ""
+        echo "Options:"
+        echo "  1) Install lsof:  sudo apt install lsof"
+        echo "  2) Manually find: ss -tlnp | grep $old_port"
+        exit 1
+    fi
+
     # Analyze what's occupying the ports
-    local rails_pid=$(lsof -ti ":$old_port" 2>/dev/null)
-    local vite_pid=$(lsof -ti ":$((old_port + 1))" 2>/dev/null)
+    local rails_pid=$(get_pids_on_port "$old_port")
+    local vite_pid=$(get_pids_on_port "$((old_port + 1))")
     local rails_proc="" vite_proc=""
     local can_kill_rails=false can_kill_vite=false
 
@@ -3538,10 +3679,12 @@ cmd_doctor() {
     fi
 
     # Check lsof
-    if command -v lsof &>/dev/null; then
+    if has_lsof; then
         echo -e "${GREEN}✓${NC} lsof: installed"
     else
-        echo -e "${YELLOW}⚠${NC} lsof: not installed (recommended for port detection)"
+        echo -e "${YELLOW}⚠${NC} lsof: not installed (port detection will be limited)"
+        echo "    macOS:  (should be pre-installed)"
+        echo "    Ubuntu: sudo apt install lsof"
     fi
 
     # Check fzf
@@ -4166,7 +4309,7 @@ case "${1:-}" in
         cmd_list "$@"
         ;;
     info|show)
-        require_project
+        require_project --info-only
         cmd_info "${2:-}"
         ;;
     remove|rm)

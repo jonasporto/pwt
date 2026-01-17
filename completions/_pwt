@@ -92,6 +92,19 @@ _pwt_meta_fields() {
     _describe 'field' fields
 }
 
+_pwt_remove_flags() {
+    local flags=(
+        '--with-branch:Also delete the branch (if merged)'
+        '--force-branch:Force delete the branch (even if not merged)'
+        '--kill-port:Kill processes using the port (opt-in)'
+        '--kill-sidekiq:Kill Sidekiq processes (opt-in)'
+        '--kill-all:Kill both port and Sidekiq processes'
+        '-y:Skip confirmation prompts'
+        '--yes:Skip confirmation prompts'
+    )
+    _describe 'flag' flags
+}
+
 _pwt() {
     local curcontext="$curcontext" state line
     typeset -A opt_args
@@ -126,7 +139,12 @@ _pwt() {
                             *) _message 'description' ;;
                         esac
                         ;;
-                    remove|rm|info|show|fix-port|port)
+                    remove|rm)
+                        _alternative \
+                            'worktrees:worktree:_pwt_worktrees' \
+                            'flags:flag:_pwt_remove_flags'
+                        ;;
+                    info|show|fix-port|port)
                         _pwt_worktrees
                         ;;
                     meta)
@@ -176,7 +194,12 @@ _pwt() {
                             *) _message 'description' ;;
                         esac
                         ;;
-                    remove|rm|info|show|fix-port|repair|fix|port)
+                    remove|rm)
+                        _alternative \
+                            'worktrees:worktree:_pwt_worktrees' \
+                            'flags:flag:_pwt_remove_flags'
+                        ;;
+                    info|show|fix-port|repair|fix|port)
                         _pwt_worktrees
                         ;;
                     auto-remove|cleanup)

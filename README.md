@@ -93,6 +93,10 @@ pwt remove feature-branch
 |------|-------------|
 | `--with-branch` | Also delete the branch (if merged) |
 | `--force-branch` | Force delete the branch (even if not merged) |
+| `--kill-port` | Kill processes using the worktree's port (opt-in) |
+| `--kill-sidekiq` | Kill Sidekiq processes from worktree (opt-in) |
+| `--kill-all` | Kill both port and Sidekiq processes (opt-in) |
+| `-y, --yes` | Skip confirmation prompts |
 
 ### Auto-remove Flags
 

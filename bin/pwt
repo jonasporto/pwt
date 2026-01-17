@@ -2862,8 +2862,9 @@ cmd_server() {
 
     # Warning if running via symlink
     if [ "$via_symlink" = true ]; then
-        echo -e "${YELLOW}Note: Starting server for current ($worktree_name)${NC}"
-        echo -e "${DIM}Tip: Run from worktree path for better LSP/watcher support${NC}"
+        echo -e "${YELLOW}⚠️  Running server via symlink path${NC}"
+        echo -e "${DIM}   → resolved to: $worktree_path${NC}"
+        echo -e "${DIM}   Tip: Run from worktree path for better LSP/watcher support${NC}"
         echo ""
     fi
 

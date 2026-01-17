@@ -22,6 +22,23 @@ pwt ps1               # pwt@TICKET-789
 
 pwt manages git worktrees with port allocation and project isolation. It's framework-agnostic: Rails, Node, Go, Python — pwt doesn't care. Your project-specific setup lives in `Pwtfile`, not in pwt's core.
 
+## TL;DR
+
+- One editor, one stable path, infinite worktrees
+- `pwt use` swaps code instantly via symlink
+- Worktrees by default, clones when needed (`--clone`)
+- Project logic lives in `Pwtfile` (setup/server/teardown)
+
+## Navigation
+
+**Start here:** [Install](#install) · [30-Second Demo](#30-second-demo) · [Quick Start](#quick-start)
+
+**Deep dive:** [Why not clones?](#why-not-just-clones) · [Commands](#commands) · [Pwtfile](#pwtfile) · [Shell Integration](#shell-integration)
+
+**Philosophy:** [Capistrano-style symlink](#capistrano-style-current-symlink) · [rvm-like switching](#philosophy-rvm-like-context-switching)
+
+---
+
 ## Why not just clones?
 
 Cloning the same repository multiple times is a valid and common workflow — especially for developers who want full isolation, zero constraints, and fewer surprises.
@@ -612,6 +629,8 @@ set -g status-right '#(pwt ps1)'
 :set statusline+=%{system('pwt\ ps1')}
 ```
 
+> **ps1 vs statusline:** Use `pwt ps1` for current context (fast, symlink-based). Use `pwt list statusline` for a global overview of all worktrees (useful for dashboards/tmux).
+
 ### Edge Cases & Limitations
 
 **What pwt handles:**
@@ -670,6 +689,45 @@ pwt cd                  # Return to last-used worktree
 pwt current --name      # Which worktree am I in?
 pwt server              # Start server for current context
 ```
+
+## Visual Commands
+
+### `pwt tree` — Factual Structure
+
+See your worktrees at a glance:
+
+```
+$ pwt tree
+myapp
+├─ @ (main)                    master
+├─ TICKET-123        :5001     feature/login    *
+├─ TICKET-456        :5002     fix/api-error
+└─ TICKET-789        :5003     refactor/auth    +
+```
+
+Flags: `--all` (all projects), `--dirty` (uncommitted only), `--ports` (show ports)
+
+### `pwt topology` — Inferred Architecture
+
+LLM-powered analysis of what's shared vs isolated:
+
+```
+$ pwt topology
+Project: myapp
+
+[SHARED]
+  └─ postgres (5432), redis (6379), solr (8983)
+
+[PER-WORKTREE]
+  ├─ TICKET-123  rails :5001 + vite :5101
+  ├─ TICKET-456  rails :5002 + vite :5102
+  └─ TICKET-789  rails :5003 + sidekiq
+
+[WARN]
+  └─ All worktrees share same Redis — job queues may conflict
+```
+
+> **Note:** `tree` shows facts. `topology` interprets your Pwtfile and infers architecture.
 
 ## Examples
 

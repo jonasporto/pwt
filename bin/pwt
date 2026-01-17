@@ -1211,23 +1211,10 @@ extract_worktree_name() {
     echo "$branch" | sed -E 's|.*/||; s|[^A-Za-z0-9._-]|-|g'
 }
 
-# Check if a port (and its Vite port +1) are free
-# Returns 0 if both free, 1 if any occupied
+# Alias for backwards compatibility (was pair, now single port)
+# Projects needing multiple ports should derive them in Pwtfile (e.g., VITE_PORT=$((PWT_PORT+1)))
 is_port_pair_free() {
-    local rails_port="$1"
-    local vite_port=$((rails_port + 1))
-
-    # Check if Rails port is occupied (uses is_port_free helper, degrades gracefully)
-    if ! is_port_free "$rails_port"; then
-        return 1
-    fi
-
-    # Check if Vite port is occupied
-    if ! is_port_free "$vite_port"; then
-        return 1
-    fi
-
-    return 0
+    is_port_free "$1"
 }
 
 # Find next available port
@@ -1302,61 +1289,22 @@ next_available_port() {
     echo $((max_port + 1))
 }
 
-# Check if server is running in a worktree
+# Check if server is running in a worktree (generic - checks port, not pidfile)
 check_server_status() {
     local dir="$1"
-    local pidfile="$dir/tmp/pids/server.pid"
+    local port="${2:-}"
 
-    if [ -f "$pidfile" ]; then
-        local pid=$(cat "$pidfile")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            local port=$(ps -p "$pid" -o command= 2>/dev/null | grep -oE ':([0-9]+)\)' | tr -d ':)' || echo "?")
-            echo -e "${GREEN}[running]${NC} PID $pid port $port"
+    # If port provided, check if it's in use
+    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
+        local pids=$(get_pids_on_port "$port")
+        if [ -n "$pids" ]; then
+            echo -e "${GREEN}[running]${NC} port $port"
             return
         fi
     fi
     echo -e "${YELLOW}[stopped]${NC}"
 }
 
-
-
-# Ensure JS dependencies (devDependencies) are installed.
-# Prevents error: `error Command "vite" not found.`
-install_js_deps() {
-    if [ ! -f "package.json" ]; then
-        return 0
-    fi
-
-    if [ -e "node_modules/.bin/vite" ]; then
-        echo "  ✓ JS dependencies ok (vite already installed)"
-        return 0
-    fi
-
-    echo "  Running yarn install (including devDependencies)..."
-
-    if command -v yarn > /dev/null 2>&1; then
-        if ! NODE_ENV=development YARN_PRODUCTION=false yarn install --silent --frozen-lockfile; then
-            echo -e "  ${YELLOW}Warning: yarn.lock out of sync; running yarn install without --frozen-lockfile...${NC}"
-            NODE_ENV=development YARN_PRODUCTION=false yarn install --silent
-        fi
-    elif command -v yarnpkg > /dev/null 2>&1; then
-        if ! NODE_ENV=development YARN_PRODUCTION=false yarnpkg install --silent --frozen-lockfile; then
-            echo -e "  ${YELLOW}Warning: yarn.lock out of sync; running yarnpkg install without --frozen-lockfile...${NC}"
-            NODE_ENV=development YARN_PRODUCTION=false yarnpkg install --silent
-        fi
-    else
-        echo -e "  ${YELLOW}Yarn not found; using npm install...${NC}"
-        NPM_CONFIG_PRODUCTION=false npm install --silent
-    fi
-
-    if [ ! -e "node_modules/.bin/vite" ]; then
-        echo -e "  ${RED}Error: Vite not found after installing JS dependencies.${NC}"
-        echo "  Run manually: NODE_ENV=development YARN_PRODUCTION=false yarn install"
-        exit 1
-    fi
-
-    echo "  ✓ JS dependencies installed (vite ok)"
-}
 
 # Command: create
 # Usage: pwt create <branch> [base-ref] [description] [options]
@@ -1548,28 +1496,6 @@ cmd_create() {
     # Create worktree
     git worktree add "${git_worktree_args[@]}"
 
-    # Copy essential config files only
-    echo -e "\n${BLUE}Copying essential config files...${NC}"
-
-    # Copy .env (basic - Pwtfile can customize further)
-    if [ -f "$MAIN_APP/.env" ]; then
-        cp "$MAIN_APP/.env" "$worktree_dir/.env"
-        echo "  ✓ .env"
-    elif [ -f "$worktree_dir/.env.example" ]; then
-        cp "$worktree_dir/.env.example" "$worktree_dir/.env"
-        echo "  ✓ .env (from .env.example)"
-    elif [ -f "$worktree_dir/.env.sample" ]; then
-        cp "$worktree_dir/.env.sample" "$worktree_dir/.env"
-        echo "  ✓ .env (from .env.sample)"
-    fi
-
-    # Copy master.key if exists (Rails credential file)
-    if [ -f "$MAIN_APP/config/master.key" ]; then
-        mkdir -p "$worktree_dir/config"
-        cp "$MAIN_APP/config/master.key" "$worktree_dir/config/master.key"
-        echo "  ✓ config/master.key"
-    fi
-
     # Save metadata
     local final_branch="${new_branch_name:-$branch}"
     local final_base="${base_ref:-master}"
@@ -1623,8 +1549,7 @@ cmd_create() {
 # Returns: colored text with status
 check_port_status() {
     local port="$1"
-    local worktree_dir="$2"
-    local vite_port=$((port + 1))
+    local worktree_dir="${2:-}"
 
     if ! [[ "$port" =~ ^[0-9]+$ ]]; then
         echo -e "${YELLOW}[port ?]${NC}"
@@ -1637,44 +1562,18 @@ check_port_status() {
         return
     fi
 
-    local rails_pid=$(get_pids_on_port "$port")
-    local vite_pid=$(get_pids_on_port "$vite_port")
+    local pids=$(get_pids_on_port "$port")
 
     # If no port occupied, it's free
-    if [ -z "$rails_pid" ] && [ -z "$vite_pid" ]; then
+    if [ -z "$pids" ]; then
         echo -e "${GREEN}[port $port free]${NC}"
         return
     fi
 
-    # Check if this worktree's server is running
-    # Pragmatic approach: if server.pid exists and PID is active,
-    # we consider the port "in use" by the server itself
-    # (even if the port PID is a child like puma)
-    local own_server_running=false
-    if [ -n "$worktree_dir" ] && [ -f "$worktree_dir/tmp/pids/server.pid" ]; then
-        local own_server_pid=$(cat "$worktree_dir/tmp/pids/server.pid" 2>/dev/null)
-        if [ -n "$own_server_pid" ] && ps -p "$own_server_pid" > /dev/null 2>&1; then
-            own_server_running=true
-        fi
-    fi
-
-    if [ "$own_server_running" = true ]; then
-        echo -e "${GREEN}[port $port in use]${NC}"
-        return
-    fi
-
-    # Port occupied but this worktree's server not running = conflict
-    local issues=""
-    if [ -n "$rails_pid" ]; then
-        local proc=$(ps -p $rails_pid -o comm= 2>/dev/null || echo "?")
-        issues="Rails:$proc"
-    fi
-    if [ -n "$vite_pid" ]; then
-        local proc=$(ps -p $vite_pid -o comm= 2>/dev/null || echo "?")
-        [ -n "$issues" ] && issues="$issues, "
-        issues="${issues}Vite:$proc"
-    fi
-    echo -e "${RED}[port $port conflict: $issues]${NC}"
+    # Port is in use - show process info
+    local first_pid=$(echo "$pids" | head -1)
+    local proc=$(ps -p "$first_pid" -o comm= 2>/dev/null || echo "?")
+    echo -e "${GREEN}[port $port: $proc]${NC}"
 }
 
 # Check if branch is merged into master
@@ -2493,40 +2392,11 @@ cmd_remove() {
         fi
     fi
 
-    # Check if Rails server is running (from pidfile)
-    local pidfile="$worktree_dir/tmp/pids/server.pid"
-    if [ -f "$pidfile" ]; then
-        local pid=$(cat "$pidfile")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            echo -e "${RED}Error: Rails server still running (PID $pid)${NC}"
-            echo "Stop the server first, or use one of:"
-            echo "  kill $pid"
-            echo "  pwt remove $name --kill-port"
-            exit 1
-        fi
-    fi
-
-    # Detect Sidekiq processes from this worktree
-    local sidekiq_pids=""
-    local sidekiq_info=""
-    if command -v lsof >/dev/null 2>&1 && [ -d "$worktree_dir" ]; then
-        while IFS= read -r pid; do
-            [ -z "$pid" ] && continue
-            # Verify the process is actually from this worktree by checking cwd
-            local proc_cwd=$(lsof -p "$pid" 2>/dev/null | grep cwd | awk '{print $NF}')
-            if [[ "$proc_cwd" == "$worktree_dir"* ]]; then
-                sidekiq_pids="${sidekiq_pids}${sidekiq_pids:+ }$pid"
-                local proc_cmd=$(ps -p "$pid" -o args= 2>/dev/null || echo "sidekiq")
-                sidekiq_info="${sidekiq_info}  PID $pid: $proc_cmd\n"
-            fi
-        done < <(pgrep -f "sidekiq" 2>/dev/null || true)
-    fi
-
-    # Detect processes on port
+    # Detect processes on port (generic - no framework-specific checks)
     local port_pids=""
     local port_info=""
-    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && command -v lsof >/dev/null 2>&1; then
-        local pids_on_port=$(lsof -ti ":$port" 2>/dev/null || true)
+    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && has_lsof; then
+        local pids_on_port=$(get_pids_on_port "$port")
         for pid in $pids_on_port; do
             local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
             local proc_cmd=$(ps -p "$pid" -o args= 2>/dev/null || echo "unknown")
@@ -2536,30 +2406,8 @@ cmd_remove() {
     fi
 
     # Handle blocking processes
-    local has_blockers=false
-
-    if [ -n "$sidekiq_pids" ]; then
-        if [ "$kill_sidekiq" = true ]; then
-            echo -e "${YELLOW}Sidekiq processes detected:${NC}"
-            echo -e "$sidekiq_info"
-            if [ "$auto_yes" = true ] || confirm_action "Kill these Sidekiq processes?"; then
-                echo "$sidekiq_pids" | xargs kill 2>/dev/null || true
-                sleep 1
-                echo -e "  ${GREEN}✓ Sidekiq killed${NC}"
-            else
-                echo -e "${RED}Aborted.${NC}"
-                exit 1
-            fi
-        else
-            echo -e "${RED}Error: Sidekiq processes detected from this worktree:${NC}"
-            echo -e "$sidekiq_info"
-            echo "Stop Sidekiq first, or use: pwt remove $name --kill-sidekiq"
-            has_blockers=true
-        fi
-    fi
-
     if [ -n "$port_pids" ]; then
-        if [ "$kill_port" = true ]; then
+        if [ "$kill_port" = true ] || [ "$kill_sidekiq" = true ]; then
             echo -e "${YELLOW}Processes on port $port:${NC}"
             echo -e "$port_info"
             if [ "$auto_yes" = true ] || confirm_action "Kill these processes?"; then
@@ -2573,19 +2421,12 @@ cmd_remove() {
         else
             echo -e "${RED}Error: Processes detected on port $port:${NC}"
             echo -e "$port_info"
-            echo "Stop them first, or use: pwt remove $name --kill-port"
-            has_blockers=true
+            echo ""
+            echo "Options:"
+            echo "  pwt remove $name --kill-port    # Kill port processes"
+            echo "  pwt remove $name --kill-port -y # Kill without confirmation"
+            exit 1
         fi
-    fi
-
-    if [ "$has_blockers" = true ]; then
-        echo ""
-        echo "Options:"
-        echo "  pwt remove $name --kill-port      # Kill port processes"
-        echo "  pwt remove $name --kill-sidekiq   # Kill Sidekiq"
-        echo "  pwt remove $name --kill-all       # Kill both"
-        echo "  pwt remove $name --kill-all -y    # Kill both without confirmation"
-        exit 1
     fi
 
     echo -e "${YELLOW}Removing worktree: $name${NC}"
@@ -2731,18 +2572,14 @@ cmd_info() {
     local commit=$(git -C "$worktree_dir" rev-parse --short HEAD 2>/dev/null || echo "-")
     local commit_msg=$(git -C "$worktree_dir" log -1 --format='%s' 2>/dev/null | head -c 50)
 
-    # Server status
-    local server_status
-    local pidfile="$worktree_dir/tmp/pids/server.pid"
-    if [ -f "$pidfile" ]; then
-        local pid=$(cat "$pidfile")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            server_status="${GREEN}running${NC} (PID $pid)"
-        else
-            server_status="${YELLOW}stopped${NC}"
+    # Server status (check port, not pidfile)
+    local server_status="${YELLOW}stopped${NC}"
+    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
+        local pids=$(get_pids_on_port "$port")
+        if [ -n "$pids" ]; then
+            local first_pid=$(echo "$pids" | head -1)
+            server_status="${GREEN}running${NC} (PID $first_pid)"
         fi
-    else
-        server_status="${YELLOW}stopped${NC}"
     fi
 
     # Commits ahead/behind
@@ -2830,76 +2667,45 @@ cmd_fix_port() {
         exit 0
     fi
 
-    # Require lsof for detailed port analysis
-    if ! has_lsof; then
-        echo -e "${YELLOW}Warning: lsof not available for detailed port analysis${NC}"
-        echo "Cannot identify which processes are using the port."
-        echo ""
-        echo "Options:"
-        echo "  1) Install lsof:  sudo apt install lsof"
-        echo "  2) Manually find: ss -tlnp | grep $old_port"
-        exit 1
-    fi
+    # Analyze what's occupying the port
+    local pids=$(get_pids_on_port "$old_port")
+    local procs_info=""
 
-    # Analyze what's occupying the ports
-    local rails_pid=$(get_pids_on_port "$old_port")
-    local vite_pid=$(get_pids_on_port "$((old_port + 1))")
-    local rails_proc="" vite_proc=""
-    local can_kill_rails=false can_kill_vite=false
-
-    if [ -n "$rails_pid" ]; then
-        rails_proc=$(ps -p $rails_pid -o comm= 2>/dev/null || echo "?")
-        # Rails-compatible processes: ruby*, puma*, unicorn*, bundle
-        if [[ "$rails_proc" =~ ^(ruby|puma|unicorn|bundle) ]]; then
-            can_kill_rails=true
-        fi
-    fi
-
-    if [ -n "$vite_pid" ]; then
-        vite_proc=$(ps -p $vite_pid -o comm= 2>/dev/null || echo "?")
-        # Vite-compatible processes: node*
-        if [[ "$vite_proc" =~ ^node ]]; then
-            can_kill_vite=true
-        fi
+    if has_lsof && [ -n "$pids" ]; then
+        for pid in $pids; do
+            local proc=$(ps -p "$pid" -o comm= 2>/dev/null || echo "?")
+            procs_info="${procs_info}  PID $pid: $proc\n"
+        done
     fi
 
     echo -e "${YELLOW}Port $old_port is occupied:${NC}"
-    if [ -n "$rails_pid" ]; then
-        local kill_hint=""
-        [ "$can_kill_rails" = true ] && kill_hint=" ${GREEN}(can kill)${NC}"
-        echo -e "  Rails ($old_port): $rails_proc (PID $rails_pid)$kill_hint"
-    fi
-    if [ -n "$vite_pid" ]; then
-        local kill_hint=""
-        [ "$can_kill_vite" = true ] && kill_hint=" ${GREEN}(can kill)${NC}"
-        echo -e "  Vite ($((old_port + 1))): $vite_proc (PID $vite_pid)$kill_hint"
+    if [ -n "$procs_info" ]; then
+        echo -e "$procs_info"
+    else
+        echo "  (could not identify processes)"
     fi
     echo ""
 
-    # If all occupying processes are compatible, offer to kill
-    local all_killable=true
-    [ -n "$rails_pid" ] && [ "$can_kill_rails" = false ] && all_killable=false
-    [ -n "$vite_pid" ] && [ "$can_kill_vite" = false ] && all_killable=false
+    echo -e "${BLUE}Options:${NC}"
+    echo "  1) Kill processes and keep port $old_port"
+    echo "  2) Reallocate to new port"
+    echo "  3) Cancel"
+    echo ""
+    read -p "Choose (1/2/3): " -n 1 -r choice
+    echo ""
 
-    if [ "$all_killable" = true ]; then
-        echo -e "${BLUE}Options:${NC}"
-        echo "  1) Kill orphan processes and keep port $old_port"
-        echo "  2) Reallocate to new port"
-        echo "  3) Cancel"
-        echo ""
-        read -p "Choose (1/2/3): " -n 1 -r choice
-        echo ""
-
-        case "$choice" in
-            1)
+    case "$choice" in
+        1)
+            if [ -n "$pids" ]; then
                 echo ""
                 echo -e "${YELLOW}Killing processes...${NC}"
-                [ -n "$rails_pid" ] && kill -9 "$rails_pid" 2>/dev/null && echo "  ✓ Rails (PID $rails_pid) killed"
-                [ -n "$vite_pid" ] && kill -9 "$vite_pid" 2>/dev/null && echo "  ✓ Vite (PID $vite_pid) killed"
+                for pid in $pids; do
+                    kill -9 "$pid" 2>/dev/null && echo "  ✓ PID $pid killed"
+                done
                 sleep 1
 
                 # Check if freed
-                if is_port_pair_free "$old_port"; then
+                if is_port_free "$old_port"; then
                     echo ""
                     echo -e "${GREEN}✓ Port $old_port freed!${NC}"
                     echo ""
@@ -2909,27 +2715,19 @@ cmd_fix_port() {
                 else
                     echo -e "${RED}Port still occupied. Reallocating...${NC}"
                 fi
-                ;;
-            2)
-                echo ""
-                echo "Reallocating to new port..."
-                ;;
-            *)
-                echo "Cancelled."
-                exit 0
-                ;;
-        esac
-    else
-        echo -e "${YELLOW}Incompatible processes occupying ports.${NC}"
-        echo "Not safe to kill automatically."
-        echo ""
-        read -p "Reallocate to new port? (y/N) " -n 1 -r
-        echo ""
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            else
+                echo "No processes found to kill."
+            fi
+            ;;
+        2)
+            echo ""
+            echo "Reallocating to new port..."
+            ;;
+        *)
             echo "Cancelled."
             exit 0
-        fi
-    fi
+            ;;
+    esac
 
     # Find new port
     local new_port=$(next_available_port)
@@ -2938,35 +2736,19 @@ cmd_fix_port() {
     echo "  Port: $old_port → $new_port"
     echo ""
 
-    # Check if server is running
-    local pidfile="$worktree_dir/tmp/pids/server.pid"
-    if [ -f "$pidfile" ]; then
-        local pid=$(cat "$pidfile")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            echo -e "${RED}Error: Rails server still running (PID $pid)${NC}"
-            echo "Stop the server first."
-            exit 1
-        fi
-    fi
-
-    # 1. Update .env (generic patterns)
-    if [ -f "$worktree_dir/.env" ]; then
-        sed_inplace "s/localhost:$old_port/localhost:$new_port/g" "$worktree_dir/.env"
-        sed_inplace "s/_wt$old_port/_wt$new_port/g" "$worktree_dir/.env"
-        echo -e "  ${GREEN}✓${NC} .env updated"
-    fi
-
-    # 2. Update metadata (use JSON for numeric port)
+    # Update metadata (use JSON for numeric port)
     update_metadata_json "$name" "port" "$new_port"
     echo -e "  ${GREEN}✓${NC} Metadata updated"
 
-    # 3. Set context for hook
+    # Set context for hook (project can update configs via hook)
     export PWT_OLD_PORT="$old_port"
     export PWT_PORT="$new_port"
     export PWT_WORKTREE="$name"
     export PWT_WORKTREE_PATH="$worktree_dir"
+    export PWT_PROJECT="$CURRENT_PROJECT"
+    export MAIN_APP="$MAIN_APP"
 
-    # 4. Run project hook (for database/config updates)
+    # Run project hook (for config updates like .env, databases, etc.)
     run_hook "post-fix-port"
 
     echo ""

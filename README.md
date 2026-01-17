@@ -1,6 +1,8 @@
 # pwt - Power Worktrees
 
-A generic tool for managing git worktrees across multiple projects.
+**A worktree orchestrator, not a framework tool.**
+
+pwt manages git worktrees with port allocation and project isolation. It's framework-agnostic: Rails, Node, Go, Python — pwt doesn't care. Your project-specific setup lives in `Pwtfile`, not in pwt's core.
 
 ## Dependencies
 
@@ -94,8 +96,6 @@ pwt remove feature-branch
 | `--with-branch` | Also delete the branch (if merged) |
 | `--force-branch` | Force delete the branch (even if not merged) |
 | `--kill-port` | Kill processes using the worktree's port (opt-in) |
-| `--kill-sidekiq` | Kill Sidekiq processes from worktree (opt-in) |
-| `--kill-all` | Kill both port and Sidekiq processes (opt-in) |
 | `-y, --yes` | Skip confirmation prompts |
 
 ### Auto-remove Flags
@@ -126,7 +126,11 @@ pwt --project myproject ...    # Explicit flag
 
 ## Pwtfile
 
-Create a `Pwtfile` in your project root to customize worktree behavior:
+**Pwtfile is a project-local workflow file, similar in spirit to a Makefile, but scoped to worktree lifecycle.**
+
+pwt is not about infrastructure — it's about workflow. The core handles worktree management (create, list, remove) and port allocation. Everything else is delegated to your Pwtfile: dependency installation, database setup, server configuration, cleanup.
+
+Create a `Pwtfile` in your project root:
 
 ```bash
 # Pwtfile
@@ -134,15 +138,46 @@ PORT_BASE=5001  # First worktree uses 5001, second uses 5002, etc.
 
 setup() {
     echo "Setting up worktree..."
-    bundle install
+    # Install dependencies, create databases, copy configs...
+    # This is YOUR project's setup logic
 }
 
 teardown() {
     echo "Cleaning up..."
+    # Drop databases, remove temp files...
 }
 
 server() {
-    PORT="$PWT_PORT" bin/dev
+    # Start YOUR server however you want
+    # $PWT_PORT is available for port configuration
+    npm run dev -- --port "$PWT_PORT"
+}
+```
+
+**Example: Rails + Vite project**
+```bash
+# Pwtfile for Rails
+setup() {
+    pwtfile_copy ".env"
+    bundle install
+    yarn install
+    # Additional ports: VITE_PORT=$((PWT_PORT+1))
+}
+
+server() {
+    foreman start -p "$PWT_PORT"
+}
+```
+
+**Example: Node.js project**
+```bash
+# Pwtfile for Node
+setup() {
+    npm install
+}
+
+server() {
+    PORT="$PWT_PORT" npm start
 }
 ```
 

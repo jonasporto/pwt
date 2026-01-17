@@ -70,6 +70,7 @@ pwt remove feature-branch
 | `--from <ref>` | Create from specific ref (tag, commit, branch) |
 | `--from-current` | Create from current branch |
 | `--dry-run, -n` | Show what would be created without creating |
+| `--` | Everything after is the description (for multi-word) |
 
 ### List Flags
 
@@ -297,12 +298,14 @@ pwt init
 
 # Create worktree for a ticket
 pwt create TICKET-123 master "implement feature"
+pwt create TICKET-123 master implement feature   # quotes optional
 
 # Create and open in editor + AI
 pwt create TICKET-123 master "feature" -e -a
 
 # Create from a tag (hotfix)
 pwt create hotfix --from v1.2.3
+pwt create hotfix --from v1.2.3 -- fix critical bug
 
 # Create variant from current branch
 pwt create variant --from-current

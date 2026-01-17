@@ -41,6 +41,7 @@ MAIN_APP=""
 WORKTREES_DIR=""
 BRANCH_PREFIX=""
 PROJECT_REMOTE=""
+DEFAULT_BRANCH=""  # Detected from remote (master or main)
 BASE_PORT=5000
 
 # Colors
@@ -78,6 +79,31 @@ init_pwt() {
 # Alias for compatibility
 init_metadata() {
     init_pwt
+}
+
+# Detect default branch from remote (master or main)
+# Usage: detect_default_branch <repo_path>
+# Sets DEFAULT_BRANCH global variable
+detect_default_branch() {
+    local repo="${1:-$MAIN_APP}"
+    [ -z "$repo" ] || [ ! -d "$repo" ] && return
+
+    # Try to get from remote HEAD
+    local remote_head=$(git -C "$repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null)
+    if [ -n "$remote_head" ]; then
+        DEFAULT_BRANCH="${remote_head#refs/remotes/origin/}"
+        return
+    fi
+
+    # Fallback: check if main or master exists
+    if git -C "$repo" rev-parse --verify origin/main >/dev/null 2>&1; then
+        DEFAULT_BRANCH="main"
+    elif git -C "$repo" rev-parse --verify origin/master >/dev/null 2>&1; then
+        DEFAULT_BRANCH="master"
+    else
+        # Last resort default
+        DEFAULT_BRANCH="master"
+    fi
 }
 
 # Detect project from current directory
@@ -173,8 +199,8 @@ resolve_project_alias() {
 
     # First check if it's a real project
     if [ -f "$PWT_PROJECTS_DIR/$name/config.json" ]; then
-        # Check it's not just an alias pointer (legacy)
-        local has_main=$(jq -r '.main_app // empty' "$PWT_PROJECTS_DIR/$name/config.json")
+        # Check it's not just an alias pointer (legacy) - check both .path and .main_app
+        local has_main=$(jq -r '.path // .main_app // empty' "$PWT_PROJECTS_DIR/$name/config.json")
         if [ -n "$has_main" ]; then
             echo "$name"
             return 0
@@ -222,6 +248,9 @@ load_project_config() {
         [ -n "$cfg_remote" ] && PROJECT_REMOTE="$cfg_remote"
     fi
 
+    # Detect default branch after MAIN_APP is set
+    detect_default_branch "$MAIN_APP"
+
     return 0
 }
 
@@ -248,9 +277,13 @@ require_project() {
     if [ -z "$MAIN_APP" ] || [ -z "$WORKTREES_DIR" ]; then
         echo -e "${RED}Error: Could not determine project paths${NC}"
         echo ""
-        echo "Run from inside a git repository, or configure manually:"
-        echo "  pwt config main_app /path/to/main/app"
-        echo "  pwt config worktrees_dir /path/to/worktrees"
+        echo "Run from inside a git repository, or initialize a project:"
+        echo "  cd /path/to/repo && pwt init"
+        echo "  pwt init git@github.com:user/repo.git"
+        echo ""
+        echo "Or configure manually:"
+        echo "  pwt project set myproject path /path/to/main/app"
+        echo "  pwt project set myproject worktrees_dir /path/to/worktrees"
         exit 1
     fi
 
@@ -396,34 +429,34 @@ atomic_metadata_write() {
     local tmp_file=$(mktemp)
     local max_wait=50  # 5 seconds (50 * 0.1s)
 
+    # Create tmp_file early and set trap to clean it up on any exit
+    trap "rm -f '$tmp_file'" RETURN
+
     # Acquire lock using mkdir (atomic on all systems)
     local waited=0
     while ! mkdir "$lock_dir" 2>/dev/null; do
         waited=$((waited + 1))
         if [ $waited -ge $max_wait ]; then
             echo -e "${RED}Error: Could not acquire lock on metadata file${NC}" >&2
-            rm -f "$tmp_file"
             return 1
         fi
         sleep 0.1
     done
 
-    # Ensure lock is released on exit
+    # Update trap to also clean lock after acquiring it
     trap "rm -rf '$lock_dir' '$tmp_file'" RETURN
 
     # Perform atomic write
     if jq "$jq_filter" "$@" "$METADATA_FILE" > "$tmp_file"; then
         mv "$tmp_file" "$METADATA_FILE"
+        return 0
     else
-        rm -f "$tmp_file"
-        rm -rf "$lock_dir"
         return 1
     fi
-
-    rm -rf "$lock_dir"
+    # trap handles cleanup on return
 }
 
-# Save worktree metadata
+# Save worktree metadata (namespaced by project)
 # Usage: save_metadata <name> <path> <branch> <base> <base_commit> <port> <description>
 save_metadata() {
     local name="$1"
@@ -434,9 +467,10 @@ save_metadata() {
     local port="$6"
     local description="$7"
     local created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local project="${CURRENT_PROJECT:-unknown}"
 
     atomic_metadata_write \
-       '.[$name] = {
+       '.[$project][$name] = {
            path: $path,
            branch: $branch,
            base: $base,
@@ -445,6 +479,7 @@ save_metadata() {
            description: $description,
            created_at: $created_at
        }' \
+       --arg project "$project" \
        --arg name "$name" \
        --arg path "$path" \
        --arg branch "$branch" \
@@ -455,39 +490,45 @@ save_metadata() {
        --arg created_at "$created_at"
 }
 
-# Get worktree metadata field
+# Get worktree metadata field (namespaced by project)
 # Usage: get_metadata <name> <field>
 get_metadata() {
     local name="$1"
     local field="$2"
+    local project="${CURRENT_PROJECT:-unknown}"
 
     init_metadata
 
-    jq -r --arg name "$name" --arg field "$field" '.[$name][$field] // empty' "$METADATA_FILE" 2>/dev/null
+    jq -r --arg project "$project" --arg name "$name" --arg field "$field" \
+        '.[$project][$name][$field] // empty' "$METADATA_FILE" 2>/dev/null
 }
 
-# Remove worktree metadata
+# Remove worktree metadata (namespaced by project)
 # Usage: remove_metadata <name>
 remove_metadata() {
     local name="$1"
-    atomic_metadata_write 'del(.[$name])' --arg name "$name"
+    local project="${CURRENT_PROJECT:-unknown}"
+    atomic_metadata_write 'del(.[$project][$name])' \
+        --arg project "$project" --arg name "$name"
 }
 
-# Update worktree metadata field
+# Update worktree metadata field (namespaced by project)
 # Usage: update_metadata <name> <field> <value>
 update_metadata() {
     local name="$1"
     local field="$2"
     local value="$3"
+    local project="${CURRENT_PROJECT:-unknown}"
     atomic_metadata_write \
-       'if .[$name] then .[$name][$field] = $value else . end' \
-       --arg name "$name" --arg field "$field" --arg value "$value"
+       'if .[$project][$name] then .[$project][$name][$field] = $value else . end' \
+       --arg project "$project" --arg name "$name" --arg field "$field" --arg value "$value"
 }
 
-# List all metadata
+# List all metadata for current project
 list_metadata() {
+    local project="${CURRENT_PROJECT:-unknown}"
     init_metadata
-    jq '.' "$METADATA_FILE"
+    jq --arg project "$project" '.[$project] // {}' "$METADATA_FILE"
 }
 
 # Get project config directory
@@ -743,8 +784,8 @@ get_base_branch() {
         return
     fi
 
-    # Try to detect from branch name or default to master
-    echo "master"
+    # Fallback to default branch
+    echo "${DEFAULT_BRANCH:-master}"
 }
 
 # Hash-based port generation (deterministic)
@@ -993,17 +1034,18 @@ is_port_pair_free() {
 next_available_port() {
     # Collect all ports "allocated" by existing worktrees
     local -a allocated_ports=()
+    local project="${CURRENT_PROJECT:-unknown}"
 
-    # Port 5000 is reserved for main app
-    allocated_ports+=(5000)
+    # BASE_PORT is reserved for main app
+    allocated_ports+=("$BASE_PORT")
 
-    # Read ports from metadata (primary source)
+    # Read ports from metadata for current project (primary source)
     if [ -f "$METADATA_FILE" ]; then
         while IFS= read -r port; do
             if [[ "$port" =~ ^[0-9]+$ ]]; then
                 allocated_ports+=("$port")
             fi
-        done < <(jq -r '.[].port // empty' "$METADATA_FILE" 2>/dev/null)
+        done < <(jq -r --arg project "$project" '.[$project] // {} | .[].port // empty' "$METADATA_FILE" 2>/dev/null)
     fi
 
     # Also scan directory names (fallback for legacy worktrees without metadata)
@@ -1157,6 +1199,12 @@ cmd_create() {
                 echo -e "${RED}Unknown option: $1${NC}"
                 exit 1
                 ;;
+            --)
+                # Everything after -- is the description
+                shift
+                description="$*"
+                break
+                ;;
             *)
                 # Positional arguments: branch, base_ref, description
                 if [ -z "$branch" ]; then
@@ -1164,7 +1212,12 @@ cmd_create() {
                 elif [ -z "$base_ref" ]; then
                     base_ref="$1"
                 else
-                    description="$1"
+                    # Accumulate all remaining positional args as description
+                    if [ -z "$description" ]; then
+                        description="$1"
+                    else
+                        description="$description $1"
+                    fi
                 fi
                 shift
                 ;;
@@ -1183,7 +1236,8 @@ cmd_create() {
 
     if [ -z "$branch" ]; then
         echo -e "${RED}Error: Branch/ticket not specified${NC}"
-        echo "Usage: pwt create <branch> [base-ref] [description] [options]"
+        echo "Usage: pwt create <branch> [base-ref] [description...] [options]"
+        echo "       pwt create <branch> [options] -- description with spaces"
         echo ""
         echo "Options:"
         echo "  --dry-run, -n     Show what would be created without creating"
@@ -1191,12 +1245,14 @@ cmd_create() {
         echo "  -a, --ai          Start AI tool after creating"
         echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
         echo "  --from-current    Create from current branch"
+        echo "  --                Everything after is the description"
         echo ""
         echo "Examples:"
         echo "  pwt create feature/my-feature"
         echo "  pwt create PROJ-123 master"
         echo "  pwt create PROJ-123 master \"add auth flow\""
-        echo "  pwt create PROJ-123 --from v1.2.3"
+        echo "  pwt create PROJ-123 master add auth flow        # works too"
+        echo "  pwt create PROJ-123 --from v1.2.3 -- hotfix for bug"
         echo "  pwt create hotfix --from-current"
         echo "  pwt create PROJ-123 master -e -a"
         exit 1
@@ -1647,7 +1703,7 @@ cmd_list_compact() {
             fi
 
             # Divergence from main
-            local main_div=$(get_divergence "$dir" "origin/master")
+            local main_div=$(get_divergence "$dir" "origin/${DEFAULT_BRANCH:-master}")
 
             # Remote divergence
             local remote_div=$(get_remote_divergence "$dir")
@@ -1665,7 +1721,7 @@ cmd_list_compact() {
             fi
 
             # Check merge status for tips
-            local merge_status=$(check_merge_status "$dir" "master" 2>/dev/null)
+            local merge_status=$(check_merge_status "$dir" "${DEFAULT_BRANCH:-master}" 2>/dev/null)
             if [[ "$merge_status" == *"merged"* ]] || [[ "$merge_status" == *"clean"* ]]; then
                 has_merged=true
             fi
@@ -1716,7 +1772,7 @@ cmd_list_statusline() {
     [ ! -d "$dir" ] && return 0
 
     local status=$(get_status_symbols "$dir")
-    local main_div=$(get_divergence "$dir" "origin/master")
+    local main_div=$(get_divergence "$dir" "origin/${DEFAULT_BRANCH:-master}")
     local remote_div=$(get_remote_divergence "$dir")
 
     # Build statusline
@@ -1847,13 +1903,13 @@ cmd_list_verbose() {
                         fi
                     fi
                 else
-                    # Fallback: calculate merge-base with master
-                    base_name="master"
-                    local base_commit=$(git -C "$dir" merge-base HEAD origin/master 2>/dev/null)
+                    # Fallback: calculate merge-base with default branch
+                    base_name="${DEFAULT_BRANCH:-master}"
+                    local base_commit=$(git -C "$dir" merge-base HEAD "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null)
                     if [ -n "$base_commit" ]; then
                         base_short=$(git -C "$dir" rev-parse --short "$base_commit" 2>/dev/null)
                         local commits_ahead=$(git -C "$dir" rev-list --count "${base_commit}..HEAD" 2>/dev/null || echo "0")
-                        local commits_behind=$(git -C "$dir" rev-list --count "HEAD..origin/master" 2>/dev/null || echo "0")
+                        local commits_behind=$(git -C "$dir" rev-list --count "HEAD..origin/${DEFAULT_BRANCH:-master}" 2>/dev/null || echo "0")
                         if [ "$commits_ahead" -gt 0 ] || [ "$commits_behind" -gt 0 ]; then
                             base_ahead=" (↑${commits_ahead} ↓${commits_behind})"
                         fi
@@ -1905,7 +1961,7 @@ cmd_list_verbose() {
                 fi
 
                 # Upstream/target only if different from "origin/<branch>" (i.e., meaningful)
-                if [ -n "$upstream" ] && [ "$upstream" != "origin/$branch" ] && [ "$upstream" != "origin/master" ]; then
+                if [ -n "$upstream" ] && [ "$upstream" != "origin/$branch" ] && [ "$upstream" != "origin/${DEFAULT_BRANCH:-master}" ]; then
                     echo -e "    Target: $upstream"
                 fi
 
@@ -2038,6 +2094,9 @@ cmd_auto_remove() {
         exit 1
     }
 
+    # Use origin/$target_branch for comparison (freshly fetched)
+    local remote_target="origin/$target_branch"
+
     # List worktrees to remove
     local to_remove=()
     local pending=()
@@ -2065,9 +2124,9 @@ cmd_auto_remove() {
         local wt_branch=$(git -C "$dir" branch --show-current 2>/dev/null)
         local branch_display="${wt_branch:-detached}"
 
-        # Check if worktree commit is contained in target branch
+        # Check if worktree commit is contained in remote target branch (post-fetch)
         # Uses merge-base --is-ancestor which works even if remote branch was deleted
-        if git merge-base --is-ancestor "$wt_commit" "$target_branch" 2>/dev/null; then
+        if git merge-base --is-ancestor "$wt_commit" "$remote_target" 2>/dev/null; then
             echo -e "  ${GREEN}✅ MERGED:${NC} $name ($branch_display)"
             to_remove+=("$name")
         else
@@ -2580,12 +2639,14 @@ cmd_meta() {
 
     init_metadata
 
+    local project="${CURRENT_PROJECT:-unknown}"
+
     case "$action" in
         ""|list)
-            # List all metadata
-            echo -e "${BLUE}Worktree Metadata:${NC}"
+            # List all metadata for current project
+            echo -e "${BLUE}Worktree Metadata ($project):${NC}"
             echo ""
-            jq -r 'to_entries[] | "\(.key):\n  path: \(.value.path)\n  branch: \(.value.branch)\n  base: \(.value.base) @ \(.value.base_commit)\n  port: \(.value.port)\n  description: \(.value.description)\n  created: \(.value.created_at)\n"' "$METADATA_FILE"
+            jq -r --arg project "$project" '.[$project] // {} | to_entries[] | "\(.key):\n  path: \(.value.path)\n  branch: \(.value.branch)\n  base: \(.value.base) @ \(.value.base_commit)\n  port: \(.value.port)\n  description: \(.value.description)\n  created: \(.value.created_at)\n"' "$METADATA_FILE"
             ;;
         show)
             if [ -z "$name" ]; then
@@ -2593,7 +2654,7 @@ cmd_meta() {
                 echo "Usage: pwt meta show <worktree>"
                 exit 1
             fi
-            local meta=$(jq --arg name "$name" '.[$name]' "$METADATA_FILE")
+            local meta=$(jq --arg project "$project" --arg name "$name" '.[$project][$name]' "$METADATA_FILE")
             if [ "$meta" = "null" ]; then
                 echo -e "${YELLOW}No metadata found for: $name${NC}"
             else
@@ -2630,11 +2691,11 @@ cmd_meta() {
                             # Allocate new port for new format directories
                             wt_port=$(next_available_port)
                         fi
-                        local wt_base_commit=$(git -C "$dir" merge-base HEAD origin/master 2>/dev/null)
+                        local wt_base_commit=$(git -C "$dir" merge-base HEAD "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null)
                         local wt_base_short=$(git -C "$dir" rev-parse --short "$wt_base_commit" 2>/dev/null || echo "?")
                         local wt_desc=$(echo "$wt_branch" | sed -E 's|^[a-z]+/||' | tr '-' ' ')
 
-                        save_metadata "$wt_name" "$dir" "$wt_branch" "master" "$wt_base_short" "$wt_port" "$wt_desc"
+                        save_metadata "$wt_name" "$dir" "$wt_branch" "${DEFAULT_BRANCH:-master}" "$wt_base_short" "$wt_port" "$wt_desc"
                         echo -e "  ${GREEN}✓${NC} Imported: $wt_name (port $wt_port)"
                     else
                         echo -e "  ${YELLOW}○${NC} Exists: $wt_name"
@@ -2876,15 +2937,23 @@ cmd_diff() {
     echo "  $wt2: $path2"
     echo ""
 
-    # Get branch info
-    local branch1=$(git -C "$path1" branch --show-current 2>/dev/null || echo "?")
-    local branch2=$(git -C "$path2" branch --show-current 2>/dev/null || echo "?")
+    # Get branch and commit info
+    local branch1=$(git -C "$path1" branch --show-current 2>/dev/null || echo "detached")
+    local branch2=$(git -C "$path2" branch --show-current 2>/dev/null || echo "detached")
+    local commit1=$(git -C "$path1" rev-parse HEAD 2>/dev/null)
+    local commit2=$(git -C "$path2" rev-parse HEAD 2>/dev/null)
+
+    if [ -z "$commit1" ] || [ -z "$commit2" ]; then
+        echo -e "${RED}Error: Could not get commit hashes${NC}"
+        exit 1
+    fi
 
     echo -e "${BLUE}Branches:${NC} $branch1 vs $branch2"
+    echo -e "${BLUE}Commits:${NC} ${commit1:0:8} vs ${commit2:0:8}"
     echo ""
 
-    # Show git diff
-    git -C "$path1" diff "$branch2".."$branch1" --stat
+    # Show git diff using commit hashes (works across worktrees via main repo)
+    git -C "$MAIN_APP" diff "$commit2".."$commit1" --stat
 }
 
 # Command: conflicts
@@ -2907,10 +2976,10 @@ cmd_conflicts() {
     fi
 }
 
-# Helper: get modified files for a worktree (vs origin/master)
+# Helper: get modified files for a worktree (vs default branch)
 get_modified_files() {
     local dir="$1"
-    git -C "$dir" diff --name-only origin/master 2>/dev/null || true
+    git -C "$dir" diff --name-only "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null || true
 }
 
 # Helper: compare two worktrees for conflicts
@@ -3051,7 +3120,7 @@ cmd_context() {
             local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
             local base=$(get_base_branch "$name" "$dir")
             local status=$(get_status_symbols "$dir")
-            local divergence=$(get_divergence "$dir" "origin/master")
+            local divergence=$(get_divergence "$dir" "origin/${DEFAULT_BRANCH:-master}")
 
             # Get description from metadata
             local desc=$(get_metadata "$name" "description")
@@ -3096,17 +3165,17 @@ cmd_context() {
             echo ""
 
             # Modified files (summary)
-            local modified=$(git -C "$dir" diff --name-only origin/master 2>/dev/null | wc -l | tr -d ' ')
+            local modified=$(git -C "$dir" diff --name-only "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null | wc -l | tr -d ' ')
             if [ "$modified" -gt 0 ]; then
                 echo "**Modified files:** ${modified} file(s) changed from ${base}"
                 echo ""
                 if [ "$modified" -le 20 ]; then
                     echo '```'
-                    git -C "$dir" diff --name-only origin/master 2>/dev/null
+                    git -C "$dir" diff --name-only "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null
                     echo '```'
                 else
                     echo '```'
-                    git -C "$dir" diff --name-only origin/master 2>/dev/null | head -15
+                    git -C "$dir" diff --name-only "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null | head -15
                     echo "... and $((modified - 15)) more files"
                     echo '```'
                 fi

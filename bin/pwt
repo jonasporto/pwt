@@ -50,6 +50,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # Cross-platform sed in-place edit (BSD/GNU compatible)
@@ -125,6 +126,39 @@ confirm_action() {
         [yY]|[yY][eE][sS]) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# Detect submodules and warn user (worktrees + submodules can be problematic)
+# Returns 0 if ok to proceed, 1 if user aborted
+detect_submodules() {
+    local repo_path="${1:-$MAIN_APP}"
+
+    # Check if .gitmodules exists
+    if [ ! -f "$repo_path/.gitmodules" ]; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠  Submodules detected (.gitmodules found)${NC}"
+
+    # Check if any submodule is initialized
+    if git -C "$repo_path" submodule status --recursive 2>/dev/null | grep -q '^[ +-]'; then
+        echo -e "${YELLOW}⚠  Submodules are initialized${NC}"
+        echo ""
+        echo "Worktrees + submodules may behave unexpectedly."
+        echo "Consider using clone mode for this project."
+        echo ""
+        echo "Options:"
+        echo "  - Continue with worktree (may have issues)"
+        echo "  - Use clone mode: pwt create --clone ..."
+        echo ""
+
+        if ! confirm_action "Continue with worktree?"; then
+            echo "Aborted."
+            return 1
+        fi
+    fi
+
+    return 0
 }
 
 # Check if lsof is available (cache result for performance)
@@ -533,13 +567,22 @@ atomic_metadata_write() {
     tmp_file="$(mktemp "${METADATA_FILE}.tmp.XXXXXX")"
     local max_wait=50  # 5 seconds (50 * 0.1s)
     local stale_threshold=60  # seconds - lock older than this is stale
+    local already_locked=false
 
     # Create tmp_file early and set trap to clean it up on any exit
     trap "rm -f '$tmp_file'" RETURN
 
-    # Acquire lock using mkdir (atomic on all systems)
+    # Check if we already own the lock (re-entrant call)
+    if [ -d "$lock_dir" ] && [ -f "$lock_pid_file" ]; then
+        local current_owner=$(cat "$lock_pid_file" 2>/dev/null)
+        if [ "$current_owner" = "$$" ]; then
+            already_locked=true
+        fi
+    fi
+
+    # Acquire lock using mkdir (atomic on all systems), unless we already own it
     local waited=0
-    while ! mkdir "$lock_dir" 2>/dev/null; do
+    while [ "$already_locked" = false ] && ! mkdir "$lock_dir" 2>/dev/null; do
         # Check for stale lock
         if [ -f "$lock_pid_file" ]; then
             local lock_pid=$(cat "$lock_pid_file" 2>/dev/null)
@@ -568,11 +611,13 @@ atomic_metadata_write() {
         sleep 0.1
     done
 
-    # Write our PID to the lock
-    echo "$$" > "$lock_pid_file"
-
-    # Update trap to also clean lock after acquiring it
-    trap "rm -rf '$lock_dir' '$tmp_file'" RETURN
+    # Write our PID to the lock (only if we acquired it)
+    if [ "$already_locked" = false ]; then
+        echo "$$" > "$lock_pid_file"
+        # Update trap to also clean lock after acquiring it
+        trap "rm -rf '$lock_dir' '$tmp_file'" RETURN
+    fi
+    # If already_locked, we keep the original trap that only cleans tmp_file
 
     # Perform atomic write
     if jq "$jq_filter" "$@" "$METADATA_FILE" > "$tmp_file"; then
@@ -644,6 +689,7 @@ save_metadata() {
     local base_commit="$5"
     local port="$6"
     local description="$7"
+    local mode="${8:-worktree}"  # worktree or clone
     local created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local project="${CURRENT_PROJECT:-unknown}"
 
@@ -655,6 +701,7 @@ save_metadata() {
            base_commit: $base_commit,
            port: $port,
            description: $description,
+           mode: $mode,
            created_at: $created_at
        }' \
        --arg project "$project" \
@@ -665,6 +712,7 @@ save_metadata() {
        --arg base_commit "$base_commit" \
        --argjson port "$port" \
        --arg description "$description" \
+       --arg mode "$mode" \
        --arg created_at "$created_at"
 }
 
@@ -760,6 +808,42 @@ pwtfile_replace() {
     local from="$2"
     local to="$3"
     [ -f "$file" ] && sed_inplace "s|${from}|${to}|g" "$file"
+}
+
+# Safe literal string replacement (no regex interpretation)
+# Cross-platform: uses perl's \Q...\E for literal matching
+# Usage: pwtfile_replace_literal <file> <from> <to>
+# Example: pwtfile_replace_literal "config.yml" "localhost:3000" "localhost:5007"
+pwtfile_replace_literal() {
+    local file="$1"
+    local from="$2"
+    local to="$3"
+    [ -f "$file" ] || return 0
+
+    if command -v perl >/dev/null 2>&1; then
+        # \Q...\E quotes metacharacters, making it literal
+        perl -i -pe 'BEGIN { $f = shift; $t = shift } s/\Q$f\E/$t/g' "$from" "$to" "$file"
+    else
+        echo "  ! perl not found, skipping literal replace in $file"
+        return 1
+    fi
+}
+
+# Regex replacement using perl (cross-platform, unlike sed -E)
+# Usage: pwtfile_replace_re <file> <pattern> <replacement>
+# Example: pwtfile_replace_re "config.yml" "port:\s*\d+" "port: 5007"
+pwtfile_replace_re() {
+    local file="$1"
+    local pattern="$2"
+    local replacement="$3"
+    [ -f "$file" ] || return 0
+
+    if command -v perl >/dev/null 2>&1; then
+        perl -i -pe "s/$pattern/$replacement/g" "$file"
+    else
+        echo "  ! perl not found, skipping regex replace in $file"
+        return 1
+    fi
 }
 
 pwtfile_database() {
@@ -1067,6 +1151,8 @@ run_single_pwtfile() {
                 # Make helpers available
                 env() { pwtfile_env "$@"; }
                 replace() { pwtfile_replace "$@"; }
+                replace_literal() { pwtfile_replace_literal "$@"; }
+                replace_re() { pwtfile_replace_re "$@"; }
                 database() { pwtfile_database "$@"; }
                 rake() { pwtfile_rake "$@"; }
                 run() { pwtfile_run "$@"; }
@@ -1322,6 +1408,7 @@ cmd_create() {
     local open_editor=false
     local start_ai=false
     local from_current=false
+    local use_clone=false
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -1338,6 +1425,10 @@ cmd_create() {
                 start_ai=true
                 shift
                 ;;
+            --clone)
+                use_clone=true
+                shift
+                ;;
             --from)
                 base_ref="$2"
                 shift 2
@@ -1346,15 +1437,15 @@ cmd_create() {
                 from_current=true
                 shift
                 ;;
-            -*)
-                echo -e "${RED}Unknown option: $1${NC}"
-                exit 1
-                ;;
             --)
                 # Everything after -- is the description
                 shift
                 description="$*"
                 break
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
                 ;;
             *)
                 # Positional arguments: branch, base_ref, description
@@ -1466,7 +1557,10 @@ cmd_create() {
             base_ref="$remote_ref"
         fi
 
-        echo -e "${BLUE}Creating worktree:${NC} $worktree_name"
+        local mode_label="worktree"
+        [ "$use_clone" = true ] && mode_label="clone"
+
+        echo -e "${BLUE}Creating $mode_label:${NC} $worktree_name"
         echo -e "  New branch: $new_branch_name"
         echo -e "  Base:   $base_ref"
         echo -e "  Port:   $port"
@@ -1476,7 +1570,10 @@ cmd_create() {
         git_worktree_args=(-b "$new_branch_name" "$worktree_dir" "$base_ref")
     else
         # No base ref: use existing branch
-        echo -e "${BLUE}Creating worktree:${NC} $worktree_name"
+        local mode_label="worktree"
+        [ "$use_clone" = true ] && mode_label="clone"
+
+        echo -e "${BLUE}Creating $mode_label:${NC} $worktree_name"
         echo -e "  Branch: $branch"
         echo -e "  Port:   $port"
         echo -e "  Dir:    $worktree_dir"
@@ -1487,14 +1584,54 @@ cmd_create() {
 
     # Dry-run mode: show what would be created without creating
     if [ "$dry_run" = true ]; then
-        echo -e "${YELLOW}[DRY-RUN] Would create worktree with above settings${NC}"
+        local mode_str="worktree"
+        [ "$use_clone" = true ] && mode_str="clone"
+        echo -e "${YELLOW}[DRY-RUN] Would create $mode_str with above settings${NC}"
         echo ""
         echo "Run without --dry-run to create."
         exit 0
     fi
 
-    # Create worktree
-    git worktree add "${git_worktree_args[@]}"
+    # Check for submodules (warn but don't block) - only for worktree mode
+    if [ "$use_clone" = false ]; then
+        if ! detect_submodules "$MAIN_APP"; then
+            release_metadata_lock
+            exit 1
+        fi
+    fi
+
+    # Create workspace (worktree or clone)
+    local workspace_mode="worktree"
+    if [ "$use_clone" = true ]; then
+        workspace_mode="clone"
+        echo "Cloning repository..."
+        git clone --quiet "$MAIN_APP" "$worktree_dir"
+
+        # Checkout the correct branch
+        cd "$worktree_dir"
+        local final_branch="${new_branch_name:-$branch}"
+
+        if [ -n "$new_branch_name" ]; then
+            # Create new branch from base
+            local checkout_base="${base_ref:-HEAD}"
+            # If base is remote ref, fetch it first
+            if [[ "$checkout_base" == origin/* ]]; then
+                git fetch origin "${checkout_base#origin/}" --quiet 2>/dev/null || true
+            fi
+            git checkout -b "$new_branch_name" "$checkout_base" --quiet 2>/dev/null || \
+                git checkout -b "$new_branch_name" "origin/${checkout_base#origin/}" --quiet 2>/dev/null || \
+                git checkout -b "$new_branch_name" --quiet
+        else
+            # Checkout existing branch
+            git checkout "$branch" --quiet 2>/dev/null || \
+                git checkout -b "$branch" "origin/$branch" --quiet 2>/dev/null || true
+        fi
+        cd - > /dev/null
+        echo -e "  ${GREEN}✓ Clone created${NC}"
+    else
+        # Create worktree (original logic)
+        git worktree add "${git_worktree_args[@]}"
+    fi
 
     # Save metadata
     local final_branch="${new_branch_name:-$branch}"
@@ -1503,7 +1640,7 @@ cmd_create() {
     local final_base_short=$(git -C "$worktree_dir" rev-parse --short "$final_base_commit" 2>/dev/null || echo "?")
     local final_desc="${description:-}"
 
-    save_metadata "$worktree_name" "$worktree_dir" "$final_branch" "$final_base" "$final_base_short" "$port" "$final_desc"
+    save_metadata "$worktree_name" "$worktree_dir" "$final_branch" "$final_base" "$final_base_short" "$port" "$final_desc" "$workspace_mode"
     echo -e "  ${GREEN}✓ Metadata saved${NC}"
 
     # Release port allocation lock now that metadata is saved
@@ -1525,7 +1662,13 @@ cmd_create() {
     run_pwtfile "setup"
     run_hook "post-create"
 
-    echo -e "\n${GREEN}✓ Worktree created successfully!${NC}"
+    # Auto-set as current worktree (non-fatal)
+    set_current_worktree "$worktree_name" 2>/dev/null || true
+
+    local mode_label="Worktree"
+    [ "$workspace_mode" = "clone" ] && mode_label="Clone"
+
+    echo -e "\n${GREEN}✓ $mode_label created successfully!${NC}"
     echo ""
     echo "To use:"
     echo -e "  ${BLUE}cd $worktree_dir${NC}  or  ${BLUE}z ${worktree_name}${NC}"
@@ -2132,6 +2275,170 @@ cmd_list_verbose() {
     fi
 }
 
+# Command: tree
+# Visual tree view of worktrees - mental map of active work
+# Usage: pwt tree [--all] [--dirty] [--ports] [--short]
+cmd_tree() {
+    local show_all=false
+    local show_dirty_only=false
+    local show_ports=false
+    local short_mode=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --all|-a)
+                show_all=true
+                shift
+                ;;
+            --dirty|-d)
+                show_dirty_only=true
+                shift
+                ;;
+            --ports|-p)
+                show_ports=true
+                shift
+                ;;
+            --short|-s)
+                short_mode=true
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: pwt tree [--all] [--dirty] [--ports] [--short]"
+                echo ""
+                echo "Visual tree view of worktrees - mental map of active work."
+                echo ""
+                echo "Options:"
+                echo "  --all, -a     Show all projects (global view)"
+                echo "  --dirty, -d   Show only dirty worktrees"
+                echo "  --ports, -p   Show port mappings"
+                echo "  --short, -s   One line per worktree"
+                echo ""
+                echo "Examples:"
+                echo "  pwt tree              # current project"
+                echo "  pwt tree --all        # all projects"
+                echo "  pwt tree --dirty      # only dirty worktrees"
+                echo "  pwt tree --ports      # show ports"
+                return 0
+                ;;
+            *)
+                echo -e "${RED}Unknown option: $1${NC}" >&2
+                return 1
+                ;;
+        esac
+    done
+
+    # Helper to render a project tree
+    _render_project_tree() {
+        local project="$1"
+        local project_dir="$PROJECTS_DIR/$project"
+        local config_file="$project_dir/config.json"
+
+        [ -f "$config_file" ] || return
+
+        local main_app=$(jq -r '.path // empty' "$config_file")
+        local worktrees_dir=$(jq -r '.worktrees_dir // empty' "$config_file")
+
+        [ -d "$main_app" ] || return
+
+        # Project header
+        echo -e "${YELLOW}${project}/${NC}"
+
+        # Main app
+        local main_branch=$(git -C "$main_app" branch --show-current 2>/dev/null || echo "?")
+        local main_status=""
+        if [ -n "$(git -C "$main_app" status --porcelain 2>/dev/null)" ]; then
+            main_status=" ${RED}*${NC}"
+        fi
+        if [ "$short_mode" = true ]; then
+            echo -e "├─ ${GREEN}@${NC} main ($main_branch)$main_status"
+        else
+            echo -e "├─ ${GREEN}@${NC} (main)"
+            echo -e "│  └─ $main_branch$main_status"
+        fi
+
+        # Worktrees
+        if [ -d "$worktrees_dir" ] && [ "$(ls -A "$worktrees_dir" 2>/dev/null)" ]; then
+            local wt_dirs=("$worktrees_dir"/*/)
+            local wt_count=${#wt_dirs[@]}
+            local i=0
+
+            for dir in "${wt_dirs[@]}"; do
+                [ -d "$dir" ] || continue
+                i=$((i + 1))
+
+                local name=$(basename "$dir")
+                local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
+                local desc=$(get_metadata "$name" "description" 2>/dev/null)
+                local port=$(get_metadata "$name" "port" 2>/dev/null)
+
+                # Status
+                local status_text=""
+                local is_dirty=false
+                if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+                    local dirty_count=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+                    status_text=" ${RED}*${dirty_count}${NC}"
+                    is_dirty=true
+                fi
+
+                # Skip if --dirty and not dirty
+                if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
+                    continue
+                fi
+
+                # Current marker
+                local current_marker=""
+                local current_name=$(get_current_from_symlink 2>/dev/null)
+                if [ "$name" = "$current_name" ]; then
+                    current_marker=" ${BLUE}[current]${NC}"
+                fi
+
+                # Tree connector
+                local connector="├─"
+                if [ $i -eq $wt_count ]; then
+                    connector="└─"
+                fi
+
+                # Port info
+                local port_text=""
+                if [ "$show_ports" = true ] && [ -n "$port" ]; then
+                    port_text=" :$port"
+                fi
+
+                if [ "$short_mode" = true ]; then
+                    echo -e "$connector $branch$port_text$status_text$current_marker"
+                else
+                    echo -e "$connector ${GREEN}$name${NC}$current_marker"
+                    [ -n "$desc" ] && echo -e "│  ├─ \"$desc\""
+                    echo -e "│  ├─ $branch$port_text"
+                    echo -e "│  └─ status:$status_text${status_text:- ${GREEN}clean${NC}}"
+                fi
+            done
+        else
+            echo -e "└─ ${DIM}(no worktrees)${NC}"
+        fi
+
+        echo ""
+    }
+
+    init_metadata
+
+    if [ "$show_all" = true ]; then
+        # Global view - all projects
+        echo -e "${DIM}~/.pwt/projects/${NC}"
+        echo ""
+        for project_dir in "$PROJECTS_DIR"/*/; do
+            [ -d "$project_dir" ] || continue
+            local project=$(basename "$project_dir")
+            _render_project_tree "$project"
+        done
+    else
+        # Current project only
+        require_project
+        _render_project_tree "$CURRENT_PROJECT"
+    fi
+}
+
 # Command: repair
 # Runs post-create hook on worktrees (project-specific repairs via Pwtfile)
 cmd_repair() {
@@ -2451,13 +2758,28 @@ cmd_remove() {
     run_pwtfile "teardown"
     run_hook "pre-remove"
 
-    cd "$MAIN_APP"
-    git worktree remove "$worktree_dir" --force
+    # Clear current symlink if removing the current worktree
+    local current_wt=$(get_current_from_symlink 2>/dev/null)
+    if [ "$name" = "$current_wt" ]; then
+        clear_current_symlink
+        echo -e "  ${CYAN}Cleared current symlink${NC}"
+    fi
+
+    # Get workspace mode (clone or worktree)
+    local workspace_mode=$(get_metadata "$name" "mode")
+    workspace_mode="${workspace_mode:-worktree}"  # Default to worktree for backwards compatibility
+
+    if [ "$workspace_mode" = "clone" ]; then
+        rm -rf "$worktree_dir"
+        echo -e "${GREEN}✓ Clone removed${NC}"
+    else
+        cd "$MAIN_APP"
+        git worktree remove "$worktree_dir" --force
+        echo -e "${GREEN}✓ Worktree removed${NC}"
+    fi
 
     # Remove metadata
     remove_metadata "$name"
-
-    echo -e "${GREEN}✓ Worktree removed${NC}"
 
     # Delete branch if requested
     if [ "$with_branch" = true ] && [ -n "$branch" ]; then
@@ -2530,6 +2852,271 @@ cmd_server() {
 
     # Run Pwtfile server phase
     run_pwtfile "server"
+}
+
+# Command: current
+# Show current worktree info
+# Works from ANYWHERE (uses symlink, not just pwd)
+# Default output: path on stdout (pipe-friendly), context on stderr
+# Usage: pwt current [--name|--port|--branch|--path|--json]
+cmd_current() {
+    local format="default"
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --name) format="name"; shift ;;
+            --port) format="port"; shift ;;
+            --branch) format="branch"; shift ;;
+            --path) format="path"; shift ;;
+            --json) format="json"; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    # Detect current worktree (priority: symlink > pwd)
+    local current_dir=$(pwd)
+    local name=""
+    local is_main=false
+    local from_symlink=false
+
+    # 1. Try symlink first (works from anywhere)
+    if name=$(get_current_from_symlink 2>/dev/null); then
+        from_symlink=true
+    # 2. Fall back to pwd detection
+    elif [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+        name=$(basename "$current_dir")
+    elif [[ "$current_dir" == "$MAIN_APP"* ]]; then
+        is_main=true
+        name="@"
+    else
+        # No symlink and not in a worktree
+        if [ "$format" = "json" ]; then
+            echo '{"in_worktree":false}'
+        else
+            echo -e "${YELLOW}Not in a worktree (and no current set)${NC}" >&2
+            echo "Run 'pwt use <worktree>' to set current" >&2
+        fi
+        return 1
+    fi
+
+    # Get info
+    local port=""
+    local branch=""
+    local path=""
+    local marker=""
+    local desc=""
+
+    if [ "$is_main" = true ]; then
+        path="$MAIN_APP"
+        branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "main")
+    else
+        path="$WORKTREES_DIR/$name"
+        port=$(get_metadata "$name" "port")
+        marker=$(get_metadata "$name" "marker")
+        desc=$(get_metadata "$name" "description")
+        branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "?")
+    fi
+
+    # Output based on format
+    case "$format" in
+        name)
+            echo "$name"
+            ;;
+        port)
+            echo "${port:-}"
+            ;;
+        branch)
+            echo "$branch"
+            ;;
+        path)
+            echo "$path"
+            ;;
+        json)
+            local json="{"
+            json+="\"in_worktree\":true,"
+            json+="\"name\":\"$name\","
+            json+="\"branch\":\"$branch\","
+            json+="\"path\":\"$path\""
+            [ -n "$port" ] && json+=",\"port\":$port"
+            [ -n "$marker" ] && json+=",\"marker\":\"$marker\""
+            [ -n "$desc" ] && json+=",\"description\":\"$desc\""
+            [ "$from_symlink" = true ] && json+=",\"from_symlink\":true"
+            json+="}"
+            echo "$json"
+            ;;
+        default)
+            # NEW: stdout=path, stderr=context (Unix-style)
+            echo "$path"
+            if [ "$is_main" = true ]; then
+                echo -e "current@${BLUE}@${NC} (main) on ${GREEN}$branch${NC}" >&2
+            else
+                local status=$(get_status_symbols "$path")
+                local port_str=""
+                [ -n "$port" ] && port_str=":${port}"
+                local status_str=""
+                [ -n "$status" ] && status_str=" [${status}]"
+                echo -e "current@${BLUE}$name${NC} $port_str$status_str on ${GREEN}$branch${NC}" >&2
+            fi
+            ;;
+    esac
+}
+
+# Save last-used worktree for a project
+save_last_used() {
+    local name="$1"
+    local project="${CURRENT_PROJECT:-unknown}"
+    local last_file="$PWT_DIR/projects/$project/last"
+    mkdir -p "$(dirname "$last_file")"
+    echo "$name" > "$last_file"
+}
+
+# Get last-used worktree for a project
+get_last_used() {
+    local project="${CURRENT_PROJECT:-unknown}"
+    local last_file="$PWT_DIR/projects/$project/last"
+    if [ -f "$last_file" ]; then
+        cat "$last_file"
+    fi
+}
+
+# ============================================
+# Current Symlink Functions (Capistrano-style)
+# ============================================
+
+# Get symlink path for current project
+get_current_symlink_path() {
+    local project="${CURRENT_PROJECT:-unknown}"
+    echo "$PROJECTS_DIR/$project/current"
+}
+
+# Read current worktree from symlink
+get_current_from_symlink() {
+    local symlink_path=$(get_current_symlink_path)
+    [ -L "$symlink_path" ] || return 1
+    local target=$(readlink "$symlink_path" 2>/dev/null) || return 1
+    [ -d "$target" ] || return 1
+    basename "$target"
+}
+
+# Update symlink atomically
+set_current_worktree() {
+    local name="$1"
+    local symlink_path=$(get_current_symlink_path)
+    local target_path="$WORKTREES_DIR/$name"
+
+    [ -d "$target_path" ] || { echo "Worktree not found: $name" >&2; return 1; }
+
+    mkdir -p "$(dirname "$symlink_path")"
+    ln -sfn "$target_path" "$symlink_path"
+    save_last_used "$name"
+}
+
+# Clear current symlink
+clear_current_symlink() {
+    local symlink_path=$(get_current_symlink_path)
+    rm -f "$symlink_path"
+}
+
+# ============================================
+# Command: ps1
+# ============================================
+# Fast prompt helper - NO git, NO directory scanning
+# Designed for shell prompts, status bars, tmux
+# Usage: pwt ps1
+#   Output: pwt@WORKTREE-NAME (or empty if no current)
+#   Adds ! suffix if pwd differs from current (mismatch warning)
+cmd_ps1() {
+    # Fast path: read symlink directly
+    local symlink_path="$PROJECTS_DIR/${CURRENT_PROJECT:-unknown}/current"
+
+    # No symlink = no output
+    [ -L "$symlink_path" ] || return 0
+
+    local target=$(readlink "$symlink_path" 2>/dev/null) || return 0
+    [ -d "$target" ] || return 0
+
+    local name=$(basename "$target")
+
+    # Check for mismatch: pwd is in a different worktree than current
+    local mismatch=""
+    local current_dir=$(pwd)
+    if [ -d "$WORKTREES_DIR" ] && [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+        local pwd_name=$(basename "$current_dir")
+        if [ "$pwd_name" != "$name" ]; then
+            mismatch="!"
+        fi
+    fi
+
+    echo "pwt@${name}${mismatch}"
+}
+
+# ============================================
+# Command: use
+# ============================================
+# Switch the current symlink to a different worktree
+# Usage: pwt use <worktree>
+#   Atomically swaps the symlink, does NOT:
+#   - Open editor
+#   - Kill processes
+#   - Change shell directory
+cmd_use() {
+    local target="${1:-}"
+
+    if [ -z "$target" ]; then
+        echo -e "${RED}Usage: pwt use <worktree>${NC}" >&2
+        echo "Switches the current symlink to point to the specified worktree" >&2
+        exit 1
+    fi
+
+    # @ = main worktree (special case)
+    if [ "$target" = "@" ]; then
+        # Clear symlink for main (we don't symlink main)
+        clear_current_symlink
+        save_last_used "@"
+        echo -e "current → ${BLUE}@ (main)${NC}"
+        return 0
+    fi
+
+    # Check if it's a worktree name (exact match)
+    local worktree_path="$WORKTREES_DIR/$target"
+    local resolved_name="$target"
+
+    if [ ! -d "$worktree_path" ]; then
+        # Try partial match
+        local matches=()
+        if [ -d "$WORKTREES_DIR" ]; then
+            for dir in "$WORKTREES_DIR"/*/; do
+                local name=$(basename "$dir")
+                if [[ "$name" == *"$target"* ]]; then
+                    matches+=("$name")
+                fi
+            done
+        fi
+
+        if [ ${#matches[@]} -eq 1 ]; then
+            resolved_name="${matches[0]}"
+            worktree_path="$WORKTREES_DIR/$resolved_name"
+        elif [ ${#matches[@]} -gt 1 ]; then
+            echo -e "${RED}Multiple matches for '$target':${NC}" >&2
+            for m in "${matches[@]}"; do
+                echo "  $m" >&2
+            done
+            exit 1
+        else
+            echo -e "${RED}Worktree not found: $target${NC}" >&2
+            exit 1
+        fi
+    fi
+
+    # Swap symlink
+    set_current_worktree "$resolved_name" || exit 1
+
+    # Output context
+    local port=$(get_metadata "$resolved_name" "port")
+    local branch=$(git -C "$worktree_path" branch --show-current 2>/dev/null || echo "?")
+    echo -e "current → ${BLUE}$resolved_name${NC} (branch ${GREEN}$branch${NC})"
+    [ -n "$port" ] && echo -e "         port ${CYAN}:$port${NC}"
 }
 
 # Command: info
@@ -2853,10 +3440,21 @@ cmd_meta() {
 #   @ or empty = main worktree
 #   worktree = specific worktree
 cmd_cd() {
-    local target="${1:-@}"
+    local target="${1:-}"
 
-    # @ or empty = main worktree
-    if [ "$target" = "@" ] || [ -z "$target" ]; then
+    # No target: try last-used, fallback to main
+    if [ -z "$target" ]; then
+        local last=$(get_last_used)
+        if [ -n "$last" ] && [ -d "$WORKTREES_DIR/$last" ]; then
+            target="$last"
+        else
+            target="@"
+        fi
+    fi
+
+    # @ = main worktree
+    if [ "$target" = "@" ]; then
+        save_last_used "@"
         echo "$MAIN_APP"
         return 0
     fi
@@ -2864,6 +3462,7 @@ cmd_cd() {
     # Check if it's a worktree name
     local worktree_path="$WORKTREES_DIR/$target"
     if [ -d "$worktree_path" ]; then
+        save_last_used "$target"
         echo "$worktree_path"
         return 0
     fi
@@ -2880,6 +3479,8 @@ cmd_cd() {
     fi
 
     if [ ${#matches[@]} -eq 1 ]; then
+        local matched_name=$(basename "${matches[0]%/}")
+        save_last_used "$matched_name"
         echo "${matches[0]%/}"
         return 0
     elif [ ${#matches[@]} -gt 1 ]; then
@@ -3540,17 +4141,121 @@ cmd_doctor() {
     fi
 }
 
+# Command: benchmark
+# Show disk usage comparison between worktrees and clones
+# Usage: pwt benchmark [N]
+cmd_benchmark() {
+    require_project
+
+    local n="${1:-1}"
+
+    # Validate N
+    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ]; then
+        echo -e "${RED}Error: N must be a positive integer${NC}"
+        echo "Usage: pwt benchmark [N]"
+        exit 1
+    fi
+
+    local run_id="bench-$$"
+    local bench_dir=$(mktemp -d)
+
+    echo -e "${BLUE}pwt benchmark${NC}"
+    echo "Repo: $MAIN_APP"
+    echo "N:    $n"
+    echo ""
+
+    # Cleanup via inline trap (captures variables)
+    trap "
+        if [ -d '$bench_dir/worktrees' ]; then
+            for d in '$bench_dir/worktrees'/*; do
+                [ -d \"\$d\" ] || continue
+                git -C '$MAIN_APP' worktree remove \"\$d\" --force 2>/dev/null || true
+            done
+            git -C '$MAIN_APP' branch --list 'bench/$run_id-*' 2>/dev/null | xargs -r git -C '$MAIN_APP' branch -d 2>/dev/null || true
+        fi
+        rm -rf '$bench_dir' 2>/dev/null || true
+    " EXIT
+
+    # Helper for human-readable sizes
+    _human_du() { du -sh "$1" 2>/dev/null | cut -f1; }
+
+    # Show main repo sizes
+    local main_git=$(_human_du "$MAIN_APP/.git")
+    local main_objects=$(_human_du "$MAIN_APP/.git/objects")
+    echo "Main repo:"
+    echo -e "  .git:         ${GREEN}$main_git${NC}"
+    echo -e "  .git/objects: ${GREEN}$main_objects${NC}"
+    echo ""
+
+    # Benchmark worktrees
+    echo "Creating $n worktree(s)..."
+    mkdir -p "$bench_dir/worktrees"
+
+    for i in $(seq 1 "$n"); do
+        local wt="$bench_dir/worktrees/wt-$i"
+        local br="bench/$run_id-$i"
+        git -C "$MAIN_APP" worktree add "$wt" -b "$br" HEAD --quiet 2>/dev/null
+        printf "  wt-%d .git: %s\n" "$i" "$(_human_du "$wt/.git")"
+    done
+
+    echo ""
+    echo "After $n worktree(s):"
+    echo -e "  main .git:        ${GREEN}$(_human_du "$MAIN_APP/.git")${NC}"
+    echo -e "  main objects:     ${GREEN}$(_human_du "$MAIN_APP/.git/objects")${NC}"
+    echo -e "  worktrees total:  ${GREEN}$(_human_du "$bench_dir/worktrees")${NC}"
+    echo ""
+
+    # Benchmark clones
+    echo "Creating $n clone(s)..."
+    mkdir -p "$bench_dir/clones"
+
+    for i in $(seq 1 "$n"); do
+        local c="$bench_dir/clones/clone-$i"
+        git clone --quiet "$MAIN_APP" "$c" 2>/dev/null
+        printf "  clone-%d .git: %s\n" "$i" "$(_human_du "$c/.git")"
+    done
+
+    echo ""
+    echo "After $n clone(s):"
+    echo -e "  clones total:     ${GREEN}$(_human_du "$bench_dir/clones")${NC}"
+    echo ""
+
+    # Summary
+    local wt_total=$(_human_du "$bench_dir/worktrees")
+    local clone_total=$(_human_du "$bench_dir/clones")
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo -e "Summary (${GREEN}$n${NC} instances):"
+    echo -e "  Worktrees: ${GREEN}$wt_total${NC} (shared .git)"
+    echo -e "  Clones:    ${GREEN}$clone_total${NC} (.git × $n)"
+    echo ""
+    echo "Worktrees share Git objects, not files."
+    echo "Clones duplicate everything."
+    echo ""
+    echo -e "${GREEN}✓${NC} Done (cleanup automatic)"
+}
+
 # Command: select
 # Interactive worktree selector using fzf
-# Usage: pwt select [--preview]
+# Usage: pwt select [--preview] [--dirty]
 cmd_select() {
-    local preview=false
+    local show_preview=true
+    local show_dirty_only=false
 
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
             --preview|-p)
-                preview=true
+                show_preview=true
+                shift
+                ;;
+            --no-preview)
+                show_preview=false
+                shift
+                ;;
+            --dirty)
+                show_dirty_only=true
                 shift
                 ;;
             *)
@@ -3566,55 +4271,90 @@ cmd_select() {
         exit 1
     fi
 
-    # Build list of worktrees
+    # Build enriched list of worktrees
+    # Format: name|branch|port|status|marker|description
     local items=()
 
     # Add main app
     if [ -d "$MAIN_APP" ]; then
         local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "main")
-        items+=("@ (main) - $main_branch")
+        local main_status=$(get_status_symbols "$MAIN_APP")
+        if [ "$show_dirty_only" = false ] || [ -n "$main_status" ]; then
+            items+=("@|$main_branch|·|${main_status:-·}|·|main app")
+        fi
     fi
 
-    # Add worktrees
+    # Add worktrees with metadata
     if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
         for dir in "$WORKTREES_DIR"/*/; do
             [ -d "$dir" ] || continue
             local name=$(basename "$dir")
             local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+            local port=$(get_metadata "$name" "port")
+            local marker=$(get_metadata "$name" "marker")
+            local desc=$(get_metadata "$name" "description")
             local status=$(get_status_symbols "$dir")
-            [ -n "$status" ] && status=" [$status]"
-            items+=("$name - $branch$status")
+
+            # Filter by dirty if requested
+            if [ "$show_dirty_only" = true ] && [ -z "$status" ]; then
+                continue
+            fi
+
+            # Truncate description to 30 chars
+            [ -n "$desc" ] && desc="${desc:0:30}"
+
+            items+=("$name|$branch|:${port:-·}|${status:-·}|${marker:-·}|${desc:-·}")
         done
     fi
 
     if [ ${#items[@]} -eq 0 ]; then
-        echo -e "${YELLOW}No worktrees found${NC}"
+        if [ "$show_dirty_only" = true ]; then
+            echo -e "${YELLOW}No dirty worktrees found${NC}"
+        else
+            echo -e "${YELLOW}No worktrees found${NC}"
+        fi
         exit 0
     fi
 
-    # Run fzf
+    # Format with column for aligned display
+    local formatted
+    formatted=$(printf '%s\n' "${items[@]}" | column -t -s'|')
+
+    # Build preview command
+    local preview_cmd="name=\$(echo {} | awk '{print \$1}'); "
+    preview_cmd+="if [ \"\$name\" = \"@\" ]; then "
+    preview_cmd+="  echo '=== Main App ===' && git -C \"$MAIN_APP\" status -sb && echo '' && git -C \"$MAIN_APP\" diff --stat 2>/dev/null | head -15; "
+    preview_cmd+="else "
+    preview_cmd+="  pwt info \"\$name\" 2>/dev/null || (echo \"Worktree: \$name\" && git -C \"$WORKTREES_DIR/\$name\" status -sb && echo '' && git -C \"$WORKTREES_DIR/\$name\" diff --stat 2>/dev/null | head -15); "
+    preview_cmd+="fi"
+
+    # Run fzf with enhanced options
     local fzf_opts=(
-        --height=40%
+        --height=60%
         --reverse
-        --header="Select worktree (Enter to switch, Esc to cancel)"
+        --ansi
+        --header=$'Worktree selector\n↵:cd  ^E:editor  ^A:ai  ^O:open  Esc:cancel'
+        --bind="ctrl-e:execute-silent(pwt editor \$(echo {} | awk '{print \$1}'))+abort"
+        --bind="ctrl-a:execute-silent(pwt ai \$(echo {} | awk '{print \$1}'))+abort"
+        --bind="ctrl-o:execute-silent(pwt open \$(echo {} | awk '{print \$1}'))+abort"
     )
 
-    if [ "$preview" = true ]; then
+    if [ "$show_preview" = true ]; then
         fzf_opts+=(
-            --preview="name=\$(echo {} | cut -d' ' -f1); if [ \"\$name\" = \"@\" ]; then git -C \"$MAIN_APP\" diff --stat 2>/dev/null | head -20; else git -C \"$WORKTREES_DIR/\$name\" diff --stat 2>/dev/null | head -20; fi"
-            --preview-window=right:50%
+            --preview="$preview_cmd"
+            --preview-window=right:45%:wrap
         )
     fi
 
     local selected
-    selected=$(printf '%s\n' "${items[@]}" | fzf "${fzf_opts[@]}")
+    selected=$(echo "$formatted" | fzf "${fzf_opts[@]}")
 
     if [ -z "$selected" ]; then
         exit 0
     fi
 
-    # Extract worktree name (first word before " - ")
-    local target=$(echo "$selected" | cut -d' ' -f1)
+    # Extract worktree name (first column)
+    local target=$(echo "$selected" | awk '{print $1}')
 
     # Output for shell function to cd
     if [ "$target" = "@" ]; then
@@ -3630,6 +4370,293 @@ cmd__select() {
     local result
     result=$(cmd_select "$@")
     echo "$result"
+}
+
+# Command: pick
+# Interactive selector + auto-use (sets current symlink)
+# Usage: pwt pick [--dirty]
+#   Like select, but automatically runs 'pwt use' on selection
+cmd_pick() {
+    local show_dirty_only=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dirty)
+                show_dirty_only=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    # Check if fzf is installed
+    if ! command -v fzf &>/dev/null; then
+        echo -e "${RED}Error: fzf is required for pwt pick${NC}"
+        echo "Install with: brew install fzf"
+        exit 1
+    fi
+
+    # Build enriched list of worktrees (same as select)
+    local items=()
+
+    # Add main app
+    if [ -d "$MAIN_APP" ]; then
+        local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "main")
+        local main_status=$(get_status_symbols "$MAIN_APP")
+        if [ "$show_dirty_only" = false ] || [ -n "$main_status" ]; then
+            items+=("@|$main_branch|·|${main_status:-·}|·|main app")
+        fi
+    fi
+
+    # Add worktrees with metadata
+    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+            local port=$(get_metadata "$name" "port")
+            local marker=$(get_metadata "$name" "marker")
+            local desc=$(get_metadata "$name" "description")
+            local status=$(get_status_symbols "$dir")
+
+            if [ "$show_dirty_only" = true ] && [ -z "$status" ]; then
+                continue
+            fi
+
+            [ -n "$desc" ] && desc="${desc:0:30}"
+            items+=("$name|$branch|:${port:-·}|${status:-·}|${marker:-·}|${desc:-·}")
+        done
+    fi
+
+    if [ ${#items[@]} -eq 0 ]; then
+        if [ "$show_dirty_only" = true ]; then
+            echo -e "${YELLOW}No dirty worktrees found${NC}"
+        else
+            echo -e "${YELLOW}No worktrees found${NC}"
+        fi
+        exit 0
+    fi
+
+    local formatted
+    formatted=$(printf '%s\n' "${items[@]}" | column -t -s'|')
+
+    # Build preview command
+    local preview_cmd="name=\$(echo {} | awk '{print \$1}'); "
+    preview_cmd+="if [ \"\$name\" = \"@\" ]; then "
+    preview_cmd+="  echo '=== Main App ===' && git -C \"$MAIN_APP\" status -sb; "
+    preview_cmd+="else "
+    preview_cmd+="  pwt info \"\$name\" 2>/dev/null || echo \"Worktree: \$name\"; "
+    preview_cmd+="fi"
+
+    # Run fzf
+    local selected
+    selected=$(echo "$formatted" | fzf \
+        --height=60% \
+        --reverse \
+        --ansi \
+        --header=$'Pick worktree to set as current\n↵:use  Esc:cancel' \
+        --preview="$preview_cmd" \
+        --preview-window=right:45%:wrap)
+
+    if [ -z "$selected" ]; then
+        exit 0
+    fi
+
+    # Extract worktree name and call use
+    local target=$(echo "$selected" | awk '{print $1}')
+    cmd_use "$target"
+}
+
+# Command: topology
+# Show project topology (shared vs per-worktree) using LLM
+# Usage: pwt topology [ai_tool] [--json] [--no-color]
+cmd_topology() {
+    local output_format="ascii"
+    local ai_override=""
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --json)
+                output_format="json"
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: pwt topology [ai_tool] [--json]"
+                echo ""
+                echo "Analyze Pwtfile to show project topology:"
+                echo "  - [SHARED] services (postgres, redis, solr)"
+                echo "  - [PER-WT] per-worktree services (rails, vite)"
+                echo "  - [WARN] potential risks"
+                echo ""
+                echo "Arguments:"
+                echo "  ai_tool     AI to use (claude, codex, ollama, etc.)"
+                echo ""
+                echo "Options:"
+                echo "  --json      Output as JSON"
+                echo ""
+                echo "Examples:"
+                echo "  pwt topology              # uses default (claude)"
+                echo "  pwt topology codex        # use codex"
+                echo "  pwt topology --json       # JSON output"
+                return 0
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}" >&2
+                return 1
+                ;;
+            *)
+                # First non-option argument is the AI tool
+                if [ -z "$ai_override" ]; then
+                    ai_override="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Get AI command: arg > config > default
+    local ai_cmd
+    if [ -n "$ai_override" ]; then
+        ai_cmd="$ai_override"
+    else
+        ai_cmd=$(get_project_config "$CURRENT_PROJECT" "ai" 2>/dev/null)
+        [ -z "$ai_cmd" ] && ai_cmd="claude"
+    fi
+
+    # Check if AI command exists
+    if ! command -v "$ai_cmd" &>/dev/null; then
+        echo -e "${RED}Error: AI command '$ai_cmd' not found${NC}" >&2
+        echo "Install it or configure: pwt project set $CURRENT_PROJECT ai <command>" >&2
+        return 1
+    fi
+
+    # Determine project root
+    local project_root="$MAIN_APP"
+    if [ ! -d "$project_root" ]; then
+        echo -e "${RED}Error: Project root not found${NC}" >&2
+        return 1
+    fi
+
+    local start_time=$(date +%s)
+    echo -e "${BLUE}Analyzing project topology...${NC}" >&2
+
+    # Gather context - focus on Pwtfile and pwt config only
+    local context=""
+    local files_found=""
+
+    # Pwtfile (primary source of truth)
+    local pwtfile_path=""
+    pwtfile_path=$(get_project_config "$CURRENT_PROJECT" "pwtfile" 2>/dev/null)
+    [ -z "$pwtfile_path" ] && pwtfile_path="$project_root/Pwtfile"
+    if [ -f "$pwtfile_path" ]; then
+        context+="=== Pwtfile ===\n$(cat "$pwtfile_path")\n\n"
+        files_found+="Pwtfile "
+    fi
+
+    # pwt project config
+    local project_config="$PROJECTS_DIR/$CURRENT_PROJECT/config.json"
+    if [ -f "$project_config" ]; then
+        context+="=== pwt project config ===\n$(cat "$project_config")\n\n"
+        files_found+="pwt-config "
+    fi
+
+    # Worktree info
+    local worktree_info=""
+    if [ -d "$WORKTREES_DIR" ]; then
+        local wt_count=$(ls -d "$WORKTREES_DIR"/*/ 2>/dev/null | wc -l | tr -d ' ')
+        worktree_info+="Worktrees: $wt_count\n"
+        worktree_info+="Directory: $WORKTREES_DIR\n"
+
+        # Port allocation (sample)
+        init_metadata
+        for wt_path in $(ls -d "$WORKTREES_DIR"/*/ 2>/dev/null | head -3); do
+            local wt_name=$(basename "$wt_path")
+            local wt_port=$(get_metadata "$wt_name" "port" 2>/dev/null)
+            [ -n "$wt_port" ] && worktree_info+="  $wt_name: :$wt_port\n"
+        done
+    fi
+    [ -n "$worktree_info" ] && context+="=== Worktrees ===\n$worktree_info\n"
+
+    if [ -z "$files_found" ]; then
+        echo -e "${YELLOW}No Pwtfile found. Create one with: pwt init${NC}" >&2
+        return 1
+    fi
+
+    echo -e "${DIM}Sources: ${files_found}${NC}" >&2
+
+    # Build the prompt
+    # Note: LLMs don't reliably output ANSI escape codes, so we use text markers
+    local color_instruction="Do NOT use ANSI color codes. Use text markers instead:
+- Mark shared services with [SHARED]
+- Mark per-worktree services with [PER-WT]
+- Mark warnings/risks with [WARN]
+Keep the diagram clean and readable."
+
+    local format_instruction=""
+    if [ "$output_format" = "json" ]; then
+        format_instruction="Output ONLY valid JSON with this structure:
+{
+  \"shared\": [{\"name\": \"...\", \"type\": \"...\", \"port\": \"...\", \"evidence\": \"...\"}],
+  \"per_worktree\": [{\"name\": \"...\", \"type\": \"...\", \"evidence\": \"...\"}],
+  \"relationships\": [{\"from\": \"...\", \"to\": \"...\", \"type\": \"uses\"}],
+  \"risks\": [\"...\"]
+}"
+    else
+        format_instruction="Output an ASCII diagram with:
+1. Unicode box-drawing characters (┌ ┐ └ ┘ │ ─ ┬ ┴ ├ ┤ ┼)
+2. Arrows showing relationships (→ ← ↑ ↓ ◀ ▶)
+3. Clear labels inside boxes
+4. A legend at the bottom
+5. Brief risk notes if applicable
+
+Example style:
+┌─────────────────┐
+│  Rails (WT)     │
+│  per-worktree   │
+└────────┬────────┘
+         │ uses
+         ▼
+┌─────────────────┐
+│  Postgres       │
+│  shared :5432   │
+└─────────────────┘"
+    fi
+
+    local prompt="Analyze this Pwtfile for 'pwt' (a git worktree manager).
+
+CONTEXT: Multiple worktrees run simultaneously, each with its own port (5002, 5004, etc).
+
+FROM THE PWTFILE, identify:
+1. [SHARED] - services shared across worktrees (e.g., postgres, redis, solr)
+2. [PER-WT] - services each worktree runs its own (e.g., rails, vite)
+3. [WARN] - potential risks (namespace collisions, shared state)
+
+$format_instruction
+
+$color_instruction
+
+$context
+
+PROJECT: $CURRENT_PROJECT
+
+OUTPUT: Compact ASCII diagram. No ANSI codes. Max 40 lines."
+
+    # Call the AI
+    echo "" >&2
+    echo -e "$prompt" | "$ai_cmd" --print 2>/dev/null || {
+        # Fallback: try without --print flag
+        echo -e "$prompt" | "$ai_cmd" 2>/dev/null
+    }
+
+    # Show timing
+    local end_time=$(date +%s)
+    local elapsed=$((end_time - start_time))
+    echo "" >&2
+    echo -e "${DIM}Generated in ${elapsed}s${NC}" >&2
 }
 
 # Command: marker
@@ -3752,6 +4779,105 @@ cmd_for_each() {
     fi
 
     echo -e "${GREEN}✓ Ran in $((count + 1)) worktrees${NC}"
+}
+
+# Command: prompt
+# Output ready-to-use prompt integration snippets
+# Usage: pwt prompt [zsh|bash|starship]
+cmd_prompt() {
+    local shell_type="${1:-zsh}"
+
+    case "$shell_type" in
+        zsh)
+            cat << 'EOF'
+# pwt zsh prompt integration
+# Add to ~/.zshrc after eval "$(pwt shell-init)"
+
+# Option 1: Simple - show worktree name in prompt
+pwt_prompt_info() {
+    if [[ -n "$PWT_WORKTREE" ]]; then
+        echo "[${PWT_WORKTREE}] "
+    fi
+}
+PROMPT='$(pwt_prompt_info)'$PROMPT
+
+# Option 2: Rich - show name + port + status (slower)
+pwt_prompt_rich() {
+    local info=$(pwt current --name 2>/dev/null)
+    if [[ -n "$info" && "$info" != "Not in a worktree" ]]; then
+        local port=$(pwt current --port 2>/dev/null)
+        [[ -n "$port" ]] && info+=":$port"
+        echo "[$info] "
+    fi
+}
+# PROMPT='$(pwt_prompt_rich)'$PROMPT
+
+# Option 3: RPROMPT (right side) - non-blocking
+RPROMPT='${PWT_WORKTREE:+[$PWT_WORKTREE]}'
+EOF
+            ;;
+        bash)
+            cat << 'EOF'
+# pwt bash prompt integration
+# Add to ~/.bashrc after eval "$(pwt shell-init)"
+
+pwt_prompt_info() {
+    if [[ -n "$PWT_WORKTREE" ]]; then
+        echo "[${PWT_WORKTREE}] "
+    fi
+}
+PS1='$(pwt_prompt_info)'$PS1
+EOF
+            ;;
+        starship)
+            cat << 'EOF'
+# pwt starship integration
+# Add to ~/.config/starship.toml
+
+[custom.pwt]
+command = "echo $PWT_WORKTREE"
+when = "[[ -n $PWT_WORKTREE ]]"
+format = "[$output]($style) "
+style = "bold blue"
+EOF
+            ;;
+        fish)
+            cat << 'EOF'
+# pwt fish prompt integration
+# Add to ~/.config/fish/config.fish
+
+# Option 1: Using pwt ps1 (fast, works from anywhere)
+function fish_right_prompt
+    set -l pwt_info (pwt ps1 2>/dev/null)
+    if test -n "$pwt_info"
+        set_color blue
+        echo -n "[$pwt_info]"
+        set_color normal
+    end
+end
+
+# Option 2: Using environment variable (only in pwt cd)
+function fish_right_prompt
+    if test -n "$PWT_WORKTREE"
+        set_color blue
+        echo -n "[pwt:$PWT_WORKTREE]"
+        set_color normal
+    end
+end
+EOF
+            ;;
+        *)
+            echo "Usage: pwt prompt [zsh|bash|starship|fish]"
+            echo ""
+            echo "Outputs ready-to-use prompt integration code."
+            echo ""
+            echo "Examples:"
+            echo "  pwt prompt zsh      # For zsh users"
+            echo "  pwt prompt bash     # For bash users"
+            echo "  pwt prompt starship # For starship prompt"
+            echo "  pwt prompt fish     # For fish users"
+            ;;
+    esac
 }
 
 # Command: shell-init
@@ -4090,9 +5216,27 @@ case "${1:-}" in
         shift  # remove "list" from args
         cmd_list "$@"
         ;;
+    tree)
+        shift  # remove "tree" from args
+        cmd_tree "$@"
+        ;;
     info|show)
         require_project --info-only
         cmd_info "${2:-}"
+        ;;
+    current)
+        require_project --info-only
+        shift  # remove "current" from args
+        cmd_current "$@"
+        ;;
+    use)
+        require_project
+        shift  # remove "use" from args
+        cmd_use "$@"
+        ;;
+    ps1)
+        require_project --info-only
+        cmd_ps1
         ;;
     remove|rm)
         require_project
@@ -4175,6 +5319,10 @@ case "${1:-}" in
     doctor)
         cmd_doctor
         ;;
+    benchmark)
+        shift  # remove "benchmark" from args
+        cmd_benchmark "$@"
+        ;;
     select)
         require_project --info-only
         shift  # remove "select" from args
@@ -4184,6 +5332,20 @@ case "${1:-}" in
         require_project --info-only
         shift
         cmd__select "$@"
+        ;;
+    pick)
+        require_project
+        shift  # remove "pick" from args
+        cmd_pick "$@"
+        ;;
+    topology)
+        require_project
+        shift  # remove "topology" from args
+        cmd_topology "$@"
+        ;;
+    prompt)
+        shift  # remove "prompt" from args
+        cmd_prompt "$@"
         ;;
     shell-init)
         cmd_shell_init "${2:-}"
@@ -4207,8 +5369,14 @@ case "${1:-}" in
         echo "  create <branch> [base] [desc]  Create new worktree (-e -a --from --from-current --dry-run)"
         echo "  list [flags]                   List worktrees (-v/--verbose, --dirty, --porcelain)"
         echo "  list statusline                Output for shell prompts"
+        echo "  tree [--all|--dirty|--ports]   Visual tree view of worktrees"
         echo "  select [--preview]             Interactive worktree selector (fzf)"
         echo "  info [worktree]                Show worktree details"
+        echo "  current [--name|--port|--json] Show current worktree (for scripts/prompts)"
+        echo "  use <worktree>                 Set worktree as current (atomic symlink swap)"
+        echo "  pick                           Interactive select + auto-use (fzf)"
+        echo "  ps1                            Fast prompt helper (O(1), no git)"
+        echo "  topology [--json]              Show project topology using LLM (shared vs per-wt)"
         echo "  remove [worktree] [flags]      Remove worktree (--with-branch, --force-branch)"
         echo "  cd [worktree|@|-]              Navigate to worktree (@ main, - previous)"
         echo "  run <worktree> <cmd>           Run command in worktree"
@@ -4225,7 +5393,9 @@ case "${1:-}" in
         echo "  fix-port [worktree]            Fix port conflict"
         echo "  auto-remove [target] [--dry-run] Remove worktrees merged into target"
         echo "  doctor                         Check system health and configuration"
+        echo "  benchmark                      Compare worktree vs clone disk usage"
         echo "  shell-init                     Output shell function for cd integration"
+        echo "  prompt [zsh|bash|starship]     Output prompt integration snippets"
         echo "  meta [action] [args]           Manage worktree metadata"
         echo "  project [action] [args]        Manage project configs"
         echo ""

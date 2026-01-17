@@ -151,3 +151,106 @@ _test_confirm() {
     run _test_confirm "maybe"
     [ "$status" -ne 0 ]
 }
+
+# ============================================
+# pwtfile_replace_literal tests
+# ============================================
+
+@test "pwtfile_replace_literal replaces literal string" {
+    source_pwt_function pwtfile_replace_literal
+
+    echo "database: test_db" > "$TEST_TEMP_DIR/test.yml"
+    pwtfile_replace_literal "$TEST_TEMP_DIR/test.yml" "test_db" "test_db_wt5001"
+
+    run cat "$TEST_TEMP_DIR/test.yml"
+    [ "$output" = "database: test_db_wt5001" ]
+}
+
+@test "pwtfile_replace_literal handles ERB syntax safely" {
+    source_pwt_function pwtfile_replace_literal
+
+    echo "database: test<%= ENV['X']%>" > "$TEST_TEMP_DIR/test.yml"
+    pwtfile_replace_literal "$TEST_TEMP_DIR/test.yml" "test<%= ENV['X']%>" "test_wt<%= ENV['X']%>"
+
+    run cat "$TEST_TEMP_DIR/test.yml"
+    [ "$output" = "database: test_wt<%= ENV['X']%>" ]
+}
+
+@test "pwtfile_replace_literal handles special regex chars" {
+    source_pwt_function pwtfile_replace_literal
+
+    echo "url: http://localhost:3000/api" > "$TEST_TEMP_DIR/test.txt"
+    pwtfile_replace_literal "$TEST_TEMP_DIR/test.txt" "localhost:3000" "localhost:5001"
+
+    run cat "$TEST_TEMP_DIR/test.txt"
+    [ "$output" = "url: http://localhost:5001/api" ]
+}
+
+@test "pwtfile_replace_literal does nothing for missing file" {
+    source_pwt_function pwtfile_replace_literal
+
+    run pwtfile_replace_literal "$TEST_TEMP_DIR/nonexistent.txt" "a" "b"
+    [ "$status" -eq 0 ]
+}
+
+# ============================================
+# pwtfile_replace_re tests
+# ============================================
+
+@test "pwtfile_replace_re replaces regex pattern" {
+    if ! command -v perl >/dev/null 2>&1; then
+        skip "perl not installed"
+    fi
+
+    source_pwt_function pwtfile_replace_re
+
+    echo "PORT=3000" > "$TEST_TEMP_DIR/test.env"
+    pwtfile_replace_re "$TEST_TEMP_DIR/test.env" "PORT=\d+" "PORT=5001"
+
+    run cat "$TEST_TEMP_DIR/test.env"
+    [ "$output" = "PORT=5001" ]
+}
+
+@test "pwtfile_replace_re handles multiple matches" {
+    if ! command -v perl >/dev/null 2>&1; then
+        skip "perl not installed"
+    fi
+
+    source_pwt_function pwtfile_replace_re
+
+    printf "port: 3000\nother_port: 3000\n" > "$TEST_TEMP_DIR/test.yml"
+    pwtfile_replace_re "$TEST_TEMP_DIR/test.yml" "3000" "5001"
+
+    run cat "$TEST_TEMP_DIR/test.yml"
+    [[ "$output" == *"port: 5001"* ]]
+    [[ "$output" == *"other_port: 5001"* ]]
+}
+
+@test "pwtfile_replace_re does nothing for missing file" {
+    source_pwt_function pwtfile_replace_re
+
+    run pwtfile_replace_re "$TEST_TEMP_DIR/nonexistent.txt" "a" "b"
+    [ "$status" -eq 0 ]
+}
+
+# ============================================
+# detect_submodules tests
+# ============================================
+
+@test "detect_submodules returns 0 when no .gitmodules" {
+    source_pwt_functions confirm_action detect_submodules
+
+    # TEST_REPO has no .gitmodules
+    run detect_submodules "$TEST_REPO"
+    [ "$status" -eq 0 ]
+}
+
+@test "detect_submodules warns when .gitmodules exists" {
+    source_pwt_functions confirm_action detect_submodules
+
+    # Create a .gitmodules file
+    echo "[submodule \"vendor/lib\"]" > "$TEST_REPO/.gitmodules"
+
+    run detect_submodules "$TEST_REPO"
+    [[ "$output" == *"Submodules detected"* ]]
+}

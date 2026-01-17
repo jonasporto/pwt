@@ -119,3 +119,25 @@ teardown() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"Unknown"* ]] || [[ "$output" == *"unknown"* ]]
 }
+
+# ============================================
+# pwt topology tests
+# ============================================
+
+@test "pwt topology --help runs without error" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" topology --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"topology"* ]]
+}
+
+# ============================================
+# pwt tree tests
+# ============================================
+
+@test "pwt tree --help runs without error" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" tree --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"tree"* ]]
+}

@@ -23,7 +23,7 @@
 #   pwt project set myproject main_app ~/path/to/main/app
 #   pwt project set myproject worktrees_dir ~/path/to/worktrees
 
-set -e
+set -eo pipefail
 
 # PWT directory structure
 PWT_DIR="$HOME/.pwt"
@@ -86,7 +86,9 @@ init_metadata() {
 # Sets DEFAULT_BRANCH global variable
 detect_default_branch() {
     local repo="${1:-$MAIN_APP}"
-    [ -z "$repo" ] || [ ! -d "$repo" ] && return
+    if [ -z "$repo" ] || [ ! -d "$repo" ]; then
+        return
+    fi
 
     # Try to get from remote HEAD
     local remote_head=$(git -C "$repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null)
@@ -426,8 +428,10 @@ atomic_metadata_write() {
     init_metadata
 
     local lock_dir="$METADATA_FILE.lock"
+    local lock_pid_file="$lock_dir/pid"
     local tmp_file=$(mktemp)
     local max_wait=50  # 5 seconds (50 * 0.1s)
+    local stale_threshold=60  # seconds - lock older than this is stale
 
     # Create tmp_file early and set trap to clean it up on any exit
     trap "rm -f '$tmp_file'" RETURN
@@ -435,6 +439,26 @@ atomic_metadata_write() {
     # Acquire lock using mkdir (atomic on all systems)
     local waited=0
     while ! mkdir "$lock_dir" 2>/dev/null; do
+        # Check for stale lock
+        if [ -f "$lock_pid_file" ]; then
+            local lock_pid=$(cat "$lock_pid_file" 2>/dev/null)
+            local lock_age=0
+            # Get lock age in seconds (portable: stat -f %m on macOS, stat -c %Y on Linux)
+            if stat --version >/dev/null 2>&1; then
+                lock_age=$(( $(date +%s) - $(stat -c %Y "$lock_pid_file" 2>/dev/null || echo 0) ))
+            else
+                lock_age=$(( $(date +%s) - $(stat -f %m "$lock_pid_file" 2>/dev/null || echo 0) ))
+            fi
+
+            # Remove stale lock if process is dead or lock is too old
+            if [ -n "$lock_pid" ]; then
+                if ! kill -0 "$lock_pid" 2>/dev/null || [ "$lock_age" -gt "$stale_threshold" ]; then
+                    rm -rf "$lock_dir" 2>/dev/null
+                    continue  # Retry acquiring lock
+                fi
+            fi
+        fi
+
         waited=$((waited + 1))
         if [ $waited -ge $max_wait ]; then
             echo -e "${RED}Error: Could not acquire lock on metadata file${NC}" >&2
@@ -442,6 +466,9 @@ atomic_metadata_write() {
         fi
         sleep 0.1
     done
+
+    # Write our PID to the lock
+    echo "$$" > "$lock_pid_file"
 
     # Update trap to also clean lock after acquiring it
     trap "rm -rf '$lock_dir' '$tmp_file'" RETURN
@@ -746,9 +773,10 @@ is_previous_worktree() {
 # Usage: visual_width <string>
 visual_width() {
     local str="$1"
-    # Use LC_ALL=C to count actual characters, not bytes
-    # This counts Unicode code points as 1 char each
-    printf "%s" "$str" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' '
+    # Use wc -m to count characters (not bytes)
+    # Preserve current locale or fallback to UTF-8 for proper Unicode handling
+    local lc="${LC_ALL:-${LC_CTYPE:-${LANG:-C.UTF-8}}}"
+    printf "%s" "$str" | LC_ALL="$lc" wc -m | tr -d ' '
 }
 
 # Pad string to fixed visual width
@@ -796,7 +824,13 @@ pwtfile_hash_port() {
     local base="${2:-${PORT_BASE:-5000}}"
 
     # Hash the name and take first 4 hex chars for offset 0-65535
-    local hash=$(echo -n "$name" | md5 2>/dev/null || echo -n "$name" | md5sum | cut -d' ' -f1)
+    # macOS uses 'md5 -q', Linux uses 'md5sum'
+    local hash
+    if command -v md5sum >/dev/null 2>&1; then
+        hash=$(printf "%s" "$name" | md5sum | awk '{print $1}')
+    else
+        hash=$(printf "%s" "$name" | md5 -q)
+    fi
     local offset=$((16#${hash:0:4} % 1000))
 
     echo $((base + offset))
@@ -2300,24 +2334,40 @@ cmd_remove() {
 
     # Delete branch if requested
     if [ "$with_branch" = true ] && [ -n "$branch" ]; then
+        # Validate branch exists (locally or remotely)
+        local branch_exists=false
+        if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+            branch_exists=true
+        elif git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+            branch_exists=true
+        fi
+
+        if [ "$branch_exists" = false ]; then
+            echo -e "${YELLOW}Branch '$branch' not found (local or remote)${NC}"
+            return 0
+        fi
+
         # Check if branch is merged (unless forcing)
         if [ "$force_branch" = false ]; then
-            if ! git branch --merged master 2>/dev/null | grep -q "^\s*${branch}$" && \
-               ! git branch --merged main 2>/dev/null | grep -q "^\s*${branch}$"; then
-                echo -e "${YELLOW}Branch '$branch' is not merged. Use --force-branch to delete anyway.${NC}"
+            local target_branch="${DEFAULT_BRANCH:-master}"
+            if ! git branch --merged "$target_branch" 2>/dev/null | grep -q "^[[:space:]]*${branch}$"; then
+                echo -e "${YELLOW}Branch '$branch' is not merged into $target_branch. Use --force-branch to delete anyway.${NC}"
                 return 0
             fi
         fi
 
         # Delete local branch
-        if git branch -D "$branch" 2>/dev/null; then
-            echo -e "${GREEN}✓ Local branch deleted: $branch${NC}"
+        if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+            if git branch -D "$branch" 2>/dev/null; then
+                echo -e "${GREEN}✓ Local branch deleted: $branch${NC}"
+            fi
         fi
 
         # Delete remote branch
-        local remote_branch="${BRANCH_PREFIX}${branch#${BRANCH_PREFIX}}"
-        if git push origin --delete "$branch" 2>/dev/null; then
-            echo -e "${GREEN}✓ Remote branch deleted: origin/$branch${NC}"
+        if git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+            if git push origin --delete "$branch" 2>/dev/null; then
+                echo -e "${GREEN}✓ Remote branch deleted: origin/$branch${NC}"
+            fi
         fi
     fi
 }

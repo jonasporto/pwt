@@ -108,7 +108,7 @@ The `<worktree>` identifier is derived from the `<branch>` input by removing pat
 |--------------|---------------|
 | `my-feature` | `my-feature` |
 | `feature/my-feature` | `my-feature` |
-| `jp/TICKET-123-fix-bug` | `TICKET-123-fix-bug` |
+| `user/TICKET-123-fix-bug` | `TICKET-123-fix-bug` |
 | `bugfix/fix_something` | `fix_something` |
 
 ## Project Selection
@@ -198,7 +198,7 @@ cd ~/Projects/myapp
 pwt init
 
 # Customize config
-pwt config branch_prefix "jp/"
+pwt config branch_prefix "user/"
 pwt config worktrees_dir ~/Projects/myapp-worktrees
 ```
 
@@ -209,7 +209,7 @@ Config is stored in `~/.pwt/projects/<name>/config.json`:
   "path": "/Users/you/Projects/myapp",
   "remote": "git@github.com:user/myapp.git",
   "worktrees_dir": "/Users/you/Projects/myapp-worktrees",
-  "branch_prefix": "jp/",
+  "branch_prefix": "user/",
   "aliases": ["app", "myapp"]
 }
 ```
@@ -259,10 +259,10 @@ pwt cd -            # Go to previous worktree (like cd -)
 The `-` shortcut works across projects:
 
 ```bash
-pwt acme cd TICKET-123      # Go to acme worktree
-pwt planning-center cd TASK-1  # Go to planning-center worktree
-pwt cd -                       # Back to acme/TICKET-123
-pwt cd -                       # Back to planning-center/TASK-1
+pwt project-a cd TICKET-123    # Go to project-a worktree
+pwt project-b cd TASK-1        # Go to project-b worktree
+pwt cd -                       # Back to project-a/TICKET-123
+pwt cd -                       # Back to project-b/TASK-1
 ```
 
 ### Environment Variables

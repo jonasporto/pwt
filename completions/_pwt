@@ -76,7 +76,7 @@ _pwt_config_keys() {
     local keys=(
         'main_app:Main app path'
         'worktrees_dir:Worktrees directory'
-        'branch_prefix:Branch prefix (e.g. jp/)'
+        'branch_prefix:Branch prefix (e.g. user/)'
         'base_port:Base port for allocation'
     )
     _describe 'key' keys

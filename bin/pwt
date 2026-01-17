@@ -1133,7 +1133,7 @@ EOF
 }
 
 # Extract worktree name from branch
-# Removes path prefix (feature/, jp/, etc) and sanitizes for directory use
+# Removes path prefix (feature/, user/, etc) and sanitizes for directory use
 extract_worktree_name() {
     local branch="$1"
     echo "$branch" | sed -E 's|.*/||; s|[^A-Za-z0-9._-]|-|g'
@@ -1645,10 +1645,10 @@ check_merge_status() {
 }
 
 # Command: list (porcelain output)
-# Internal function for JSON output
+# Internal function for JSON output (uses jq for proper escaping)
 cmd_list_porcelain() {
     local show_dirty_only="${1:-false}"
-    local worktrees=()
+    local worktrees_json="[]"
 
     if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
         for dir in "$WORKTREES_DIR"/*/; do
@@ -1676,29 +1676,31 @@ cmd_list_porcelain() {
             local meta_base=$(get_metadata "$name" "base")
             local meta_desc=$(get_metadata "$name" "description")
 
-            worktrees+=("{\"name\":\"$name\",\"path\":\"$dir\",\"branch\":\"$branch\",\"commit\":\"$commit\",\"port\":\"$port\",\"dirty\":$is_dirty,\"base\":\"$meta_base\",\"description\":\"$meta_desc\"}")
+            # Build worktree JSON object with proper escaping via jq
+            local wt_json
+            wt_json=$(jq -n \
+                --arg name "$name" \
+                --arg path "$dir" \
+                --arg branch "$branch" \
+                --arg commit "$commit" \
+                --arg port "${port:-}" \
+                --argjson dirty "$is_dirty" \
+                --arg base "${meta_base:-}" \
+                --arg description "${meta_desc:-}" \
+                '{name: $name, path: $path, branch: $branch, commit: $commit, port: $port, dirty: $dirty, base: $base, description: $description}')
+
+            # Append to array
+            worktrees_json=$(echo "$worktrees_json" | jq --argjson wt "$wt_json" '. + [$wt]')
         done
     fi
 
-    # Output JSON
-    echo "{"
-    echo "  \"project\": \"$CURRENT_PROJECT\","
-    echo "  \"main_app\": \"$MAIN_APP\","
-    echo "  \"worktrees_dir\": \"$WORKTREES_DIR\","
-    echo "  \"worktrees\": ["
-
-    local first=true
-    for wt in "${worktrees[@]}"; do
-        if [ "$first" = true ]; then
-            first=false
-            echo "    $wt"
-        else
-            echo "    ,$wt"
-        fi
-    done
-
-    echo "  ]"
-    echo "}"
+    # Output final JSON with proper escaping
+    jq -n \
+        --arg project "$CURRENT_PROJECT" \
+        --arg main_app "$MAIN_APP" \
+        --arg worktrees_dir "$WORKTREES_DIR" \
+        --argjson worktrees "$worktrees_json" \
+        '{project: $project, main_app: $main_app, worktrees_dir: $worktrees_dir, worktrees: $worktrees}'
 }
 
 # Command: list
@@ -3965,7 +3967,7 @@ cmd_config() {
             echo "Available keys:"
             echo "  main_app       - Path to main project"
             echo "  worktrees_dir  - Path to worktrees directory"
-            echo "  branch_prefix  - Prefix for branches (e.g., jp/)"
+            echo "  branch_prefix  - Prefix for branches (e.g., user/)"
             echo "  base_port      - Base port for allocation"
             exit 1
             ;;
@@ -4311,7 +4313,7 @@ case "${1:-}" in
         echo "  pwt project init myproject"
         echo "  pwt project set myproject main_app ~/path/to/app"
         echo "  pwt project set myproject worktrees_dir ~/path/to/worktrees"
-        echo "  pwt project set myproject branch_prefix \"jp/\""
+        echo "  pwt project set myproject branch_prefix \"user/\""
         echo ""
         echo "Examples:"
         echo "  pwt init git@github.com:user/app.git       # Clone and configure"

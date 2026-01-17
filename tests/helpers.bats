@@ -115,44 +115,39 @@ teardown() {
 # confirm_action tests
 # ============================================
 
-@test "confirm_action returns 0 for 'y'" {
+# Helper to test confirm_action with piped input
+_test_confirm() {
+    local input="$1"
     source_pwt_function confirm_action
+    echo "$input" | confirm_action "Test?"
+}
 
-    run bash -c 'echo "y" | confirm_action "Test?"'
+@test "confirm_action returns 0 for 'y'" {
+    run _test_confirm "y"
     [ "$status" -eq 0 ]
 }
 
 @test "confirm_action returns 0 for 'yes'" {
-    source_pwt_function confirm_action
-
-    run bash -c 'echo "yes" | confirm_action "Test?"'
+    run _test_confirm "yes"
     [ "$status" -eq 0 ]
 }
 
 @test "confirm_action returns 0 for 'Y'" {
-    source_pwt_function confirm_action
-
-    run bash -c 'echo "Y" | confirm_action "Test?"'
+    run _test_confirm "Y"
     [ "$status" -eq 0 ]
 }
 
 @test "confirm_action returns 1 for 'n'" {
-    source_pwt_function confirm_action
-
-    run bash -c 'echo "n" | confirm_action "Test?"'
+    run _test_confirm "n"
     [ "$status" -ne 0 ]
 }
 
 @test "confirm_action returns 1 for empty input" {
-    source_pwt_function confirm_action
-
-    run bash -c 'echo "" | confirm_action "Test?"'
+    run _test_confirm ""
     [ "$status" -ne 0 ]
 }
 
 @test "confirm_action returns 1 for random input" {
-    source_pwt_function confirm_action
-
-    run bash -c 'echo "maybe" | confirm_action "Test?"'
+    run _test_confirm "maybe"
     [ "$status" -ne 0 ]
 }

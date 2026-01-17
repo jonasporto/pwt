@@ -429,7 +429,9 @@ atomic_metadata_write() {
 
     local lock_dir="$METADATA_FILE.lock"
     local lock_pid_file="$lock_dir/pid"
-    local tmp_file=$(mktemp)
+    # Create tmp in same directory as metadata for atomic mv (same filesystem)
+    local tmp_file
+    tmp_file="$(mktemp "${METADATA_FILE}.tmp.XXXXXX")"
     local max_wait=50  # 5 seconds (50 * 0.1s)
     local stale_threshold=60  # seconds - lock older than this is stale
 
@@ -481,6 +483,56 @@ atomic_metadata_write() {
         return 1
     fi
     # trap handles cleanup on return
+}
+
+# Acquire metadata lock (for operations needing read-modify-write atomicity)
+# Usage: acquire_metadata_lock
+# Returns: 0 on success, 1 on failure
+# IMPORTANT: Must call release_metadata_lock when done
+acquire_metadata_lock() {
+    init_metadata
+
+    local lock_dir="$METADATA_FILE.lock"
+    local lock_pid_file="$lock_dir/pid"
+    local max_wait=50  # 5 seconds
+    local stale_threshold=60
+
+    local waited=0
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        # Check for stale lock
+        if [ -f "$lock_pid_file" ]; then
+            local lock_pid=$(cat "$lock_pid_file" 2>/dev/null)
+            local lock_age=0
+            if stat --version >/dev/null 2>&1; then
+                lock_age=$(( $(date +%s) - $(stat -c %Y "$lock_pid_file" 2>/dev/null || echo 0) ))
+            else
+                lock_age=$(( $(date +%s) - $(stat -f %m "$lock_pid_file" 2>/dev/null || echo 0) ))
+            fi
+            if [ -n "$lock_pid" ]; then
+                if ! kill -0 "$lock_pid" 2>/dev/null || [ "$lock_age" -gt "$stale_threshold" ]; then
+                    rm -rf "$lock_dir" 2>/dev/null
+                    continue
+                fi
+            fi
+        fi
+
+        waited=$((waited + 1))
+        if [ $waited -ge $max_wait ]; then
+            echo -e "${RED}Error: Could not acquire metadata lock${NC}" >&2
+            return 1
+        fi
+        sleep 0.1
+    done
+
+    echo "$$" > "$lock_pid_file"
+    return 0
+}
+
+# Release metadata lock
+# Usage: release_metadata_lock
+release_metadata_lock() {
+    local lock_dir="$METADATA_FILE.lock"
+    rm -rf "$lock_dir" 2>/dev/null
 }
 
 # Save worktree metadata (namespaced by project)
@@ -541,6 +593,7 @@ remove_metadata() {
 
 # Update worktree metadata field (namespaced by project)
 # Usage: update_metadata <name> <field> <value>
+# Note: For numeric fields (port), use update_metadata_json
 update_metadata() {
     local name="$1"
     local field="$2"
@@ -549,6 +602,18 @@ update_metadata() {
     atomic_metadata_write \
        'if .[$project][$name] then .[$project][$name][$field] = $value else . end' \
        --arg project "$project" --arg name "$name" --arg field "$field" --arg value "$value"
+}
+
+# Update worktree metadata field with JSON value (for numbers, booleans, etc.)
+# Usage: update_metadata_json <name> <field> <json_value>
+update_metadata_json() {
+    local name="$1"
+    local field="$2"
+    local json_value="$3"
+    local project="${CURRENT_PROJECT:-unknown}"
+    atomic_metadata_write \
+       'if .[$project][$name] then .[$project][$name][$field] = $value else . end' \
+       --arg project "$project" --arg name "$name" --arg field "$field" --argjson value "$json_value"
 }
 
 # List all metadata for current project
@@ -864,7 +929,10 @@ read_port_base() {
     local port_base=$(grep -E "^PORT_BASE=" "$pwtfile" 2>/dev/null | head -1 | cut -d= -f2)
 
     if [ -n "$port_base" ] && [[ "$port_base" =~ ^[0-9]+$ ]]; then
-        BASE_PORT=$((port_base - 1))  # -1 because next_available_port does +1
+        # Pwtfile PORT_BASE means "first worktree port"
+        # Internal BASE_PORT means "main app port" (worktrees start at BASE_PORT+1)
+        # So if PORT_BASE=5001 (first worktree), BASE_PORT=5000 (main app)
+        BASE_PORT=$((port_base - 1))
     fi
 }
 
@@ -1065,12 +1133,14 @@ is_port_pair_free() {
 
 # Find next available port
 # Strategy: try to reuse ports from removed worktrees before incrementing
+# Note: BASE_PORT is reserved for main app, worktrees start at BASE_PORT+1
+#       (Pwtfile PORT_BASE defines first worktree port, see read_port_base)
 next_available_port() {
     # Collect all ports "allocated" by existing worktrees
     local -a allocated_ports=()
     local project="${CURRENT_PROJECT:-unknown}"
 
-    # BASE_PORT is reserved for main app
+    # BASE_PORT is reserved for main app (worktrees use BASE_PORT+1, +2, etc.)
     allocated_ports+=("$BASE_PORT")
 
     # Read ports from metadata for current project (primary source)
@@ -1312,6 +1382,15 @@ cmd_create() {
     # Read PORT_BASE from Pwtfile (if defined)
     read_port_base
 
+    # Acquire lock to prevent port allocation race condition
+    # Lock is held until metadata is saved
+    if ! acquire_metadata_lock; then
+        echo -e "${RED}Error: Could not acquire lock for port allocation${NC}"
+        exit 1
+    fi
+    # Ensure lock is released on exit
+    trap 'release_metadata_lock' EXIT
+
     # Allocate port (stored in metadata only)
     local port=$(next_available_port)
 
@@ -1401,6 +1480,10 @@ cmd_create() {
 
     save_metadata "$worktree_name" "$worktree_dir" "$final_branch" "$final_base" "$final_base_short" "$port" "$final_desc"
     echo -e "  ${GREEN}✓ Metadata saved${NC}"
+
+    # Release port allocation lock now that metadata is saved
+    release_metadata_lock
+    trap - EXIT  # Clear the exit trap
 
     # Set context for Pwtfile and hooks
     export PWT_WORKTREE="$worktree_name"
@@ -2158,11 +2241,23 @@ cmd_auto_remove() {
         local wt_branch=$(git -C "$dir" branch --show-current 2>/dev/null)
         local branch_display="${wt_branch:-detached}"
 
+        # Check if worktree has uncommitted changes
+        local is_dirty=false
+        if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+            is_dirty=true
+        fi
+
         # Check if worktree commit is contained in remote target branch (post-fetch)
         # Uses merge-base --is-ancestor which works even if remote branch was deleted
         if git merge-base --is-ancestor "$wt_commit" "$remote_target" 2>/dev/null; then
-            echo -e "  ${GREEN}✅ MERGED:${NC} $name ($branch_display)"
-            to_remove+=("$name")
+            if [ "$is_dirty" = true ]; then
+                # Merged but has uncommitted changes - protect it
+                echo -e "  ${YELLOW}⚠️  DIRTY:${NC} $name ($branch_display) - merged but has uncommitted changes"
+                pending+=("$name")
+            else
+                echo -e "  ${GREEN}✅ MERGED:${NC} $name ($branch_display)"
+                to_remove+=("$name")
+            fi
         else
             echo -e "  ${YELLOW}⏳ PENDING:${NC} $name ($branch_display)"
             pending+=("$name")
@@ -2283,22 +2378,54 @@ cmd_remove() {
     fi
 
     # Kill Sidekiq from worktree if running (avoid orphan jobs)
-    local sidekiq_pids=$(pgrep -f "sidekiq.*$name" 2>/dev/null || true)
-    if [ -n "$sidekiq_pids" ]; then
-        echo -e "${YELLOW}Killing Sidekiq from worktree...${NC}"
-        echo "$sidekiq_pids" | xargs kill 2>/dev/null || true
-        sleep 1
-        echo -e "  ${GREEN}✓ Sidekiq killed${NC}"
+    # Only kill if process is running from this worktree directory
+    if [ -d "$worktree_dir" ]; then
+        local sidekiq_pids=""
+        while IFS= read -r pid; do
+            # Verify the process is actually from this worktree
+            local proc_cwd=$(lsof -p "$pid" 2>/dev/null | grep cwd | awk '{print $NF}')
+            if [[ "$proc_cwd" == "$worktree_dir"* ]]; then
+                sidekiq_pids="${sidekiq_pids}${sidekiq_pids:+ }$pid"
+            fi
+        done < <(pgrep -f "sidekiq" 2>/dev/null || true)
+
+        if [ -n "$sidekiq_pids" ]; then
+            echo -e "${YELLOW}Killing Sidekiq from worktree...${NC}"
+            echo "$sidekiq_pids" | xargs kill 2>/dev/null || true
+            sleep 1
+            echo -e "  ${GREEN}✓ Sidekiq killed${NC}"
+        fi
     fi
 
     # Kill foreman/processes from worktree by port
+    # Only kill known safe processes (ruby, node, puma, etc.)
     if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
         local port_pids=$(lsof -ti ":$port" 2>/dev/null || true)
         if [ -n "$port_pids" ]; then
-            echo -e "${YELLOW}Freeing port $port...${NC}"
-            echo "$port_pids" | xargs kill -9 2>/dev/null || true
-            sleep 1
-            echo -e "  ${GREEN}✓ Port $port freed${NC}"
+            local safe_to_kill=true
+            local pid_list=""
+            for pid in $port_pids; do
+                local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+                # Only kill known server processes
+                case "$proc_name" in
+                    ruby|node|puma|rails|foreman|npm|bun|python*)
+                        pid_list="${pid_list}${pid_list:+ }$pid"
+                        ;;
+                    *)
+                        echo -e "${YELLOW}Warning: Unknown process on port $port: $proc_name (PID $pid)${NC}"
+                        safe_to_kill=false
+                        ;;
+                esac
+            done
+
+            if [ "$safe_to_kill" = true ] && [ -n "$pid_list" ]; then
+                echo -e "${YELLOW}Freeing port $port...${NC}"
+                echo "$pid_list" | xargs kill -9 2>/dev/null || true
+                sleep 1
+                echo -e "  ${GREEN}✓ Port $port freed${NC}"
+            elif [ "$safe_to_kill" = false ]; then
+                echo -e "${YELLOW}Skipping port cleanup (unknown processes)${NC}"
+            fi
         fi
     fi
 
@@ -2659,8 +2786,8 @@ cmd_fix_port() {
         echo -e "  ${GREEN}✓${NC} .env updated"
     fi
 
-    # 2. Update metadata
-    update_metadata "$name" "port" "$new_port"
+    # 2. Update metadata (use JSON for numeric port)
+    update_metadata_json "$name" "port" "$new_port"
     echo -e "  ${GREEN}✓${NC} Metadata updated"
 
     # 3. Set context for hook
@@ -3333,7 +3460,7 @@ cmd_copy() {
 
     local count=0
     for pattern in "$@"; do
-        # Use find to match patterns
+        # Use find with -name (pattern is a filename glob, not a path)
         while IFS= read -r -d '' file; do
             local rel_path="${file#$src_path/}"
             local dest_file="$dest_path/$rel_path"
@@ -3344,7 +3471,7 @@ cmd_copy() {
             cp "$file" "$dest_file"
             echo "  ✓ $rel_path"
             count=$((count + 1))
-        done < <(find "$src_path" -path "*/$pattern" -type f -print0 2>/dev/null || find "$src_path" -name "$pattern" -type f -print0 2>/dev/null)
+        done < <(find "$src_path" -name "$pattern" -type f -print0 2>/dev/null)
     done
 
     if [ $count -eq 0 ]; then
@@ -3798,8 +3925,9 @@ cmd_config() {
                 local current=$(jq -r ".$key // empty" "$config_file" 2>/dev/null)
                 echo "${current:-"(not set)"}"
             else
-                # Set value
-                local tmp_file=$(mktemp)
+                # Set value (create tmp in same dir for atomic mv)
+                local tmp_file
+                tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
                 jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
                 echo -e "${GREEN}✓ Set $key = $value${NC}"
             fi
@@ -3899,7 +4027,9 @@ cmd_project() {
                 echo "Use: pwt project init $project"
                 exit 1
             fi
-            local tmp_file=$(mktemp)
+            # Create tmp in same dir for atomic mv
+            local tmp_file
+            tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
             jq --arg key "$arg3" --arg value "$arg4" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
             echo -e "${GREEN}✓ Updated $project.$arg3 = $arg4${NC}"
             ;;

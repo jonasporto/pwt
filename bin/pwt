@@ -4501,7 +4501,8 @@ cmd_topology() {
                 echo "Examples:"
                 echo "  pwt topology              # uses default (claude)"
                 echo "  pwt topology codex        # use codex"
-                echo "  pwt topology --json       # JSON output"
+                echo ""
+                echo "Note: Takes ~20-30s (LLM processing time)"
                 return 0
                 ;;
             -*)
@@ -4647,9 +4648,8 @@ OUTPUT: Compact ASCII diagram. No ANSI codes. Max 40 lines."
 
     # Call the AI
     echo "" >&2
-    echo -e "$prompt" | "$ai_cmd" --print 2>/dev/null || {
-        # Fallback: try without --print flag
-        echo -e "$prompt" | "$ai_cmd" 2>/dev/null
+    echo -e "$prompt" | "$ai_cmd" -p 2>/dev/null || {
+        echo -e "$prompt" | "$ai_cmd" --print 2>/dev/null
     }
 
     # Show timing

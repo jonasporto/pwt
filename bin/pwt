@@ -4513,7 +4513,7 @@ cmd_pick() {
 
 # Command: topology
 # Show project topology (shared vs per-worktree) using LLM
-# Usage: pwt topology [ai_tool] [--json] [--no-color]
+# Usage: pwt topology [ai_tool] [--json]
 cmd_topology() {
     local output_format="ascii"
     local ai_override=""

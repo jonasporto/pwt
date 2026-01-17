@@ -100,8 +100,9 @@ pwt create feature master --clone      # Creates clone instead
 ## Install
 
 ```bash
-# Clone the repo
-git clone https://github.com/youruser/pwt.git ~/dotfiles/pwt
+# Clone to your preferred location
+git clone https://github.com/jonasporto/dotfiles.git ~/dotfiles
+# pwt lives in ~/dotfiles/pwt/bin/pwt
 
 # Add to PATH (add to ~/.zshrc or ~/.bashrc)
 export PATH="$HOME/dotfiles/pwt/bin:$PATH"
@@ -115,7 +116,7 @@ pwt doctor
 
 **Update:**
 ```bash
-cd ~/dotfiles/pwt && git pull
+cd ~/dotfiles && git pull
 ```
 
 ## 30-Second Demo
@@ -156,6 +157,8 @@ pwt server
 pwt remove feature-branch
 ```
 
+> **Note:** Project name is derived from the repo directory (e.g., `myapp`). Use `pwt project list` to see configured projects.
+
 ## Commands
 
 | Command | Description |
@@ -179,7 +182,7 @@ pwt remove feature-branch
 | `diff <wt1> [wt2]` | Show diff between worktrees |
 | `conflicts [wt1] [wt2]` | Show file overlap between worktrees |
 | `context [worktree]` | Generate markdown context for AI agents |
-| `copy <src> <dest> <patterns>` | Copy files between worktrees |
+| `copy <src> <dest> <patterns...>` | Copy files between worktrees |
 | `marker [worktree] [emoji]` | Set/show worktree marker |
 | `server` | Start development server |
 | `fix-port [worktree]` | Resolve port conflict |
@@ -213,7 +216,8 @@ pwt remove feature-branch
 | `-v, --verbose` | Show detailed output (original format) |
 | `--dirty` | Only show worktrees with uncommitted changes |
 | `--porcelain` | Output machine-readable JSON |
-| `statusline` | Output for shell prompts |
+
+**Subcommand:** `pwt list statusline` — compact output for shell prompts.
 
 ### Select Flags
 

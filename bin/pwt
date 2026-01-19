@@ -38,6 +38,7 @@ PROJECTS_DIR="$PWT_PROJECTS_DIR"
 
 # Current project context (set by detect_project or --project flag)
 CURRENT_PROJECT=""
+PROJECT_EXPLICIT=false  # true if project was specified via --project or first arg
 MAIN_APP=""
 WORKTREES_DIR=""
 BRANCH_PREFIX=""
@@ -404,9 +405,29 @@ require_project() {
     done
 
     if [ -z "$CURRENT_PROJECT" ]; then
-        echo -e "${RED}Error: No project detected${NC}"
-        echo ""
-        echo "Make sure you're inside a git repository."
+        # Check if we're in a git repo (potential new project)
+        if git rev-parse --git-dir &>/dev/null; then
+            local repo_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
+            echo -e "${YELLOW}Git repository detected: $repo_name${NC}"
+            echo ""
+            echo "This repo is not configured with pwt yet."
+            echo ""
+            echo "To set it up:"
+            echo "  pwt init                    # configure this repo"
+            echo ""
+            echo "Or specify a configured project:"
+            echo "  pwt <project> <command>     # e.g., pwt acme list"
+            echo "  pwt project list            # see configured projects"
+        else
+            echo -e "${RED}Error: No project detected${NC}"
+            echo ""
+            echo "You're not inside a git repository."
+            echo ""
+            echo "Options:"
+            echo "  pwt <project> <command>     # specify project explicitly"
+            echo "  pwt project list            # see configured projects"
+            echo "  cd /path/to/repo && pwt init"
+        fi
         exit 1
     fi
 
@@ -2921,6 +2942,10 @@ cmd_current() {
     elif [[ "$current_dir" == "$MAIN_APP"* ]]; then
         is_main=true
         name="@"
+    # 3. If project was explicitly specified, default to main
+    elif [ "$PROJECT_EXPLICIT" = true ] && [ -n "$MAIN_APP" ]; then
+        is_main=true
+        name="@"
     else
         # No symlink and not in a worktree
         if [ "$format" = "json" ]; then
@@ -5209,6 +5234,7 @@ while [[ "${1:-}" == --* ]]; do
     case "$1" in
         --project)
             CURRENT_PROJECT="$2"
+            PROJECT_EXPLICIT=true
             shift 2
             ;;
         --help|-h)
@@ -5231,6 +5257,7 @@ if [ -n "${1:-}" ]; then
     _resolved=$(resolve_project_alias "$1")
     if [ -d "$PWT_PROJECTS_DIR/${_resolved}" ]; then
         CURRENT_PROJECT="$_resolved"
+        PROJECT_EXPLICIT=true
         load_project_config "$_resolved"
         shift
     fi

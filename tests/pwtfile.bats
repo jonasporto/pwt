@@ -518,3 +518,87 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"real"* ]]
 }
+
+# ============================================
+# Steps (step_* functions)
+# ============================================
+
+@test "pwt steps lists step_* functions" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+step_install_deps() {
+    echo "installing"
+}
+
+step_setup_db() {
+    echo "setting up"
+}
+
+setup() {
+    step_install_deps
+    step_setup_db
+}
+EOF
+
+    run "$PWT_BIN" steps
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"install_deps"* ]]
+    [[ "$output" == *"setup_db"* ]]
+}
+
+@test "pwt step runs specific step" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+step_hello() {
+    echo "HELLO_STEP_RAN"
+}
+EOF
+
+    run "$PWT_BIN" step hello
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"HELLO_STEP_RAN"* ]]
+}
+
+@test "pwt step fails for unknown step" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+step_exists() {
+    echo "exists"
+}
+EOF
+
+    run "$PWT_BIN" step nonexistent
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Step not found"* ]]
+}
+
+@test "pwt step receives PWT_ARGS" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+step_argtest() {
+    echo "ARGS:$PWT_ARGS"
+}
+EOF
+
+    run "$PWT_BIN" step argtest --foo bar
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ARGS:--foo bar"* ]]
+}
+
+@test "pwt steps shows message when no steps" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+setup() {
+    echo "no steps here"
+}
+EOF
+
+    run "$PWT_BIN" steps
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No steps found"* ]]
+}

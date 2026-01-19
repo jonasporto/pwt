@@ -5461,6 +5461,99 @@ cmd_for_each() {
     echo -e "${GREEN}✓ Ran in $((count + 1)) worktrees${NC}"
 }
 
+# Command: steps
+# List available steps from Pwtfile (functions prefixed with step_)
+# Usage: pwt steps
+cmd_steps() {
+    detect_project
+    local pwtfile=$(get_project_pwtfile)
+
+    if [ -z "$pwtfile" ] || [ ! -f "$pwtfile" ]; then
+        echo -e "${RED}No Pwtfile found${NC}"
+        return 1
+    fi
+
+    # Extract step_* function names
+    local steps
+    steps=$(grep -oE "^step_[a-zA-Z0-9_]+" "$pwtfile" 2>/dev/null | sed 's/^step_//' | sort -u || true)
+
+    if [ -z "$steps" ]; then
+        echo -e "${YELLOW}No steps found in Pwtfile${NC}"
+        echo "Steps are functions prefixed with 'step_', e.g.:"
+        echo "  step_install_deps() { bundle install; }"
+        return 0
+    fi
+
+    echo -e "${BLUE}Steps ($CURRENT_PROJECT):${NC}"
+    echo "$steps" | while read -r step; do
+        echo "  $step"
+    done
+    echo ""
+    echo "Usage: pwt step <name>"
+}
+
+# Command: step
+# Run a single step from Pwtfile
+# Usage: pwt step <name> [args...]
+cmd_step() {
+    local step_name="${1:-}"
+
+    if [ -z "$step_name" ]; then
+        echo "Usage: pwt step <name>"
+        echo "Run 'pwt steps' to list available steps"
+        return 1
+    fi
+
+    detect_project
+    local pwtfile=$(get_project_pwtfile)
+    local func_name="step_${step_name}"
+
+    if [ -z "$pwtfile" ] || [ ! -f "$pwtfile" ]; then
+        echo -e "${RED}No Pwtfile found${NC}"
+        return 1
+    fi
+
+    if ! has_command_in_file "$pwtfile" "$func_name"; then
+        echo -e "${RED}Step not found: $step_name${NC}"
+        echo "Run 'pwt steps' to list available steps"
+        return 1
+    fi
+
+    # Set up context from current directory
+    local current_dir=$(pwd -P)
+    local resolved_worktrees_dir=""
+    local resolved_main_app=""
+
+    if [ -n "$WORKTREES_DIR" ] && [ -d "$WORKTREES_DIR" ]; then
+        resolved_worktrees_dir=$(cd "$WORKTREES_DIR" 2>/dev/null && pwd -P)
+    fi
+    if [ -n "$MAIN_APP" ] && [ -d "$MAIN_APP" ]; then
+        resolved_main_app=$(cd "$MAIN_APP" 2>/dev/null && pwd -P)
+    fi
+
+    if [ -n "$resolved_worktrees_dir" ] && [[ "$current_dir" == "$resolved_worktrees_dir"/* ]]; then
+        PWT_WORKTREE=$(basename "$current_dir")
+        PWT_WORKTREE_PATH="$current_dir"
+        PWT_PORT=$(get_metadata "$PWT_WORKTREE" "port" 2>/dev/null || echo "")
+        PWT_BRANCH=$(get_metadata "$PWT_WORKTREE" "branch" 2>/dev/null || echo "")
+    elif [ -n "$resolved_main_app" ] && [[ "$current_dir" == "$resolved_main_app"* ]]; then
+        PWT_WORKTREE="@"
+        PWT_WORKTREE_PATH="$resolved_main_app"
+        PWT_PORT=""
+        PWT_BRANCH=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "master")
+    else
+        PWT_WORKTREE="@"
+        PWT_WORKTREE_PATH="${resolved_main_app:-$MAIN_APP}"
+        PWT_PORT=""
+        PWT_BRANCH=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "master")
+    fi
+
+    shift  # Remove step name
+    export PWT_ARGS="$*"
+
+    run_single_pwtfile "$pwtfile" "$func_name" "Step"
+}
+
 # Command: prompt
 # Output ready-to-use prompt integration snippets
 # Usage: pwt prompt [zsh|bash|starship]
@@ -6227,6 +6320,15 @@ case "${1:-}" in
         require_project
         shift  # remove "for-each" from args
         cmd_for_each "$@"
+        ;;
+    steps)
+        require_project
+        cmd_steps
+        ;;
+    step)
+        require_project
+        shift  # remove "step" from args
+        cmd_step "$@"
         ;;
     doctor)
         cmd_doctor

@@ -200,6 +200,53 @@ EOF
     tail -1 "$TEST_WORKTREES/TEST-ORDER/.order_log" | grep -q "2:GLOBAL"
 }
 
+@test "Global custom command runs when project doesn't have it" {
+    cd "$TEST_REPO"
+
+    # Project Pwtfile WITHOUT globalcmd
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+localonly() {
+    echo "LOCAL_ONLY"
+}
+EOF
+
+    # Global Pwtfile WITH globalcmd
+    cat > "$PWT_DIR/Pwtfile" << 'EOF'
+globalcmd() {
+    echo "GLOBAL_CMD_RAN"
+}
+EOF
+
+    # globalcmd should run from global (fallback)
+    run "$PWT_BIN" globalcmd
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GLOBAL_CMD_RAN"* ]]
+    [[ "$output" == *"Global Pwtfile"* ]]
+}
+
+@test "Project custom command overrides global" {
+    cd "$TEST_REPO"
+
+    # Both have 'sharedcmd'
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+sharedcmd() {
+    echo "PROJECT_VERSION"
+}
+EOF
+
+    cat > "$PWT_DIR/Pwtfile" << 'EOF'
+sharedcmd() {
+    echo "GLOBAL_VERSION"
+}
+EOF
+
+    # Project should win
+    run "$PWT_BIN" sharedcmd
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PROJECT_VERSION"* ]]
+    [[ "$output" != *"GLOBAL_VERSION"* ]]
+}
+
 # ============================================
 # Pwtfile error handling
 # ============================================

@@ -1386,15 +1386,21 @@ run_single_pwtfile() {
     esac
 }
 
-# Check if a command exists in Pwtfile
-# Usage: has_pwtfile_command <command>
-has_pwtfile_command() {
-    local cmd="$1"
+# Check if a command exists in a specific file
+# Usage: has_command_in_file <file> <command>
+has_command_in_file() {
+    local file="$1"
+    local cmd="$2"
+    [ -f "$file" ] || return 1
+    # Match: "cmd() {" or "function cmd {"
+    grep -qE "^${cmd}\s*\(\)|^function\s+${cmd}\b" "$file" 2>/dev/null
+}
 
-    # Need to detect project first
+# Get project Pwtfile path
+# Usage: get_project_pwtfile
+get_project_pwtfile() {
     detect_project
 
-    # Find project Pwtfile
     local project_pwtfile=""
     local config_pwtfile=$(get_project_config "$CURRENT_PROJECT" "pwtfile")
 
@@ -1408,10 +1414,20 @@ has_pwtfile_command() {
         [ -f "$MAIN_APP/Pwtfile" ] && project_pwtfile="$MAIN_APP/Pwtfile" || true
     fi
 
-    [ -z "$project_pwtfile" ] && return 1
+    echo "$project_pwtfile"
+}
 
-    # Check if function exists in Pwtfile (grep for function definition)
-    grep -qE "^${cmd}\s*\(\)|^function\s+${cmd}\b" "$project_pwtfile" 2>/dev/null
+# Check if a command exists in project OR global Pwtfile
+# Usage: has_pwtfile_command <command>
+has_pwtfile_command() {
+    local cmd="$1"
+    local project_pwtfile=$(get_project_pwtfile)
+    local global_pwtfile="$PWT_DIR/Pwtfile"
+
+    # Check project first, then global
+    has_command_in_file "$project_pwtfile" "$cmd" && return 0
+    has_command_in_file "$global_pwtfile" "$cmd" && return 0
+    return 1
 }
 
 # Run a Pwtfile command in current worktree context
@@ -1461,7 +1477,10 @@ run_pwtfile_command() {
     run_pwtfile "$cmd"
 }
 
-# Run Pwtfiles: project first, then global
+# Run Pwtfile commands with scope-aware behavior:
+# - setup/teardown: run BOTH project AND global (additive)
+# - server: run ONLY project (local only)
+# - custom commands: run project if exists, else global (fallback)
 run_pwtfile() {
     local phase="$1"
 
@@ -1482,19 +1501,16 @@ run_pwtfile() {
     export TICKET="$PWT_TICKET"
     export PROJECT="$PWT_PROJECT"
 
-    # Find and run project Pwtfile
-    # Check project config for custom pwtfile path first
+    # Find project Pwtfile
     local project_pwtfile=""
     local config_pwtfile=$(get_project_config "$CURRENT_PROJECT" "pwtfile")
 
     if [ -n "$config_pwtfile" ]; then
-        # Expand ~ and resolve relative paths from MAIN_APP
         config_pwtfile="${config_pwtfile/#\~/$HOME}"
         [[ "$config_pwtfile" != /* ]] && config_pwtfile="$MAIN_APP/$config_pwtfile" || true
         [ -f "$config_pwtfile" ] && project_pwtfile="$config_pwtfile" || true
     fi
 
-    # Fallback to default locations
     if [ -z "$project_pwtfile" ]; then
         if [ -f "$MAIN_APP/Pwtfile" ]; then
             project_pwtfile="$MAIN_APP/Pwtfile"
@@ -1505,11 +1521,27 @@ run_pwtfile() {
         fi
     fi
 
-    [ -n "$project_pwtfile" ] && run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile" || true
-
-    # Run global Pwtfile (user preferences)
     local global_pwtfile="$PWT_DIR/Pwtfile"
-    [ -f "$global_pwtfile" ] && run_single_pwtfile "$global_pwtfile" "$phase" "Global Pwtfile" || true
+
+    case "$phase" in
+        setup|teardown)
+            # Additive: run BOTH project and global
+            [ -n "$project_pwtfile" ] && run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile" || true
+            [ -f "$global_pwtfile" ] && run_single_pwtfile "$global_pwtfile" "$phase" "Global Pwtfile" || true
+            ;;
+        server)
+            # Local only: server is project-specific
+            [ -n "$project_pwtfile" ] && run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile" || true
+            ;;
+        *)
+            # Custom commands: project > global (fallback)
+            if [ -n "$project_pwtfile" ] && has_command_in_file "$project_pwtfile" "$phase"; then
+                run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile"
+            elif [ -f "$global_pwtfile" ] && has_command_in_file "$global_pwtfile" "$phase"; then
+                run_single_pwtfile "$global_pwtfile" "$phase" "Global Pwtfile"
+            fi
+            ;;
+    esac
 }
 
 # Run project hook if it exists

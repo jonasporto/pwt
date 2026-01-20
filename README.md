@@ -863,6 +863,25 @@ pwt myapp list
 pwt myapp create feature master "new feature"
 ```
 
+## Known Limitations
+
+### Editor Git Status with `current` Symlink
+
+When using the `current` symlink (`~/.pwt/projects/<project>/current`), editors like Sublime Text cache git repository information when the folder is opened.
+
+**What works:** File contents update correctly when you `pwt use` another worktree - the symlink points to new content and editors see the changes.
+
+**What doesn't work:** Git status in the editor's status bar stays stale. It shows the branch from when you first opened the folder, not the current worktree's branch.
+
+**Why:** Editors detect the `.git` directory once at open time. When the symlink target changes to a different worktree (different `.git`), editors don't re-detect the repository.
+
+**Workarounds:**
+- Close and reopen the folder in editor
+- Use `subl "$(pwt current)"` after switching (opens fresh)
+- Accept that file content is correct, status bar is stale
+
+**This affects:** Sublime Text, VS Code, and most editors. It's not a pwt bug - it's how editors handle symlinks to git repositories.
+
 ## FAQ
 
 See [FAQ.md](FAQ.md) for common questions about:

@@ -5,9 +5,13 @@
 
 _pwt_commands() {
     local commands=(
+        'init:Initialize project (from current repo or URL)'
         'create:Create new worktree'
         'list:List worktrees and status'
         'ls:List worktrees and status'
+        'cd:Navigate to worktree'
+        'use:Set worktree as current'
+        '-:Go to previous worktree'
         'info:Show worktree details'
         'show:Show worktree details'
         'remove:Remove worktree'
@@ -24,6 +28,8 @@ _pwt_commands() {
         'config:Configure current project'
         'port:Get port for worktree'
         'migrate:Migrate from old system'
+        'setup-shell:Install shell integration'
+        'shell-init:Output shell integration code'
         'help:Show help'
     )
     _describe 'command' commands
@@ -42,6 +48,29 @@ _pwt_projects() {
     if [[ -d ~/.pwt/projects ]]; then
         projects=(${(f)"$(ls ~/.pwt/projects/ 2>/dev/null)"})
         _describe 'project' projects
+    fi
+}
+
+# Check if input matches a project (exact or alias)
+_pwt_is_project() {
+    local input="$1"
+    # Exact match
+    [[ -d ~/.pwt/projects/$input ]] && return 0
+    # Partial match (e.g., "acme" matches "acme-app")
+    local matches=(~/.pwt/projects/${input}*(N))
+    [[ ${#matches[@]} -eq 1 ]] && return 0
+    return 1
+}
+
+# Resolve partial project name to full name
+_pwt_resolve_project() {
+    local input="$1"
+    # Exact match
+    [[ -d ~/.pwt/projects/$input ]] && echo "$input" && return
+    # Partial match
+    local matches=(~/.pwt/projects/${input}*(N))
+    if [[ ${#matches[@]} -eq 1 ]]; then
+        basename "${matches[1]}"
     fi
 }
 
@@ -116,8 +145,8 @@ _pwt() {
 
     case $state in
         command)
-            # Check if first arg is a project name
-            if [[ -d ~/.pwt/projects/$words[2] ]]; then
+            # Check if first arg is a project name (exact or partial)
+            if _pwt_is_project "$words[2]"; then
                 _pwt_commands
             else
                 _alternative \
@@ -128,8 +157,8 @@ _pwt() {
         args)
             local cmd="${words[2]}"
 
-            # Handle project as first arg
-            if [[ -d ~/.pwt/projects/$cmd ]]; then
+            # Handle project as first arg (exact or partial match)
+            if _pwt_is_project "$cmd"; then
                 cmd="${words[3]}"
                 case $cmd in
                     create)
@@ -144,7 +173,7 @@ _pwt() {
                             'worktrees:worktree:_pwt_worktrees' \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    info|show|fix-port|port)
+                    cd|use|server|s|info|show|fix-port|port)
                         _pwt_worktrees
                         ;;
                     meta)
@@ -199,7 +228,7 @@ _pwt() {
                             'worktrees:worktree:_pwt_worktrees' \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    info|show|fix-port|repair|fix|port)
+                    cd|use|server|s|info|show|fix-port|repair|fix|port)
                         _pwt_worktrees
                         ;;
                     auto-remove|cleanup)

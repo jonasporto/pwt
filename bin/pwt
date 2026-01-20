@@ -46,6 +46,13 @@ PROJECT_REMOTE=""
 DEFAULT_BRANCH=""  # Detected from remote (master or main)
 BASE_PORT=5000
 
+# Performance: List cache and fetch state
+LIST_CACHE_DIR="$PWT_DIR/cache"
+LIST_CACHE_TTL=300  # 5 minutes
+PREFETCH_DONE=false  # Track if we already fetched remote refs
+LIST_QUICK_MODE=false  # Skip network operations
+LIST_REFRESH_MODE=false  # Force refresh cache
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -216,6 +223,68 @@ init_metadata() {
     init_pwt
 }
 
+# ============================================
+# List Cache Functions (performance optimization)
+# ============================================
+
+# Initialize cache directory
+init_cache_dir() {
+    [ -d "$LIST_CACHE_DIR" ] || mkdir -p "$LIST_CACHE_DIR"
+}
+
+# Get cache file path for current project
+get_list_cache_file() {
+    local project="${CURRENT_PROJECT:-unknown}"
+    echo "$LIST_CACHE_DIR/list-${project}.txt"
+}
+
+# Check if cache exists and is fresh (< TTL)
+is_list_cache_valid() {
+    local cache_file=$(get_list_cache_file)
+    [ ! -f "$cache_file" ] && return 1
+
+    # Get cache file age in seconds
+    local now=$(date +%s)
+    local cache_mtime
+    if stat --version >/dev/null 2>&1; then
+        cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null)  # GNU stat
+    else
+        cache_mtime=$(stat -f %m "$cache_file" 2>/dev/null)  # BSD stat (macOS)
+    fi
+    [ -z "$cache_mtime" ] && return 1
+
+    local age=$((now - cache_mtime))
+    [ "$age" -lt "$LIST_CACHE_TTL" ]
+}
+
+# Read cached list output
+read_list_cache() {
+    local cache_file=$(get_list_cache_file)
+    [ -f "$cache_file" ] && cat "$cache_file"
+}
+
+# Write list output to cache
+write_list_cache() {
+    init_cache_dir
+    local cache_file=$(get_list_cache_file)
+    cat > "$cache_file"
+}
+
+# Clear list cache for current project
+clear_list_cache() {
+    local cache_file=$(get_list_cache_file)
+    [ -f "$cache_file" ] && rm -f "$cache_file" || true
+}
+
+# Read cached list with dirty-only filter
+# Keeps headers (first 3 lines) and filters data lines for dirty status (! or ?)
+read_list_cache_filtered() {
+    local cache_file=$(get_list_cache_file)
+    [ ! -f "$cache_file" ] && return 1
+    head -3 "$cache_file"
+    tail -n +4 "$cache_file" | grep -E '[!?]' || true
+}
+
 # Detect default branch from remote (master or main)
 # Usage: detect_default_branch <repo_path>
 # Sets DEFAULT_BRANCH global variable
@@ -247,7 +316,10 @@ detect_default_branch() {
 # Sets CURRENT_PROJECT, MAIN_APP, WORKTREES_DIR, BRANCH_PREFIX
 detect_project() {
     local current_dir="${1:-}"
+    # Get current dir, resolve symlinks for consistent comparison
     [ -z "$current_dir" ] && current_dir=$(pwd)
+    # Resolve symlinks (e.g., /var -> /private/var on macOS)
+    current_dir=$(cd "$current_dir" 2>/dev/null && pwd -P)
 
     # Already set via --project flag
     if [ -n "$CURRENT_PROJECT" ]; then
@@ -267,18 +339,21 @@ detect_project() {
             local worktrees_dir=$(jq -r '.worktrees_dir // empty' "$config_file")
 
             # Check if current dir is main_app or inside worktrees_dir
-            if [ -n "$main_app" ]; then
+            # Resolve symlinks in config paths for consistent comparison
+            if [ -n "$main_app" ] && [ -d "$main_app" ]; then
+                local resolved_main=$(cd "$main_app" 2>/dev/null && pwd -P)
                 case "$current_dir" in
-                    "$main_app"*|"$main_app")
+                    "$resolved_main"*|"$resolved_main")
                         CURRENT_PROJECT="$project_name"
                         load_project_config "$project_name"
                         return 0
                         ;;
                 esac
             fi
-            if [ -n "$worktrees_dir" ]; then
+            if [ -n "$worktrees_dir" ] && [ -d "$worktrees_dir" ]; then
+                local resolved_wt=$(cd "$worktrees_dir" 2>/dev/null && pwd -P)
                 case "$current_dir" in
-                    "$worktrees_dir"*|"$worktrees_dir")
+                    "$resolved_wt"*|"$resolved_wt")
                         CURRENT_PROJECT="$project_name"
                         load_project_config "$project_name"
                         return 0
@@ -344,10 +419,11 @@ resolve_project_alias() {
         fi
     fi
 
-    # Scan all projects for aliases
+    # Scan all projects for alias match
     for config in "$PWT_PROJECTS_DIR"/*/config.json; do
         [ -f "$config" ] || continue
-        if jq -e --arg name "$name" '.aliases // [] | index($name) != null' "$config" >/dev/null 2>&1; then
+        local proj_alias=$(jq -r '.alias // empty' "$config")
+        if [ "$proj_alias" = "$name" ]; then
             basename "$(dirname "$config")"
             return 0
         fi
@@ -359,7 +435,7 @@ resolve_project_alias() {
 
 # Load project configuration into global variables
 # Falls back to auto-detect if config doesn't exist
-# Supports aliases: config can have "aliases": ["pc", "planning-center"]
+# Supports alias: config can have "alias": "pc"
 load_project_config() {
     local project="$1"
 
@@ -574,6 +650,98 @@ EOF
     echo -e "  ${GREEN}pwt $project_name create TICKET base \"description\"${NC}"
 }
 
+# Initialize a project with explicit name
+# Usage: cmd_init_named <project_name> [url]
+#   With url: clone to <project_name> directory and configure
+#   Without url: configure current git repo as <project_name>
+cmd_init_named() {
+    local project_name="$1"
+    local url="${2:-}"
+
+    if [ -n "$url" ]; then
+        # Clone mode: pwt myproj init <url>
+        local target_dir="${PWD}/${project_name}"
+
+        if [ -d "$target_dir" ]; then
+            echo -e "${YELLOW}Already exists: $target_dir${NC}"
+            echo "To configure: cd $target_dir && pwt init"
+            return 0
+        fi
+
+        echo -e "${BLUE}Cloning: $url${NC}"
+        if ! git clone "$url" "$target_dir"; then
+            echo -e "${RED}Error: Failed to clone${NC}"
+            exit 1
+        fi
+
+        # Configure the project
+        local project_dir="$PWT_PROJECTS_DIR/$project_name"
+        mkdir -p "$project_dir"
+
+        cat > "$project_dir/config.json" << EOF
+{
+  "path": "$target_dir",
+  "remote": "$url",
+  "worktrees_dir": "${target_dir}-worktrees"
+}
+EOF
+
+        echo -e "${GREEN}✓ Cloned and configured: $project_name${NC}"
+        echo ""
+        echo "Usage:"
+        echo -e "  ${GREEN}pwt $project_name list${NC}"
+        echo -e "  ${GREEN}pwt $project_name create TICKET base \"description\"${NC}"
+        return 0
+    fi
+
+    # No URL - configure current directory with given name
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        echo -e "${RED}Error: Not a git repository${NC}"
+        echo ""
+        echo "Usage:"
+        echo "  pwt <name> init <url>    # Clone and configure with name"
+        echo "  cd <repo> && pwt <name> init  # Configure existing repo with name"
+        exit 1
+    fi
+
+    local repo_root=$(git rev-parse --show-toplevel)
+    local remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+
+    # Check if already configured
+    if [ -f "$PWT_PROJECTS_DIR/$project_name/config.json" ]; then
+        echo -e "${YELLOW}Already configured: $project_name${NC}"
+        echo ""
+        cat "$PWT_PROJECTS_DIR/$project_name/config.json"
+        return 0
+    fi
+
+    # Create config
+    local project_dir="$PWT_PROJECTS_DIR/$project_name"
+    mkdir -p "$project_dir"
+
+    local config="{
+  \"path\": \"$repo_root\",
+  \"worktrees_dir\": \"${repo_root}-worktrees\""
+
+    if [ -n "$remote_url" ]; then
+        config="$config,
+  \"remote\": \"$remote_url\""
+    fi
+
+    config="$config
+}"
+
+    echo "$config" > "$project_dir/config.json"
+
+    echo -e "${GREEN}✓ Configured as: $project_name${NC}"
+    echo ""
+    cat "$project_dir/config.json"
+    echo ""
+    echo "Usage:"
+    echo -e "  ${GREEN}pwt $project_name list${NC}"
+    echo -e "  ${GREEN}pwt $project_name create TICKET base \"description\"${NC}"
+}
+
 # Atomic write to metadata file with file locking
 # Usage: atomic_metadata_write <jq_filter> [jq_args...]
 atomic_metadata_write() {
@@ -749,6 +917,25 @@ get_metadata() {
 
     jq -r --arg project "$project" --arg name "$name" --arg field "$field" \
         '.[$project][$name][$field] // empty' "$METADATA_FILE" 2>/dev/null
+}
+
+# Get extra metadata fields as key=value string (for Meta column in list)
+# Excludes fields already shown as columns: path, branch, base, base_commit, created_at, mode
+# Shows: port, description, and any custom fields
+# Usage: get_extra_metadata <name>
+get_extra_metadata() {
+    local name="$1"
+    local project="${CURRENT_PROJECT:-unknown}"
+
+    init_metadata
+
+    jq -r --arg project "$project" --arg name "$name" '
+        .[$project][$name] // {} |
+        to_entries |
+        map(select(.key | test("^(path|branch|base|base_commit|created_at|mode)$") | not)) |
+        map("\(.key)=\(.value)") |
+        join(" ")
+    ' "$METADATA_FILE" 2>/dev/null
 }
 
 # Remove worktree metadata (namespaced by project)
@@ -1153,21 +1340,29 @@ run_single_pwtfile() {
 
     [ ! -f "$pwtfile" ] && return 0
 
-    echo -e "${BLUE}Running $label ($phase)...${NC}"
-
     case "$pwtfile" in
         *.rb)
+            echo -e "${BLUE}Running $label ($phase)...${NC}"
             ruby "$pwtfile" "$phase"
+            echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
             ;;
         *.js)
+            echo -e "${BLUE}Running $label ($phase)...${NC}"
             if command -v bun >/dev/null 2>&1; then
                 bun "$pwtfile" "$phase"
             else
                 node "$pwtfile" "$phase"
             fi
+            echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
             ;;
         *)
             # Bash Pwtfile - source and call function
+            # Check if function exists before printing/running
+            if ! grep -qE "^${phase}\s*\(\)|^function\s+${phase}\b" "$pwtfile" 2>/dev/null; then
+                return 0  # Function doesn't exist, skip silently
+            fi
+
+            echo -e "${BLUE}Running $label ($phase)...${NC}"
             (
                 cd "$PWT_WORKTREE_PATH"
                 # Make helpers available
@@ -1186,10 +1381,94 @@ run_single_pwtfile() {
                     "$phase"
                 fi
             )
+            echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
             ;;
     esac
+}
 
-    echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
+# Check if a command exists in Pwtfile
+# Usage: has_pwtfile_command <command>
+has_pwtfile_command() {
+    local cmd="$1"
+
+    # Need to detect project first
+    detect_project
+
+    # Find project Pwtfile
+    local project_pwtfile=""
+    local config_pwtfile=$(get_project_config "$CURRENT_PROJECT" "pwtfile")
+
+    if [ -n "$config_pwtfile" ]; then
+        config_pwtfile="${config_pwtfile/#\~/$HOME}"
+        [[ "$config_pwtfile" != /* ]] && config_pwtfile="$MAIN_APP/$config_pwtfile" || true
+        [ -f "$config_pwtfile" ] && project_pwtfile="$config_pwtfile" || true
+    fi
+
+    if [ -z "$project_pwtfile" ]; then
+        [ -f "$MAIN_APP/Pwtfile" ] && project_pwtfile="$MAIN_APP/Pwtfile" || true
+    fi
+
+    [ -z "$project_pwtfile" ] && return 1
+
+    # Check if function exists in Pwtfile (grep for function definition)
+    grep -qE "^${cmd}\s*\(\)|^function\s+${cmd}\b" "$project_pwtfile" 2>/dev/null
+}
+
+# Run a Pwtfile command in current worktree context
+# Usage: run_pwtfile_command <command> [args...]
+run_pwtfile_command() {
+    local cmd="$1"
+    shift
+
+    # Set up worktree context from current directory
+    # Resolve symlinks for consistent comparison (e.g., /var -> /private/var on macOS)
+    local current_dir=$(pwd -P)
+    local resolved_worktrees_dir=""
+    local resolved_main_app=""
+
+    if [ -n "$WORKTREES_DIR" ] && [ -d "$WORKTREES_DIR" ]; then
+        resolved_worktrees_dir=$(cd "$WORKTREES_DIR" 2>/dev/null && pwd -P)
+    fi
+    if [ -n "$MAIN_APP" ] && [ -d "$MAIN_APP" ]; then
+        resolved_main_app=$(cd "$MAIN_APP" 2>/dev/null && pwd -P)
+    fi
+
+    # Check if we're in a worktree or main app
+    if [ -n "$resolved_worktrees_dir" ] && [[ "$current_dir" == "$resolved_worktrees_dir"/* ]]; then
+        PWT_WORKTREE=$(basename "$current_dir")
+        PWT_WORKTREE_PATH="$current_dir"
+    elif [ -n "$resolved_main_app" ] && [[ "$current_dir" == "$resolved_main_app"* ]]; then
+        PWT_WORKTREE="@"
+        PWT_WORKTREE_PATH="$resolved_main_app"
+    else
+        # Default to main app
+        PWT_WORKTREE="@"
+        PWT_WORKTREE_PATH="${resolved_main_app:-$MAIN_APP}"
+    fi
+
+    # Get port and other metadata
+    if [ "$PWT_WORKTREE" != "@" ]; then
+        PWT_PORT=$(get_metadata "$PWT_WORKTREE" "port")
+        PWT_BRANCH=$(get_metadata "$PWT_WORKTREE" "branch")
+    else
+        PWT_PORT=""
+        PWT_BRANCH=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "master")
+    fi
+
+    # Pass arguments to the command via environment
+    export PWT_ARGS="$*"
+
+    # Detect common flags and set convenience env vars
+    export PWT_DRY_RUN=false
+    export PWT_VERBOSE=false
+    for arg in "$@"; do
+        case "$arg" in
+            --dry-run|-n) export PWT_DRY_RUN=true ;;
+            --verbose|-v) export PWT_VERBOSE=true ;;
+        esac
+    done
+
+    run_pwtfile "$cmd"
 }
 
 # Run Pwtfiles: project first, then global
@@ -1221,8 +1500,8 @@ run_pwtfile() {
     if [ -n "$config_pwtfile" ]; then
         # Expand ~ and resolve relative paths from MAIN_APP
         config_pwtfile="${config_pwtfile/#\~/$HOME}"
-        [[ "$config_pwtfile" != /* ]] && config_pwtfile="$MAIN_APP/$config_pwtfile"
-        [ -f "$config_pwtfile" ] && project_pwtfile="$config_pwtfile"
+        [[ "$config_pwtfile" != /* ]] && config_pwtfile="$MAIN_APP/$config_pwtfile" || true
+        [ -f "$config_pwtfile" ] && project_pwtfile="$config_pwtfile" || true
     fi
 
     # Fallback to default locations
@@ -1236,11 +1515,11 @@ run_pwtfile() {
         fi
     fi
 
-    [ -n "$project_pwtfile" ] && run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile"
+    [ -n "$project_pwtfile" ] && run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile" || true
 
     # Run global Pwtfile (user preferences)
     local global_pwtfile="$PWT_DIR/Pwtfile"
-    [ -f "$global_pwtfile" ] && run_single_pwtfile "$global_pwtfile" "$phase" "Global Pwtfile"
+    [ -f "$global_pwtfile" ] && run_single_pwtfile "$global_pwtfile" "$phase" "Global Pwtfile" || true
 }
 
 # Run project hook if it exists
@@ -1688,9 +1967,10 @@ cmd_create() {
     set_current_worktree "$worktree_name" 2>/dev/null || true
 
     local mode_label="Worktree"
-    [ "$workspace_mode" = "clone" ] && mode_label="Clone"
+    [ "$workspace_mode" = "clone" ] && mode_label="Clone" || true
 
     echo -e "\n${GREEN}✓ $mode_label created successfully!${NC}"
+    clear_list_cache  # Invalidate cache so next list shows new worktree
     echo ""
     echo "To use:"
     echo -e "  ${BLUE}cd $worktree_dir${NC}  or  ${BLUE}z ${worktree_name}${NC}"
@@ -1707,6 +1987,8 @@ cmd_create() {
         echo ""
         cmd_ai "$worktree_name"
     fi
+
+    return 0
 }
 
 # Check port status for a worktree
@@ -1741,6 +2023,26 @@ check_port_status() {
     echo -e "${GREEN}[port $port: $proc]${NC}"
 }
 
+# Prefetch remote refs once (for list performance)
+# Call this before looping through worktrees
+prefetch_remote_refs() {
+    if [ "$LIST_QUICK_MODE" = true ]; then
+        return 0  # Skip in quick mode
+    fi
+    if [ "$PREFETCH_DONE" = true ]; then
+        return 0  # Already fetched
+    fi
+    if [ ! -d "$MAIN_APP" ]; then
+        return 0  # No main app
+    fi
+
+    cd "$MAIN_APP"
+    # Fetch only default branch (faster than --prune which fetches all)
+    local target="${DEFAULT_BRANCH:-master}"
+    git fetch origin "$target" --quiet 2>/dev/null || true
+    PREFETCH_DONE=true
+}
+
 # Check if branch is merged into master
 # IMPORTANT: Also checks for uncommitted changes to avoid data loss
 check_merge_status() {
@@ -1766,9 +2068,9 @@ check_merge_status() {
         return
     fi
 
-    # Fetch target branch to have updated reference
+    # Note: Assumes prefetch_remote_refs() was called before the loop
+    # (performance: fetch once instead of per-worktree)
     cd "$MAIN_APP"
-    git fetch origin "$target" --quiet 2>/dev/null || true
 
     if git merge-base --is-ancestor "$wt_commit" "origin/$target" 2>/dev/null; then
         # Check if branch ever diverged from target
@@ -1856,7 +2158,7 @@ cmd_list() {
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
-            --dirty)
+            -d|--dirty)
                 show_dirty_only=true
                 shift
                 ;;
@@ -1866,6 +2168,14 @@ cmd_list() {
                 ;;
             --verbose|-v)
                 verbose=true
+                shift
+                ;;
+            -q|--quick)
+                LIST_QUICK_MODE=true
+                shift
+                ;;
+            -r|--refresh)
+                LIST_REFRESH_MODE=true
                 shift
                 ;;
             statusline)
@@ -1896,39 +2206,88 @@ cmd_list() {
         return
     fi
 
-    # Default: compact tabular format
-    cmd_list_compact "$show_dirty_only"
+    # Default: compact tabular format with caching
+    # Cache logic: first run slow (builds cache), subsequent runs fast (uses cache)
+    # Cache always stores FULL list (no -d filter); -d filter applied on read
+
+    local cache_file
+    cache_file=$(get_list_cache_file)
+
+    # Helper to read cache (with optional dirty filter)
+    read_cache() {
+        if [ "$show_dirty_only" = true ]; then
+            read_list_cache_filtered
+        else
+            cat "$cache_file"
+        fi
+    }
+
+    # Helper to generate cache (always full list, no -d filter)
+    generate_cache() {
+        init_cache_dir
+        cmd_list_compact "" > "$cache_file"
+    }
+
+    # --refresh: clear cache and regenerate
+    if [ "$LIST_REFRESH_MODE" = true ]; then
+        clear_list_cache
+        generate_cache
+        read_cache
+        return
+    fi
+
+    # --quick: always use cache if exists (even if stale)
+    if [ "$LIST_QUICK_MODE" = true ]; then
+        if [ -f "$cache_file" ]; then
+            read_cache
+            return
+        fi
+        # No cache, generate (but still skip network via LIST_QUICK_MODE)
+        generate_cache
+        read_cache
+        return
+    fi
+
+    # Default: use cache if valid, else regenerate
+    if is_list_cache_valid; then
+        read_cache
+    else
+        generate_cache
+        read_cache
+    fi
 }
 
 # Print a table row with fixed column widths
-# Usage: print_table_row <marker> <name> <hash> <base> <mkr> <stat> <main_div> <remote_div> <age> <msg>
+# Usage: print_table_row <marker> <name> <branch> <hash> <base> <stat> <main_div> <remote_div> <age> <meta>
 print_table_row() {
     local marker="$1"
     local name="$2"
-    local hash="$3"
-    local base="$4"
-    local mkr="$5"
+    local branch="$3"
+    local hash="$4"
+    local base="$5"
     local stat="$6"
     local main_div="$7"
     local remote_div="$8"
     local age="$9"
-    local msg="${10}"
+    local meta="${10}"
 
     # Build row with proper visual padding for Unicode columns
-    # Format: marker(2) name(20) hash(8) base(8) mkr(3) stat(4) main(10) remote(10) age(4) msg
+    # Format: marker(2) name(20) branch(40) hash(8) base(8) stat(4) main(10) remote(10) age(4) meta
     printf "  %-2s " "$marker"
     pad_visual "${name:0:20}" 20
+    printf " "
+    pad_visual "${branch:0:40}" 40
     printf " "
     printf "%-8s " "${hash:0:8}"
     pad_visual "${base:0:8}" 8
     printf " "
-    printf "%-3s " "${mkr:-·}"
     printf "%-4s " "${stat:-·}"
     pad_visual "${main_div:-·}" 10
     printf " "
     pad_visual "${remote_div:-·}" 10
     printf " "
-    printf "%-4s %s\n" "$age" "$msg"
+    printf "%-4s " "$age"
+    printf "%s\n" "$meta"
 }
 
 # Compact tabular list format (default)
@@ -1946,8 +2305,8 @@ cmd_list_compact() {
     echo ""
 
     # Print header
-    print_table_row "" "Worktree" "Hash" "Base" "Mkr" "Stat" "main↕" "Remote" "Age" "Message"
-    print_table_row "--" "--------------------" "--------" "--------" "---" "----" "----------" "----------" "----" "--------------------"
+    print_table_row "" "Worktree" "Branch" "Hash" "Base" "Stat" "main↕" "Remote" "Age" "Meta"
+    print_table_row "--" "--------------------" "----------------------------------------" "--------" "--------" "----" "----------" "----------" "----" "--------------------"
 
     # Main app row
     local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
@@ -1955,7 +2314,6 @@ cmd_list_compact() {
     local main_status=$(get_status_symbols "$MAIN_APP")
     local main_age_ts=$(git -C "$MAIN_APP" log -1 --format=%ct 2>/dev/null || echo "0")
     local main_age=$(format_relative_time "$main_age_ts")
-    local main_msg=$(git -C "$MAIN_APP" log -1 --format=%s 2>/dev/null | cut -c1-20)
     local main_remote=$(get_remote_divergence "$MAIN_APP")
 
     # Check if main is current
@@ -1966,7 +2324,10 @@ cmd_list_compact() {
         main_marker="*"
     fi
 
-    print_table_row "$main_marker" "${main_branch:0:20}" "$main_hash" "·" "" "${main_status:-·}" "·" "${main_remote:-·}" "$main_age" "$main_msg"
+    print_table_row "$main_marker" "@" "$main_branch" "$main_hash" "·" "${main_status:-·}" "·" "${main_remote:-·}" "$main_age" "description=main application"
+
+    # Prefetch remote refs once (performance: avoids N fetches in loop)
+    prefetch_remote_refs
 
     # Worktrees
     local has_merged=false
@@ -2014,13 +2375,30 @@ cmd_list_compact() {
                 has_merged=true
             fi
 
-            # Get custom marker from metadata
-            local custom_marker=$(get_metadata "$name" "marker")
+            # Build meta string from metadata (includes port, description, custom fields)
+            local meta=$(get_extra_metadata "$name")
 
-            # Message (truncate)
-            local msg=$(git -C "$dir" log -1 --format=%s 2>/dev/null | cut -c1-20)
+            # If no description in metadata, generate fallback
+            if [[ "$meta" != *"description="* ]]; then
+                local desc=""
+                # Extract from branch name
+                if [[ "$branch" =~ ^[^/]+/[A-Z]+-[0-9]+-(.*) ]]; then
+                    desc=$(echo "${BASH_REMATCH[1]}" | tr '-' ' ')
+                elif [[ ! "$branch" =~ ^[^/]+/[A-Z]+-[0-9]+$ ]]; then
+                    if [[ "$branch" =~ ^[^/]+/(.+) ]]; then
+                        desc=$(echo "${BASH_REMATCH[1]}" | tr '-' ' ')
+                    fi
+                fi
+                # Fallback to commit message
+                if [ -z "$desc" ]; then
+                    desc=$(git -C "$dir" log --oneline --no-merges -1 --format=%s 2>/dev/null | head -c 40)
+                fi
+                [ -n "$desc" ] && meta="$meta description=$desc"
+            fi
 
-            print_table_row "$marker" "$name" "$hash" "$base" "${custom_marker:-}" "${status:-·}" "${main_div:-·}" "${remote_div:-·}" "$age" "$msg"
+            [ -z "$meta" ] && meta="·"
+
+            print_table_row "$marker" "$name" "$branch" "$hash" "$base" "${status:-·}" "${main_div:-·}" "${remote_div:-·}" "$age" "$meta"
         done
     fi
 
@@ -2802,6 +3180,7 @@ cmd_remove() {
 
     # Remove metadata
     remove_metadata "$name"
+    clear_list_cache  # Invalidate cache so next list won't show removed worktree
 
     # Delete branch if requested
     if [ "$with_branch" = true ] && [ -n "$branch" ]; then
@@ -2845,14 +3224,33 @@ cmd_remove() {
 
 # Command: server
 # Start the server using Pwtfile's server() function
+# Usage: cmd_server [worktree]
 cmd_server() {
+    local arg="${1:-}"
     local current_dir=$(pwd)
     local worktree_name=""
     local worktree_path=""
     local via_symlink=false
+    local via_argument=false
 
+    # 0. Check if worktree name provided as argument
+    if [ -n "$arg" ]; then
+        worktree_path="$WORKTREES_DIR/$arg"
+        # Try partial match if not found
+        if [ ! -d "$worktree_path" ]; then
+            local match=$(cmd_cd "$arg" 2>/dev/null)
+            if [ -n "$match" ] && [ -d "$match" ]; then
+                worktree_path="$match"
+            fi
+        fi
+        if [ ! -d "$worktree_path" ]; then
+            echo -e "${RED}Error: Worktree not found: $arg${NC}"
+            exit 1
+        fi
+        worktree_name=$(basename "$worktree_path")
+        via_argument=true
     # 1. Check if inside a worktree directly
-    if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+    elif [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
         worktree_name=$(basename "$current_dir")
         worktree_path="$current_dir"
     # 2. Check if current symlink is set
@@ -2869,6 +3267,7 @@ cmd_server() {
         echo -e "${RED}Error: Not inside a worktree and no current set${NC}"
         echo ""
         echo "Options:"
+        echo "  pwt server <worktree>  # specify worktree"
         echo "  cd into a worktree directory"
         echo "  pwt use <worktree>  # set current first"
         exit 1
@@ -2908,10 +3307,12 @@ cmd_server() {
 # Command: current
 # Show current worktree info
 # Works from ANYWHERE (uses symlink, not just pwd)
-# Default output: path on stdout (pipe-friendly), context on stderr
-# Usage: pwt current [--name|--port|--branch|--path|--json]
+# Default output: SYMLINK path on stdout (pipe-friendly), context on stderr
+# Use --resolved to get actual worktree path
+# Usage: pwt current [--name|--port|--branch|--path|--resolved|--json]
 cmd_current() {
     local format="default"
+    local show_resolved=false
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -2920,6 +3321,7 @@ cmd_current() {
             --port) format="port"; shift ;;
             --branch) format="branch"; shift ;;
             --path) format="path"; shift ;;
+            --resolved) show_resolved=true; shift ;;
             --json) format="json"; shift ;;
             *) shift ;;
         esac
@@ -2960,20 +3362,25 @@ cmd_current() {
     # Get info
     local port=""
     local branch=""
-    local path=""
+    local resolved_path=""
+    local symlink_path=$(get_current_symlink_path)
     local marker=""
     local desc=""
 
     if [ "$is_main" = true ]; then
-        path="$MAIN_APP"
+        resolved_path="$MAIN_APP"
         branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "main")
     else
-        path="$WORKTREES_DIR/$name"
+        resolved_path="$WORKTREES_DIR/$name"
         port=$(get_metadata "$name" "port")
         marker=$(get_metadata "$name" "marker")
         desc=$(get_metadata "$name" "description")
-        branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "?")
+        branch=$(git -C "$resolved_path" branch --show-current 2>/dev/null || echo "?")
     fi
+
+    # Determine which path to output (symlink by default, resolved with --resolved)
+    local output_path="$symlink_path"
+    [ "$show_resolved" = true ] && output_path="$resolved_path"
 
     # Output based on format
     case "$format" in
@@ -2987,14 +3394,16 @@ cmd_current() {
             echo "$branch"
             ;;
         path)
-            echo "$path"
+            # --path respects --resolved flag
+            echo "$output_path"
             ;;
         json)
             local json="{"
             json+="\"in_worktree\":true,"
             json+="\"name\":\"$name\","
             json+="\"branch\":\"$branch\","
-            json+="\"path\":\"$path\""
+            json+="\"symlink_path\":\"$symlink_path\","
+            json+="\"resolved_path\":\"$resolved_path\""
             [ -n "$port" ] && json+=",\"port\":$port"
             [ -n "$marker" ] && json+=",\"marker\":\"$marker\""
             [ -n "$desc" ] && json+=",\"description\":\"$desc\""
@@ -3003,12 +3412,13 @@ cmd_current() {
             echo "$json"
             ;;
         default)
-            # NEW: stdout=path, stderr=context (Unix-style)
-            echo "$path"
+            # stdout=symlink path (stable), stderr=context (Unix-style)
+            # Use --resolved to get actual worktree path
+            echo "$output_path"
             if [ "$is_main" = true ]; then
                 echo -e "current@${BLUE}@${NC} (main) on ${GREEN}$branch${NC}" >&2
             else
-                local status=$(get_status_symbols "$path")
+                local status=$(get_status_symbols "$resolved_path")
                 local port_str=""
                 [ -n "$port" ] && port_str=":${port}"
                 local status_str=""
@@ -3034,6 +3444,24 @@ get_last_used() {
     local last_file="$PWT_DIR/projects/$project/last"
     if [ -f "$last_file" ]; then
         cat "$last_file"
+    fi
+}
+
+# Save previous worktree for "pwt -" navigation (like cd -)
+save_previous() {
+    local name="$1"
+    local project="${CURRENT_PROJECT:-unknown}"
+    local prev_file="$PWT_DIR/projects/$project/previous"
+    mkdir -p "$(dirname "$prev_file")"
+    echo "$name" > "$prev_file"
+}
+
+# Get previous worktree for "pwt -" navigation
+get_previous() {
+    local project="${CURRENT_PROJECT:-unknown}"
+    local prev_file="$PWT_DIR/projects/$project/previous"
+    if [ -f "$prev_file" ]; then
+        cat "$prev_file"
     fi
 }
 
@@ -3150,12 +3578,24 @@ cmd_use() {
     local resolved_name="$target"
 
     if [ ! -d "$worktree_path" ]; then
-        # Try partial match
+        # Try partial match by directory name
         local matches=()
         if [ -d "$WORKTREES_DIR" ]; then
             for dir in "$WORKTREES_DIR"/*/; do
                 local name=$(basename "$dir")
                 if [[ "$name" == *"$target"* ]]; then
+                    matches+=("$name")
+                fi
+            done
+        fi
+
+        # If no directory match, try matching by branch name
+        if [ ${#matches[@]} -eq 0 ] && [ -d "$WORKTREES_DIR" ]; then
+            local normalized_target="${target//\//-}"  # feature/foo → feature-foo
+            for dir in "$WORKTREES_DIR"/*/; do
+                local name=$(basename "$dir")
+                local branch=$(git -C "$dir" branch --show-current 2>/dev/null)
+                if [[ -n "$branch" ]] && [[ "$branch" == *"$target"* || "$branch" == *"$normalized_target"* ]]; then
                     matches+=("$name")
                 fi
             done
@@ -3171,6 +3611,17 @@ cmd_use() {
             done
             exit 1
         else
+            # No worktree match - check if target matches main app's branch
+            local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null)
+            if [[ -n "$main_branch" && "$main_branch" == *"$target"* ]]; then
+                # Target matches main app branch - use @
+                local symlink_path=$(get_current_symlink_path)
+                mkdir -p "$(dirname "$symlink_path")"
+                ln -sfn "$MAIN_APP" "$symlink_path"
+                save_last_used "@"
+                echo -e "current → ${BLUE}@ (main)${NC} (branch ${GREEN}$main_branch${NC})"
+                return 0
+            fi
             echo -e "${RED}Worktree not found: $target${NC}" >&2
             exit 1
         fi
@@ -3184,6 +3635,7 @@ cmd_use() {
     local branch=$(git -C "$worktree_path" branch --show-current 2>/dev/null || echo "?")
     echo -e "current → ${BLUE}$resolved_name${NC} (branch ${GREEN}$branch${NC})"
     [ -n "$port" ] && echo -e "         port ${CYAN}:$port${NC}"
+    return 0
 }
 
 # Command: info
@@ -3426,10 +3878,20 @@ cmd_meta() {
 
     case "$action" in
         ""|list)
-            # List all metadata for current project
+            # List all metadata for current project (key=value format)
             echo -e "${BLUE}Worktree Metadata ($project):${NC}"
             echo ""
-            jq -r --arg project "$project" '.[$project] // {} | to_entries[] | "\(.key):\n  path: \(.value.path)\n  branch: \(.value.branch)\n  base: \(.value.base) @ \(.value.base_commit)\n  port: \(.value.port)\n  description: \(.value.description)\n  created: \(.value.created_at)\n"' "$METADATA_FILE"
+            jq -r --arg project "$project" '
+              .[$project] // {} | to_entries[] |
+              "\(.key):",
+              "  path=\(.value.path // "")",
+              "  branch=\(.value.branch // "")",
+              "  base=\(.value.base // "")@\(.value.base_commit // "")",
+              "  port=\(.value.port // "")",
+              "  description=\(.value.description // "")",
+              "  created=\(.value.created_at // "")",
+              ""
+            ' "$METADATA_FILE"
             ;;
         show)
             if [ -z "$name" ]; then
@@ -3455,6 +3917,7 @@ cmd_meta() {
             fi
             update_metadata "$name" "$field" "$value"
             echo -e "${GREEN}✓ Updated $name.$field = $value${NC}"
+            clear_list_cache  # Invalidate cache so next list shows updated metadata
             ;;
         import)
             # Import metadata for existing worktrees
@@ -3501,10 +3964,71 @@ cmd_meta() {
     esac
 }
 
+# Command: alias
+# Get/set/clear project alias (auto-detects current project)
+# Usage: pwt alias [<alias>|--clear]
+cmd_alias() {
+    local new_alias="${1:-}"
+    local config_file="$PROJECTS_DIR/$CURRENT_PROJECT/config.json"
+
+    if [ ! -f "$config_file" ]; then
+        echo -e "${RED}Project config not found: $CURRENT_PROJECT${NC}"
+        exit 1
+    fi
+
+    if [ -z "$new_alias" ]; then
+        # Show current project and alias
+        local current=$(jq -r '.alias // empty' "$config_file")
+        if [ -n "$current" ]; then
+            echo -e "${GREEN}$CURRENT_PROJECT${NC} → ${CYAN}$current${NC}"
+        else
+            echo -e "${GREEN}$CURRENT_PROJECT${NC} (no alias)"
+        fi
+    elif [ "$new_alias" = "--clear" ]; then
+        # Clear alias
+        local tmp_file
+        tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+        jq 'del(.alias)' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+        echo -e "${GREEN}✓ Cleared alias for $CURRENT_PROJECT${NC}"
+    else
+        # Set alias - validate first
+        local reserved_commands="list create remove cd server test meta port project help version config init show set path alias"
+        for cmd in $reserved_commands; do
+            if [ "$new_alias" = "$cmd" ]; then
+                echo -e "${RED}Error: '$new_alias' is a reserved command name${NC}"
+                exit 1
+            fi
+        done
+        # Check if alias conflicts with existing project name
+        if [ -f "$PROJECTS_DIR/$new_alias/config.json" ]; then
+            echo -e "${RED}Error: '$new_alias' is already a project name${NC}"
+            exit 1
+        fi
+        # Check if alias already used by another project
+        for cfg in "$PROJECTS_DIR"/*/config.json; do
+            [ -f "$cfg" ] || continue
+            local proj_dir=$(dirname "$cfg")
+            local proj_name=$(basename "$proj_dir")
+            [ "$proj_name" = "$CURRENT_PROJECT" ] && continue
+            local other_alias=$(jq -r '.alias // empty' "$cfg")
+            if [ "$other_alias" = "$new_alias" ]; then
+                echo -e "${RED}Error: Alias '$new_alias' already used by project '$proj_name'${NC}"
+                exit 1
+            fi
+        done
+        # Set alias
+        local tmp_file
+        tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+        jq --arg alias "$new_alias" '.alias = $alias' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+        echo -e "${GREEN}✓ $CURRENT_PROJECT${NC} → ${CYAN}$new_alias${NC}"
+    fi
+}
+
 # Command: cd (internal)
 # Output path for worktree navigation
-# Usage: pwt _cd [worktree|@]
+# Usage: pwt _cd [worktree|@|-]
 #   @ or empty = main worktree
+#   - = previous worktree (like cd -)
 #   worktree = specific worktree
 cmd_cd() {
     local target="${1:-}"
@@ -3519,17 +4043,56 @@ cmd_cd() {
         fi
     fi
 
+    # - = previous worktree (like cd -)
+    if [ "$target" = "-" ]; then
+        local prev=$(get_previous)
+        if [ -z "$prev" ]; then
+            echo "No previous worktree" >&2
+            return 1
+        fi
+        target="$prev"
+        # Show where we're going (like cd - does)
+        if [ "$target" = "@" ]; then
+            echo -e "${DIM}~${NC}" >&2
+        else
+            echo -e "${DIM}$target${NC}" >&2
+        fi
+    fi
+
+    # Helper to save navigation history
+    _save_navigation() {
+        local new_target="$1"
+        local current=$(get_last_used)
+        # Save current as previous (for pwt -)
+        if [ -n "$current" ] && [ "$current" != "$new_target" ]; then
+            save_previous "$current"
+        fi
+        save_last_used "$new_target"
+    }
+
     # @ = main worktree
     if [ "$target" = "@" ]; then
-        save_last_used "@"
+        _save_navigation "@"
         echo "$MAIN_APP"
         return 0
+    fi
+
+    # current = symlink path (stable path for editors)
+    if [ "$target" = "current" ]; then
+        local symlink_path=$(get_current_symlink_path)
+        if [ -L "$symlink_path" ]; then
+            echo "$symlink_path"
+            return 0
+        else
+            echo "No current worktree set. Run 'pwt use <worktree>' first." >&2
+            return 1
+        fi
     fi
 
     # Check if it's a worktree name
     local worktree_path="$WORKTREES_DIR/$target"
     if [ -d "$worktree_path" ]; then
-        save_last_used "$target"
+        _save_navigation "$target"
         echo "$worktree_path"
         return 0
     fi
@@ -3547,7 +4110,7 @@ cmd_cd() {
 
     if [ ${#matches[@]} -eq 1 ]; then
         local matched_name=$(basename "${matches[0]%/}")
-        save_last_used "$matched_name"
+        _save_navigation "$matched_name"
         echo "${matches[0]%/}"
         return 0
     elif [ ${#matches[@]} -gt 1 ]; then
@@ -4808,6 +5371,7 @@ cmd_marker() {
 # Command: for-each
 # Run command in all worktrees
 # Usage: pwt for-each <command...>
+# If command is a Pwtfile function, runs it via run_pwtfile
 cmd_for_each() {
     if [ $# -eq 0 ]; then
         echo -e "${RED}Error: No command specified${NC}"
@@ -4815,16 +5379,57 @@ cmd_for_each() {
         exit 1
     fi
 
+    local first_arg="$1"
+    local is_pwtfile_cmd=false
+
+    # Check if first arg is a Pwtfile command
+    if has_pwtfile_command "$first_arg"; then
+        is_pwtfile_cmd=true
+    fi
+
     local cmd="$*"
     local count=0
 
+    # Helper to run command in a worktree
+    _run_in_worktree() {
+        local wt_name="$1"
+        local wt_path="$2"
+        shift 2
+
+        if [ "$is_pwtfile_cmd" = true ]; then
+            # Run as Pwtfile command
+            PWT_WORKTREE="$wt_name"
+            PWT_WORKTREE_PATH="$wt_path"
+            PWT_PORT=$(get_metadata "$wt_name" "port" 2>/dev/null || echo "")
+            PWT_BRANCH=$(get_metadata "$wt_name" "branch" 2>/dev/null || echo "")
+            export PWT_ARGS="${*:2}"  # All args after command name
+            # Set convenience env vars for common flags
+            export PWT_DRY_RUN=false
+            export PWT_VERBOSE=false
+            for arg in "${@:2}"; do
+                case "$arg" in
+                    --dry-run|-n) export PWT_DRY_RUN=true ;;
+                    --verbose|-v) export PWT_VERBOSE=true ;;
+                esac
+            done
+            (
+                cd "$wt_path" || exit 1
+                run_pwtfile "$first_arg"
+            )
+        else
+            # Run as shell command
+            (
+                cd "$wt_path" || exit 1
+                export PWT_WORKTREE="$wt_name"
+                export PWT_WORKTREE_PATH="$wt_path"
+                eval "$cmd"
+            )
+        fi
+    }
+
     # Run in main app
     echo -e "${BLUE}=== @ (main) ===${NC}"
-    (
-        cd "$MAIN_APP" || exit 1
-        unset PWT_WORKTREE
-        eval "$cmd"
-    )
+    _run_in_worktree "@" "$MAIN_APP" "$@"
     echo ""
 
     # Run in worktrees
@@ -4835,12 +5440,7 @@ cmd_for_each() {
             count=$((count + 1))
 
             echo -e "${BLUE}=== $name ===${NC}"
-            (
-                cd "$dir" || exit 1
-                export PWT_WORKTREE="$name"
-                export PWT_WORKTREE_PATH="$dir"
-                eval "$cmd"
-            )
+            _run_in_worktree "$name" "$dir" "$@"
             echo ""
         done
     fi
@@ -4958,9 +5558,16 @@ cmd_shell_init() {
 # pwt shell integration
 # Add to ~/.zshrc: eval "\$(pwt shell-init)"
 pwt() {
-    if [[ "\$1" == "cd" ]]; then
-        local input="\$2"
-        local target
+    if [[ "\$1" == "cd" ]] || [[ "\$2" == "cd" ]]; then
+        # pwt cd or pwt <project> cd - change to worktree directory
+        local input target
+        if [[ "\$1" == "cd" ]]; then
+            input="\$2"
+        else
+            # pwt <project> cd <target>
+            local project="\$1"
+            input="\$3"
+        fi
 
         # Handle "-" for previous worktree (like cd -)
         if [[ "\$input" == "-" ]]; then
@@ -4970,7 +5577,11 @@ pwt() {
             fi
             target="\$PWT_PREVIOUS_PATH"
         else
-            target=\$("$pwt_path" _cd "\$input" 2>&1)
+            if [[ "\$1" == "cd" ]]; then
+                target=\$("$pwt_path" _cd "\$input" 2>&1)
+            else
+                target=\$("$pwt_path" "\$project" _cd "\$input" 2>&1)
+            fi
             if [[ \$? -ne 0 ]] || [[ ! -d "\$target" ]]; then
                 echo "\$target"
                 return 1
@@ -4990,11 +5601,18 @@ pwt() {
         else
             unset PWT_WORKTREE
         fi
-    elif [[ "\$1" == "select" ]]; then
-        # Interactive selection with cd
-        shift
+    elif [[ "\$1" == "select" ]] || [[ "\$2" == "select" ]]; then
+        # pwt select or pwt <project> select - interactive selection with cd
         local target
-        target=\$("$pwt_path" _select "\$@" 2>&1)
+        if [[ "\$1" == "select" ]]; then
+            shift
+            target=\$("$pwt_path" _select "\$@" 2>&1)
+        else
+            # pwt <project> select
+            local project="\$1"
+            shift 2
+            target=\$("$pwt_path" "\$project" _select "\$@" 2>&1)
+        fi
         if [[ \$? -ne 0 ]] || [[ -z "\$target" ]]; then
             [[ -n "\$target" ]] && echo "\$target"
             return 0
@@ -5017,11 +5635,80 @@ pwt() {
         else
             unset PWT_WORKTREE
         fi
+    elif [[ "\$1" == "use" ]] || [[ "\$2" == "use" ]]; then
+        # pwt use or pwt <project> use - run command then follow symlink if inside current
+        "$pwt_path" "\$@"
+        local exit_code=\$?
+
+        # If we're inside a 'current' symlink, cd to follow it
+        if [[ "\$PWD" == *"/current" ]] || [[ "\$PWD" == *"/current/"* ]]; then
+            # Re-enter the symlink to follow the new target
+            local current_path="\${PWD%%/current*}/current"
+            if [[ -L "\$current_path" ]]; then
+                builtin cd "\$current_path"
+                export PWT_WORKTREE=\$(basename "\$(readlink "\$current_path")")
+            fi
+        fi
+        return \$exit_code
     else
         "$pwt_path" "\$@"
     fi
 }
 EOF
+}
+
+# Command: setup-shell
+# Install shell integration into user's shell config
+# Usage: pwt setup-shell
+cmd_setup_shell() {
+    local shell_name=$(basename "$SHELL")
+    local rc_file=""
+    local init_line='eval "$(pwt shell-init)"'
+
+    # Detect shell config file
+    case "$shell_name" in
+        zsh)
+            rc_file="$HOME/.zshrc"
+            ;;
+        bash)
+            # macOS uses .bash_profile, Linux uses .bashrc
+            if [ -f "$HOME/.bash_profile" ]; then
+                rc_file="$HOME/.bash_profile"
+            else
+                rc_file="$HOME/.bashrc"
+            fi
+            ;;
+        fish)
+            rc_file="$HOME/.config/fish/config.fish"
+            init_line='pwt shell-init | source'
+            ;;
+        *)
+            echo -e "${RED}Unsupported shell: $shell_name${NC}"
+            echo "Add manually to your shell config:"
+            echo "  $init_line"
+            return 1
+            ;;
+    esac
+
+    # Check if already configured
+    if grep -q "pwt shell-init" "$rc_file" 2>/dev/null; then
+        echo -e "${GREEN}✓ Shell integration already configured${NC}"
+        echo "  File: $rc_file"
+        return 0
+    fi
+
+    # Add to config
+    echo "" >> "$rc_file"
+    echo "# pwt shell integration (added by pwt setup-shell)" >> "$rc_file"
+    echo "$init_line" >> "$rc_file"
+
+    echo -e "${GREEN}✓ Shell integration installed${NC}"
+    echo "  File: $rc_file"
+    echo ""
+    echo "To activate now, run:"
+    echo -e "  ${BLUE}source $rc_file${NC}"
+    echo ""
+    echo "Or restart your terminal."
 }
 
 # Command: config
@@ -5115,7 +5802,13 @@ cmd_project() {
                     if [ -f "$config_file" ]; then
                         local main_app=$(jq -r '.main_app // "(not set)"' "$config_file")
                         local prefix=$(jq -r '.branch_prefix // "(not set)"' "$config_file")
-                        echo -e "  ${GREEN}$proj_name${NC}"
+                        # Get alias if set
+                        local proj_alias=$(jq -r '.alias // empty' "$config_file")
+                        if [ -n "$proj_alias" ]; then
+                            echo -e "  ${GREEN}$proj_name${NC} (${CYAN}$proj_alias${NC})"
+                        else
+                            echo -e "  ${GREEN}$proj_name${NC}"
+                        fi
                         echo "    main_app: $main_app"
                         echo "    branch_prefix: $prefix"
                         # Count hooks
@@ -5187,16 +5880,80 @@ cmd_project() {
             fi
             echo "$PROJECTS_DIR/$project"
             ;;
+        alias)
+            # pwt project alias <project> [alias|--clear]
+            local new_alias="$arg3"
+
+            if [ -z "$project" ]; then
+                echo -e "${RED}Error: Project name required${NC}"
+                echo "Usage: pwt project alias <project> [<alias>|--clear]"
+                exit 1
+            fi
+
+            local config_file="$PROJECTS_DIR/$project/config.json"
+            if [ ! -f "$config_file" ]; then
+                echo -e "${RED}Project not found: $project${NC}"
+                exit 1
+            fi
+
+            if [ -z "$new_alias" ]; then
+                # Show current alias
+                local current=$(jq -r '.alias // empty' "$config_file")
+                if [ -n "$current" ]; then
+                    echo "$current"
+                else
+                    echo "(no alias set)"
+                fi
+            elif [ "$new_alias" = "--clear" ]; then
+                # Clear alias
+                local tmp_file
+                tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+                jq 'del(.alias)' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+                echo -e "${GREEN}✓ Cleared alias for $project${NC}"
+            else
+                # Set alias - validate first
+                local reserved_commands="list create remove cd server test meta port project help version config init show set path alias"
+                for cmd in $reserved_commands; do
+                    if [ "$new_alias" = "$cmd" ]; then
+                        echo -e "${RED}Error: '$new_alias' is a reserved command name${NC}"
+                        exit 1
+                    fi
+                done
+                # Check if alias conflicts with existing project name
+                if [ -f "$PROJECTS_DIR/$new_alias/config.json" ]; then
+                    echo -e "${RED}Error: '$new_alias' is already a project name${NC}"
+                    exit 1
+                fi
+                # Check if alias already used by another project
+                for cfg in "$PROJECTS_DIR"/*/config.json; do
+                    [ -f "$cfg" ] || continue
+                    local proj_dir=$(dirname "$cfg")
+                    local proj_name=$(basename "$proj_dir")
+                    [ "$proj_name" = "$project" ] && continue
+                    local other_alias=$(jq -r '.alias // empty' "$cfg")
+                    if [ "$other_alias" = "$new_alias" ]; then
+                        echo -e "${RED}Error: Alias '$new_alias' already used by project '$proj_name'${NC}"
+                        exit 1
+                    fi
+                done
+                # Set alias
+                local tmp_file
+                tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+                jq --arg alias "$new_alias" '.alias = $alias' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+                echo -e "${GREEN}✓ Set alias '$new_alias' for $project${NC}"
+            fi
+            ;;
         *)
             echo -e "${RED}Unknown action: $action${NC}"
-            echo "Usage: pwt project [list|init|show|set|path]"
+            echo "Usage: pwt project [list|init|show|set|path|alias]"
             echo ""
             echo "Commands:"
-            echo "  list              - List all configured projects"
-            echo "  init <name>       - Initialize a new project config"
-            echo "  show <name>       - Show project config and hooks"
-            echo "  set <name> <k> <v> - Update project config value"
-            echo "  path <name>       - Print project config directory path"
+            echo "  list                    - List all configured projects"
+            echo "  init <name>             - Initialize a new project config"
+            echo "  show <name>             - Show project config and hooks"
+            echo "  set <name> <k> <v>      - Update project config value"
+            echo "  path <name>             - Print project config directory path"
+            echo "  alias <name> [a|--clear] - Get/set/clear project alias"
             exit 1
             ;;
     esac
@@ -5256,10 +6013,70 @@ init_pwt
 if [ -n "${1:-}" ]; then
     _resolved=$(resolve_project_alias "$1")
     if [ -d "$PWT_PROJECTS_DIR/${_resolved}" ]; then
+        # Existing project
+        if [ "${2:-}" = "init" ]; then
+            # pwt <existing-project> init → show already configured
+            echo -e "${YELLOW}Already configured: $_resolved${NC}"
+            echo ""
+            cat "$PWT_PROJECTS_DIR/${_resolved}/config.json"
+            exit 0
+        fi
+        # Load config and shift for other commands
         CURRENT_PROJECT="$_resolved"
         PROJECT_EXPLICIT=true
         load_project_config "$_resolved"
         shift
+
+        # Check for: pwt <project> <worktree> <pwtfile-cmd>
+        # e.g., pwt acme @ clean, pwt acme WORKTREE-123 clean
+        if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then
+            _wt_target="$1"
+            _pwtfile_cmd="$2"
+            _is_worktree=false
+
+            # Check if first arg is @ (main app) or an existing worktree
+            if [ "$_wt_target" = "@" ]; then
+                _is_worktree=true
+                _wt_path="$MAIN_APP"
+            elif [ -d "$WORKTREES_DIR/$_wt_target" ]; then
+                _is_worktree=true
+                _wt_path="$WORKTREES_DIR/$_wt_target"
+            fi
+
+            # If it's a worktree and second arg is a Pwtfile command, run it
+            if [ "$_is_worktree" = true ] && has_pwtfile_command "$_pwtfile_cmd"; then
+                shift 2  # Remove worktree and command from args
+                # Set up context and run
+                if [ "$_wt_target" = "@" ]; then
+                    PWT_WORKTREE="@"
+                    PWT_WORKTREE_PATH="$MAIN_APP"
+                    PWT_PORT=""
+                    PWT_BRANCH=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "master")
+                else
+                    PWT_WORKTREE="$_wt_target"
+                    PWT_WORKTREE_PATH="$_wt_path"
+                    PWT_PORT=$(get_metadata "$_wt_target" "port" 2>/dev/null || echo "")
+                    PWT_BRANCH=$(get_metadata "$_wt_target" "branch" 2>/dev/null || echo "")
+                fi
+                export PWT_ARGS="$*"
+                export PWT_DRY_RUN=false
+                export PWT_VERBOSE=false
+                for arg in "$@"; do
+                    case "$arg" in
+                        --dry-run|-n) export PWT_DRY_RUN=true ;;
+                        --verbose|-v) export PWT_VERBOSE=true ;;
+                    esac
+                done
+                run_pwtfile "$_pwtfile_cmd"
+                exit 0
+            fi
+            unset _wt_target _pwtfile_cmd _is_worktree _wt_path
+        fi
+    elif [ "${2:-}" = "init" ] && [ "$1" != "project" ]; then
+        # New project name + init command: pwt <name> init [url]
+        # Exclude "project" to allow: pwt project init <name>
+        cmd_init_named "$1" "${3:-}"
+        exit 0
     fi
     unset _resolved
 fi
@@ -5314,7 +6131,7 @@ case "${1:-}" in
         ;;
     server|s)
         require_project
-        cmd_server
+        cmd_server "${2:-}"
         ;;
     repair|fix)
         require_project
@@ -5332,8 +6149,29 @@ case "${1:-}" in
     meta)
         cmd_meta "${2:-}" "${3:-}" "${4:-}" "${5:-}"
         ;;
+    alias)
+        require_project --info-only
+        cmd_alias "${2:-}"
+        ;;
     config)
         cmd_config "${2:-}" "${3:-}"
+        ;;
+    -)
+        # Shortcut: pwt - = pwt cd - (go to previous worktree)
+        require_project --info-only
+        cmd_cd "-"
+        _cd_status=$?
+        [ -t 1 ] && echo -e "${DIM}Tip: eval \"\$(pwt shell-init)\" for actual cd${NC}" >&2
+        exit $_cd_status
+        ;;
+    cd)
+        # Public cd - outputs path (use shell-init for actual directory change)
+        require_project --info-only
+        cmd_cd "${2:-}"
+        _cd_status=$?
+        # Hint only if interactive (not piped)
+        [ -t 1 ] && echo -e "${DIM}Tip: eval \"\$(pwt shell-init)\" for actual cd${NC}" >&2
+        exit $_cd_status
         ;;
     _cd)
         # Internal: output path for cd (used by shell function)
@@ -5419,6 +6257,9 @@ case "${1:-}" in
     shell-init)
         cmd_shell_init "${2:-}"
         ;;
+    setup-shell)
+        cmd_setup_shell
+        ;;
     project)
         cmd_project "${2:-}" "${3:-}" "${4:-}" "${5:-}"
         ;;
@@ -5435,13 +6276,14 @@ case "${1:-}" in
         fi
         echo "Commands:"
         echo "  init [url]                     Initialize project (clone URL or configure current repo)"
+        echo "  <name> init [url]              Initialize with specific name (pwt pc init <url>)"
         echo "  create <branch> [base] [desc]  Create new worktree (-e -a --from --from-current --dry-run)"
         echo "  list [flags]                   List worktrees (-v/--verbose, --dirty, --porcelain)"
         echo "  list statusline                Output for shell prompts"
         echo "  tree [--all|--dirty|--ports]   Visual tree view of worktrees"
         echo "  select [--preview]             Interactive worktree selector (fzf)"
         echo "  info [worktree]                Show worktree details"
-        echo "  current [--name|--port|--json] Show current worktree (for scripts/prompts)"
+        echo "  current [--name|--resolved]    Show current (symlink path, --resolved for actual)"
         echo "  use <worktree>                 Set worktree as current (atomic symlink swap)"
         echo "  pick                           Interactive select + auto-use (fzf)"
         echo "  ps1                            Fast prompt helper (O(1), no git)"
@@ -5458,7 +6300,7 @@ case "${1:-}" in
         echo "  context [worktree]             Generate markdown context for AI"
         echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
         echo "  marker [worktree] [emoji]      Set/show worktree marker (--clear)"
-        echo "  server                         Start dev server (from Pwtfile)"
+        echo "  server [worktree]              Start dev server (from Pwtfile)"
         echo "  fix-port [worktree]            Fix port conflict"
         echo "  auto-remove [target] [--dry-run] Remove worktrees merged into target"
         echo "  doctor                         Check system health and configuration"
@@ -5497,8 +6339,32 @@ case "${1:-}" in
         echo "  \$PWT_PREVIOUS_PATH Previous path (enables 'pwt cd -')"
         ;;
     *)
-        echo -e "${RED}Unknown command: $1${NC}"
-        echo "Run 'pwt help' for usage"
-        exit 1
+        # Try to run as Pwtfile command
+        _pwtfile_cmd="$1"
+        shift
+
+        # Check if project has Pwtfile with this function
+        if has_pwtfile_command "$_pwtfile_cmd"; then
+            require_project --info-only
+
+            # If project was explicitly specified (pwt <project> <cmd>), require worktree
+            # e.g., "pwt acme clean" should error, use "pwt acme @ clean" instead
+            if [ "$PROJECT_EXPLICIT" = true ]; then
+                echo -e "${RED}Error: Pwtfile command '$_pwtfile_cmd' requires worktree context${NC}"
+                echo ""
+                echo "Usage:"
+                echo "  pwt $CURRENT_PROJECT @ $_pwtfile_cmd              # Run in main app"
+                echo "  pwt $CURRENT_PROJECT <worktree> $_pwtfile_cmd     # Run in specific worktree"
+                echo "  pwt $CURRENT_PROJECT for-each $_pwtfile_cmd       # Run in all worktrees"
+                echo "  cd <worktree> && pwt $_pwtfile_cmd                # Run in current directory"
+                exit 1
+            fi
+
+            run_pwtfile_command "$_pwtfile_cmd" "$@"
+        else
+            echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
+            echo "Run 'pwt help' for usage"
+            exit 1
+        fi
         ;;
 esac

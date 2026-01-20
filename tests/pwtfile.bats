@@ -284,48 +284,6 @@ EOF
     [[ "$output" == *"ARGS:--foo bar --baz"* ]]
 }
 
-@test "pwt <custom_cmd> sets PWT_DRY_RUN for --dry-run flag" {
-    cd "$TEST_REPO"
-
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
-drytest() {
-    echo "DRY_RUN:$PWT_DRY_RUN"
-}
-EOF
-
-    run "$PWT_BIN" drytest --dry-run
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"DRY_RUN:true"* ]]
-}
-
-@test "pwt <custom_cmd> sets PWT_DRY_RUN for -n flag" {
-    cd "$TEST_REPO"
-
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
-drytest() {
-    echo "DRY_RUN:$PWT_DRY_RUN"
-}
-EOF
-
-    run "$PWT_BIN" drytest -n
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"DRY_RUN:true"* ]]
-}
-
-@test "pwt <custom_cmd> sets PWT_VERBOSE for --verbose flag" {
-    cd "$TEST_REPO"
-
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
-verbosetest() {
-    echo "VERBOSE:$PWT_VERBOSE"
-}
-EOF
-
-    run "$PWT_BIN" verbosetest --verbose
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"VERBOSE:true"* ]]
-}
-
 @test "pwt <custom_cmd> in worktree gets correct context" {
     cd "$TEST_REPO"
 

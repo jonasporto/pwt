@@ -1458,16 +1458,6 @@ run_pwtfile_command() {
     # Pass arguments to the command via environment
     export PWT_ARGS="$*"
 
-    # Detect common flags and set convenience env vars
-    export PWT_DRY_RUN=false
-    export PWT_VERBOSE=false
-    for arg in "$@"; do
-        case "$arg" in
-            --dry-run|-n) export PWT_DRY_RUN=true ;;
-            --verbose|-v) export PWT_VERBOSE=true ;;
-        esac
-    done
-
     run_pwtfile "$cmd"
 }
 
@@ -5403,15 +5393,6 @@ cmd_for_each() {
             PWT_PORT=$(get_metadata "$wt_name" "port" 2>/dev/null || echo "")
             PWT_BRANCH=$(get_metadata "$wt_name" "branch" 2>/dev/null || echo "")
             export PWT_ARGS="${*:2}"  # All args after command name
-            # Set convenience env vars for common flags
-            export PWT_DRY_RUN=false
-            export PWT_VERBOSE=false
-            for arg in "${@:2}"; do
-                case "$arg" in
-                    --dry-run|-n) export PWT_DRY_RUN=true ;;
-                    --verbose|-v) export PWT_VERBOSE=true ;;
-                esac
-            done
             (
                 cd "$wt_path" || exit 1
                 run_pwtfile "$first_arg"
@@ -6059,14 +6040,6 @@ if [ -n "${1:-}" ]; then
                     PWT_BRANCH=$(get_metadata "$_wt_target" "branch" 2>/dev/null || echo "")
                 fi
                 export PWT_ARGS="$*"
-                export PWT_DRY_RUN=false
-                export PWT_VERBOSE=false
-                for arg in "$@"; do
-                    case "$arg" in
-                        --dry-run|-n) export PWT_DRY_RUN=true ;;
-                        --verbose|-v) export PWT_VERBOSE=true ;;
-                    esac
-                done
                 run_pwtfile "$_pwtfile_cmd"
                 exit 0
             fi

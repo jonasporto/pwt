@@ -4147,6 +4147,61 @@ cmd_cd() {
     return 1
 }
 
+# Resolve worktree path without side effects (no navigation history)
+# Usage: resolve_worktree_path <target>
+#   @ = main worktree
+#   - = previous worktree
+#   name = exact or fuzzy match
+# Returns: path on stdout, or empty string on failure
+resolve_worktree_path() {
+    local target="$1"
+
+    # @ = main worktree
+    if [ "$target" = "@" ]; then
+        echo "$MAIN_APP"
+        return 0
+    fi
+
+    # - = previous worktree
+    if [ "$target" = "-" ]; then
+        local prev=$(get_previous)
+        if [ -z "$prev" ]; then
+            return 1
+        fi
+        if [ "$prev" = "@" ]; then
+            echo "$MAIN_APP"
+        else
+            echo "$WORKTREES_DIR/$prev"
+        fi
+        return 0
+    fi
+
+    # Exact match
+    if [ -d "$WORKTREES_DIR/$target" ]; then
+        echo "$WORKTREES_DIR/$target"
+        return 0
+    fi
+
+    # Fuzzy match (contains)
+    local matches=()
+    if [ -d "$WORKTREES_DIR" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            if [[ "$name" == *"$target"* ]]; then
+                matches+=("${dir%/}")
+            fi
+        done
+    fi
+
+    if [ ${#matches[@]} -eq 1 ]; then
+        echo "${matches[0]}"
+        return 0
+    fi
+
+    return 1
+}
+
 # Command: run
 # Run a command in a worktree without changing directory
 # Usage: pwt run <worktree> <command...>
@@ -4187,6 +4242,135 @@ cmd_run() {
 
     echo -e "${BLUE}Running in $worktree_path:${NC} $*"
     (cd "$worktree_path" && "$@")
+}
+
+# Command: shell
+# Start an interactive subshell in a worktree with PWT context
+# Usage: pwt shell <worktree>
+#   @ = main worktree
+#   - = previous worktree
+cmd_shell() {
+    local target="${1:-}"
+
+    if [ -z "$target" ]; then
+        echo "Usage: pwt shell <worktree>"
+        echo "       pwt shell @              # main app"
+        echo "       pwt shell ACME-17744  # specific worktree"
+        echo "       pwt shell 17744          # fuzzy match"
+        return 1
+    fi
+
+    # Resolve worktree path (use || true to prevent set -e from exiting on not found)
+    local wt_path
+    wt_path=$(resolve_worktree_path "$target") || true
+
+    if [ -z "$wt_path" ] || [ ! -d "$wt_path" ]; then
+        echo -e "${RED}Worktree not found: $target${NC}"
+        return 1
+    fi
+
+    # Set up context
+    export PWT_WORKTREE="$target"
+    export PWT_WORKTREE_PATH="$wt_path"
+    export PWT_PROJECT="$CURRENT_PROJECT"
+
+    # Extract port if worktree
+    if [ "$target" != "@" ] && [[ "$wt_path" == *"$WORKTREES_DIR"* ]]; then
+        local wt_name=$(basename "$wt_path")
+        export PWT_PORT=$(echo "$wt_name" | grep -oE '[0-9]+$' || true)
+        export PWT_BRANCH=$(get_metadata "$wt_name" "branch" 2>/dev/null || git -C "$wt_path" branch --show-current 2>/dev/null || echo "")
+    else
+        export PWT_PORT=""
+        export PWT_BRANCH=$(git -C "$wt_path" branch --show-current 2>/dev/null || echo "master")
+    fi
+
+    # Custom prompt
+    local wt_display="$target"
+    [ "$target" = "@" ] && wt_display="main"
+
+    export PWT_SHELL_PS1="[pwt:${CURRENT_PROJECT}@${wt_display}]\$ "
+
+    echo -e "${BLUE}Entering shell in $wt_path${NC}"
+    echo "Type 'exit' or Ctrl+D to return"
+    echo ""
+
+    # Start subshell with custom prompt
+    (cd "$wt_path" && PS1="$PWT_SHELL_PS1" exec "${SHELL:-/bin/bash}")
+
+    echo -e "${GREEN}Exited pwt shell${NC}"
+}
+
+# Command: exec
+# Run multiple commands in a worktree, separated by --
+# Usage: pwt <project> <worktree> -- cmd1 [-- cmd2 ...]
+# Commands run in sequence; stops on first failure (like &&)
+cmd_exec() {
+    local target="${1:-}"
+    shift
+
+    if [ -z "$target" ]; then
+        echo "Usage: pwt <project> <worktree> -- cmd1 [-- cmd2 ...]"
+        return 1
+    fi
+
+    # Skip the first -- (already consumed)
+    if [ "${1:-}" = "--" ]; then
+        shift
+    fi
+
+    # Resolve worktree (use || true to prevent set -e from exiting on not found)
+    local wt_path
+    wt_path=$(resolve_worktree_path "$target") || true
+
+    if [ -z "$wt_path" ] || [ ! -d "$wt_path" ]; then
+        echo -e "${RED}Worktree not found: $target${NC}"
+        return 1
+    fi
+
+    # Parse commands (split by --)
+    local commands=()
+    local current_cmd=""
+
+    for arg in "$@"; do
+        if [ "$arg" = "--" ]; then
+            [ -n "$current_cmd" ] && commands+=("$current_cmd")
+            current_cmd=""
+        else
+            current_cmd="${current_cmd:+$current_cmd }$arg"
+        fi
+    done
+    [ -n "$current_cmd" ] && commands+=("$current_cmd")
+
+    if [ ${#commands[@]} -eq 0 ]; then
+        echo -e "${RED}No commands specified${NC}"
+        return 1
+    fi
+
+    # Set up context
+    export PWT_WORKTREE="$target"
+    export PWT_WORKTREE_PATH="$wt_path"
+    export PWT_PROJECT="$CURRENT_PROJECT"
+
+    # Extract port if worktree
+    if [ "$target" != "@" ] && [[ "$wt_path" == *"$WORKTREES_DIR"* ]]; then
+        local wt_name=$(basename "$wt_path")
+        export PWT_PORT=$(echo "$wt_name" | grep -oE '[0-9]+$' || true)
+    else
+        export PWT_PORT=""
+    fi
+
+    # Execute commands
+    cd "$wt_path" || return 1
+
+    for cmd in "${commands[@]}"; do
+        echo -e "${BLUE}→ $cmd${NC}"
+        eval "$cmd"
+        local status=$?
+        if [ $status -ne 0 ]; then
+            echo -e "${RED}Command failed with status $status${NC}"
+            return $status
+        fi
+    done
 }
 
 # Command: editor
@@ -6133,42 +6317,49 @@ if [ -n "${1:-}" ]; then
         load_project_config "$_resolved"
         shift
 
-        # Check for: pwt <project> <worktree> <pwtfile-cmd>
-        # e.g., pwt acme @ clean, pwt acme WORKTREE-123 clean
+        # Check for: pwt <project> <worktree> <pwtfile-cmd|-->
+        # e.g., pwt acme @ clean
+        #       pwt acme WORKTREE-123 clean
+        #       pwt acme @ -- git status
+        #       pwt acme 17744 -- git status -- rspec
         if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then
             _wt_target="$1"
-            _pwtfile_cmd="$2"
-            _is_worktree=false
+            _second_arg="$2"
+            _wt_path=""
 
-            # Check if first arg is @ (main app) or an existing worktree
-            if [ "$_wt_target" = "@" ]; then
-                _is_worktree=true
-                _wt_path="$MAIN_APP"
-            elif [ -d "$WORKTREES_DIR/$_wt_target" ]; then
-                _is_worktree=true
-                _wt_path="$WORKTREES_DIR/$_wt_target"
-            fi
+            # Resolve worktree path (supports @, exact match, and fuzzy match)
+            _wt_path=$(resolve_worktree_path "$_wt_target" 2>/dev/null) || true
 
-            # If it's a worktree and second arg is a Pwtfile command, run it
-            if [ "$_is_worktree" = true ] && has_pwtfile_command "$_pwtfile_cmd"; then
-                shift 2  # Remove worktree and command from args
-                # Set up context and run
-                if [ "$_wt_target" = "@" ]; then
-                    PWT_WORKTREE="@"
-                    PWT_WORKTREE_PATH="$MAIN_APP"
-                    PWT_PORT=""
-                    PWT_BRANCH=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "master")
-                else
-                    PWT_WORKTREE="$_wt_target"
-                    PWT_WORKTREE_PATH="$_wt_path"
-                    PWT_PORT=$(get_metadata "$_wt_target" "port" 2>/dev/null || echo "")
-                    PWT_BRANCH=$(get_metadata "$_wt_target" "branch" 2>/dev/null || echo "")
+            if [ -n "$_wt_path" ] && [ -d "$_wt_path" ]; then
+                # Check if second arg is -- (exec mode)
+                if [ "$_second_arg" = "--" ]; then
+                    shift 2  # Remove worktree and -- from args
+                    cmd_exec "$_wt_target" -- "$@"
+                    exit 0
                 fi
-                export PWT_ARGS="$*"
-                run_pwtfile "$_pwtfile_cmd"
-                exit 0
+
+                # Check if second arg is a Pwtfile command
+                if has_pwtfile_command "$_second_arg"; then
+                    shift 2  # Remove worktree and command from args
+                    # Set up context and run
+                    if [ "$_wt_target" = "@" ]; then
+                        PWT_WORKTREE="@"
+                        PWT_WORKTREE_PATH="$MAIN_APP"
+                        PWT_PORT=""
+                        PWT_BRANCH=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "master")
+                    else
+                        PWT_WORKTREE="$_wt_target"
+                        PWT_WORKTREE_PATH="$_wt_path"
+                        _wt_name=$(basename "$_wt_path")
+                        PWT_PORT=$(get_metadata "$_wt_name" "port" 2>/dev/null || echo "")
+                        PWT_BRANCH=$(get_metadata "$_wt_name" "branch" 2>/dev/null || echo "")
+                    fi
+                    export PWT_ARGS="$*"
+                    run_pwtfile "$_second_arg"
+                    exit 0
+                fi
             fi
-            unset _wt_target _pwtfile_cmd _is_worktree _wt_path
+            unset _wt_target _second_arg _wt_path
         fi
     elif [ "${2:-}" = "init" ] && [ "$1" != "project" ]; then
         # New project name + init command: pwt <name> init [url]
@@ -6280,6 +6471,11 @@ case "${1:-}" in
         require_project
         shift  # remove "run" from args
         cmd_run "$@"
+        ;;
+    shell)
+        require_project
+        shift  # remove "shell" from args
+        cmd_shell "$@"
         ;;
     editor|e)
         require_project

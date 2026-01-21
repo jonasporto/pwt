@@ -602,3 +602,116 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"No steps found"* ]]
 }
+
+# ============================================
+# Shell and Exec commands
+# ============================================
+
+@test "resolve_worktree_path resolves @ to main app" {
+    cd "$TEST_REPO"
+
+    # Source functions from pwt
+    source_pwt_functions "resolve_worktree_path" "get_previous"
+
+    MAIN_APP="$TEST_REPO"
+    WORKTREES_DIR="$TEST_WORKTREES"
+
+    result=$(resolve_worktree_path "@")
+    [ "$result" = "$TEST_REPO" ]
+}
+
+@test "resolve_worktree_path resolves exact worktree name" {
+    cd "$TEST_REPO"
+
+    # Create a worktree first
+    "$PWT_BIN" create TEST-EXACT HEAD
+
+    source_pwt_functions "resolve_worktree_path" "get_previous"
+
+    MAIN_APP="$TEST_REPO"
+    WORKTREES_DIR="$TEST_WORKTREES"
+
+    # Get the worktree name (includes port)
+    local wt_name=$(ls "$TEST_WORKTREES" | grep TEST-EXACT | head -1)
+
+    result=$(resolve_worktree_path "$wt_name")
+    [ -d "$result" ]
+    [[ "$result" == *"TEST-EXACT"* ]]
+}
+
+@test "resolve_worktree_path supports fuzzy matching" {
+    cd "$TEST_REPO"
+
+    # Create a worktree first
+    "$PWT_BIN" create FUZZY-MATCH-123 HEAD
+
+    source_pwt_functions "resolve_worktree_path" "get_previous"
+
+    MAIN_APP="$TEST_REPO"
+    WORKTREES_DIR="$TEST_WORKTREES"
+
+    # Fuzzy match with partial name
+    result=$(resolve_worktree_path "FUZZY")
+    [ -d "$result" ]
+    [[ "$result" == *"FUZZY-MATCH"* ]]
+}
+
+@test "pwt exec runs single command in worktree" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" test-project @ -- echo "hello from exec"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"hello from exec"* ]]
+}
+
+@test "pwt exec runs multiple commands with -- separator" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" test-project @ -- echo "one" -- echo "two"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"one"* ]]
+    [[ "$output" == *"two"* ]]
+}
+
+@test "pwt exec stops on first failure" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" test-project @ -- false -- echo "should not run"
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"should not run"* ]]
+}
+
+@test "pwt exec sets PWT_* environment variables" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" test-project @ -- 'echo "PATH:$PWT_WORKTREE_PATH"'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PATH:$TEST_REPO"* ]]
+}
+
+@test "pwt exec with fuzzy worktree match" {
+    cd "$TEST_REPO"
+
+    # Create a worktree
+    "$PWT_BIN" create EXEC-FUZZY-456 HEAD
+
+    run "$PWT_BIN" test-project EXEC-FUZZY -- pwd
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"EXEC-FUZZY"* ]]
+}
+
+@test "pwt shell shows usage when no target" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" shell
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Usage: pwt shell"* ]]
+}
+
+@test "pwt shell fails for nonexistent worktree" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" shell nonexistent-worktree-xyz
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Worktree not found"* ]]
+}

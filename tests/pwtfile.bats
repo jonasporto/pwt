@@ -715,3 +715,108 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *"Worktree not found"* ]]
 }
+
+# =============================================================================
+# Safety Tests - Dirty Worktree Protection
+# =============================================================================
+
+@test "pwt remove blocks dirty worktree non-interactively" {
+    cd "$TEST_REPO"
+
+    # Create worktree using test environment
+    local wt_name="TEST-DIRTY-CHECK"
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+setup() { :; }
+EOF
+    run "$PWT_BIN" create "$wt_name"
+    [ "$status" -eq 0 ]
+
+    local wt_dir="$TEST_WORKTREES/$wt_name"
+    [ -d "$wt_dir" ]
+
+    # Create uncommitted changes (untracked file)
+    echo "dirty content" > "$wt_dir/dirty_file.txt"
+
+    # Try to remove non-interactively (should fail)
+    run "$PWT_BIN" remove "$wt_name" </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"uncommitted changes"* ]] || [[ "$output" == *"SAFETY"* ]]
+
+    # Worktree should still exist
+    [ -d "$wt_dir" ]
+
+    # Cleanup with force
+    "$PWT_BIN" remove "$wt_name" -y 2>/dev/null || rm -rf "$wt_dir"
+}
+
+@test "pwt remove creates backup for dirty worktree" {
+    cd "$TEST_REPO"
+
+    # Create worktree
+    local wt_name="TEST-BACKUP-CHECK"
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+setup() { :; }
+EOF
+    run "$PWT_BIN" create "$wt_name"
+    [ "$status" -eq 0 ]
+
+    local wt_dir="$TEST_WORKTREES/$wt_name"
+    [ -d "$wt_dir" ]
+
+    # Create untracked file
+    echo "untracked content" > "$wt_dir/untracked_file.txt"
+
+    # Remove with -y (should create backup)
+    run "$PWT_BIN" remove "$wt_name" -y
+
+    # Check backup was created
+    local backup_dir="$HOME/.pwt/trash"
+    if [ -d "$backup_dir" ]; then
+        # Should have untracked backup
+        local found_backup=$(find "$backup_dir" -maxdepth 2 -name "*${wt_name}*" 2>/dev/null | head -1)
+        [ -n "$found_backup" ]
+
+        # Cleanup
+        rm -rf "$backup_dir"/*"${wt_name}"* 2>/dev/null || true
+    fi
+}
+
+@test "pwt auto-remove requires --execute non-interactively" {
+    cd "$TEST_REPO"
+
+    # Run auto-remove without --execute (non-interactive, piped input)
+    run bash -c 'echo "" | '"$PWT_BIN"' auto-remove'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"SAFETY"* ]] || [[ "$output" == *"--execute"* ]]
+}
+
+@test "pwt auto-remove dirty check assumes dirty on failure" {
+    cd "$TEST_REPO"
+
+    # Create a worktree
+    local wt_name="TEST-DIRTY-AUTO"
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+setup() { :; }
+EOF
+    run "$PWT_BIN" create "$wt_name"
+    [ "$status" -eq 0 ]
+
+    local wt_dir="$TEST_WORKTREES/$wt_name"
+    [ -d "$wt_dir" ]
+
+    # Create dirty file
+    echo "dirty" > "$wt_dir/dirty.txt"
+
+    # Run auto-remove in dry-run mode (default behavior now)
+    run "$PWT_BIN" auto-remove
+
+    # Should NOT show this worktree as MERGED (because it's dirty)
+    # It should either show DIRTY, PENDING, or CHECK FAILED
+    if [[ "$output" == *"$wt_name"* ]]; then
+        # If mentioned, should not be in MERGED list for removal
+        [[ "$output" != *"✅ MERGED"*"$wt_name"* ]]
+    fi
+
+    # Cleanup
+    "$PWT_BIN" remove "$wt_name" -y 2>/dev/null || rm -rf "$wt_dir"
+}

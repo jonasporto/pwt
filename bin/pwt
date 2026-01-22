@@ -1766,6 +1766,24 @@ cmd_create() {
                 description="$*"
                 break
                 ;;
+            -h|--help)
+                echo "Usage: pwt create <branch> [base] [-- description]"
+                echo ""
+                echo "Arguments:"
+                echo "  branch          Branch name or ticket (e.g., ACME-1234)"
+                echo "  base            Base branch (default: master)"
+                echo "  -- description  Optional description after --"
+                echo ""
+                echo "Options:"
+                echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
+                echo "  --from-current    Create from current branch"
+                echo "  --clone           Use git clone instead of worktree"
+                echo "  -e, --editor      Open in editor after creation"
+                echo "  -a, --ai          Start AI assistant after creation"
+                echo "  -n, --dry-run     Show what would be done"
+                echo "  -h, --help        Show this help"
+                return 0
+                ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
                 exit 1
@@ -2902,17 +2920,43 @@ cmd_repair() {
 }
 
 # Command: auto-remove (cleanup merged worktrees)
-# Usage: pwt auto-remove [target] [--dry-run]
+# Usage: pwt auto-remove [target] [--execute] [--dry-run]
+# SAFETY: Dry-run by default. Must pass --execute to actually remove.
 cmd_auto_remove() {
     local target_branch=""
-    local dry_run=false
+    local dry_run=true  # SAFE DEFAULT: dry-run unless --execute
+    local force_execute=false
 
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
+            --execute|--yes|-y)
+                force_execute=true
+                dry_run=false
+                shift
+                ;;
             --dry-run|-n)
                 dry_run=true
                 shift
+                ;;
+            -h|--help)
+                echo "Usage: pwt auto-remove [target] [options]"
+                echo ""
+                echo "Safely remove worktrees that have been merged into target branch."
+                echo ""
+                echo "Arguments:"
+                echo "  target          Target branch to check merges against (default: current)"
+                echo ""
+                echo "Options:"
+                echo "  --execute, -y   Actually remove (default is dry-run)"
+                echo "  --dry-run, -n   Preview what would be removed (default)"
+                echo "  -h, --help      Show this help"
+                echo ""
+                echo "Safety:"
+                echo "  - Dry-run by default (shows what would be removed)"
+                echo "  - Dirty worktrees backed up to ~/.pwt/trash/"
+                echo "  - Requires --execute for non-interactive use"
+                return 0
                 ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
@@ -2924,6 +2968,15 @@ cmd_auto_remove() {
                 ;;
         esac
     done
+
+    # SAFETY: Require interactive terminal or --execute flag
+    if [ "$force_execute" = false ] && [ ! -t 0 ]; then
+        echo -e "${RED}⛔ SAFETY: auto-remove requires --execute flag when run non-interactively${NC}"
+        echo "This prevents accidental data loss from automated scripts."
+        echo ""
+        echo "Usage: pwt auto-remove [target] --execute"
+        exit 1
+    fi
 
     # If no branch specified, use current branch from main app
     if [ -z "$target_branch" ]; then
@@ -2977,9 +3030,15 @@ cmd_auto_remove() {
         local branch_display="${wt_branch:-detached}"
 
         # Check if worktree has uncommitted changes
-        local is_dirty=false
-        if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
-            is_dirty=true
+        # SAFETY: Assume dirty if check fails (fail-safe)
+        local is_dirty=true
+        local git_status
+        if git_status=$(git -C "$dir" status --porcelain 2>&1); then
+            if [ -z "$git_status" ]; then
+                is_dirty=false
+            fi
+        else
+            echo -e "  ${RED}⚠️  CHECK FAILED:${NC} $name - cannot verify clean state, assuming dirty"
         fi
 
         # Check if worktree commit is contained in remote target branch (post-fetch)
@@ -3025,14 +3084,28 @@ cmd_auto_remove() {
     local removed=0
     for name in "${to_remove[@]}"; do
         echo -e "${YELLOW}Removing: $name${NC}"
-        if cmd_remove "$name" 2>/dev/null; then
+        if cmd_remove "$name" 2>&1; then
             removed=$((removed + 1))
         else
-            # Try manual removal if cmd_remove fails (corrupted worktree)
-            rm -rf "$WORKTREES_DIR/$name" 2>/dev/null && {
-                echo -e "  ${GREEN}✓ Manually removed${NC}"
-                removed=$((removed + 1))
-            }
+            # SAFETY: Only manually remove if directory is truly empty or has no git data
+            local wt_dir="$WORKTREES_DIR/$name"
+            if [ -d "$wt_dir" ]; then
+                # Check if it has any files (besides .git)
+                local file_count=$(find "$wt_dir" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+                local dir_count=$(find "$wt_dir" -maxdepth 1 -type d ! -name ".git" ! -name "." 2>/dev/null | wc -l | tr -d ' ')
+
+                if [ "$file_count" -gt 0 ] || [ "$dir_count" -gt 0 ]; then
+                    echo -e "  ${RED}⛔ SAFETY: Cannot manually remove - directory has files${NC}"
+                    echo -e "  Use 'pwt remove $name -y' to force removal"
+                    continue
+                fi
+
+                # Empty or git-only directory - safe to remove
+                rm -rf "$wt_dir" 2>/dev/null && {
+                    echo -e "  ${GREEN}✓ Removed empty/corrupted worktree${NC}"
+                    removed=$((removed + 1))
+                }
+            fi
         fi
         echo ""
     done
@@ -3079,6 +3152,24 @@ cmd_remove() {
             -y|--yes)
                 auto_yes=true
                 shift
+                ;;
+            -h|--help)
+                echo "Usage: pwt remove [worktree] [options]"
+                echo ""
+                echo "Arguments:"
+                echo "  worktree        Worktree name (default: current)"
+                echo ""
+                echo "Options:"
+                echo "  --with-branch     Also delete the branch (if merged)"
+                echo "  --force-branch    Force delete the branch (even if not merged)"
+                echo "  --kill-port       Kill processes using the port"
+                echo "  --kill-sidekiq    Kill Sidekiq processes"
+                echo "  --kill-all        Kill both port and Sidekiq processes"
+                echo "  -y, --yes         Skip confirmation prompts"
+                echo "  -h, --help        Show this help"
+                echo ""
+                echo "Safety: Dirty worktrees are backed up to ~/.pwt/trash/"
+                return 0
                 ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
@@ -3160,6 +3251,46 @@ cmd_remove() {
 
     echo -e "${YELLOW}Removing worktree: $name${NC}"
 
+    # SAFETY: Check for uncommitted changes before removing
+    local has_changes=false
+    local changes_detail=""
+
+    if [ -d "$worktree_dir" ]; then
+        # Check using BOTH methods for maximum safety
+        local porcelain_status=$(git -C "$worktree_dir" status --porcelain 2>/dev/null)
+        local untracked_count=$(git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+        local staged_count=$(git -C "$worktree_dir" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+        local modified_count=$(git -C "$worktree_dir" diff --name-only 2>/dev/null | wc -l | tr -d ' ')
+
+        if [ -n "$porcelain_status" ] || [ "$untracked_count" -gt 0 ] || [ "$staged_count" -gt 0 ] || [ "$modified_count" -gt 0 ]; then
+            has_changes=true
+            changes_detail="staged=$staged_count, modified=$modified_count, untracked=$untracked_count"
+        fi
+    fi
+
+    if [ "$has_changes" = true ]; then
+        echo -e "${RED}⚠️  WARNING: Worktree has uncommitted changes!${NC}"
+        echo -e "    ${changes_detail}"
+        echo ""
+        git -C "$worktree_dir" status --short 2>/dev/null | head -10
+        echo ""
+
+        if [ "$auto_yes" = true ]; then
+            echo -e "${YELLOW}Proceeding due to -y flag (changes will be LOST)${NC}"
+        elif [ -t 0 ]; then
+            # Interactive terminal - ask for confirmation
+            if ! confirm_action "Are you SURE you want to remove this worktree? Changes will be PERMANENTLY LOST!"; then
+                echo -e "${GREEN}Aborted. Worktree preserved.${NC}"
+                exit 1
+            fi
+        else
+            # Non-interactive - refuse to proceed
+            echo -e "${RED}⛔ SAFETY: Cannot remove dirty worktree non-interactively${NC}"
+            echo "Use 'pwt remove $name -y' to force removal"
+            exit 1
+        fi
+    fi
+
     # Get metadata for hooks/Pwtfile
     local branch=$(get_metadata "$name" "branch")
     local base=$(get_metadata "$name" "base")
@@ -3190,6 +3321,62 @@ cmd_remove() {
     # Get workspace mode (clone or worktree)
     local workspace_mode=$(get_metadata "$name" "mode")
     workspace_mode="${workspace_mode:-worktree}"  # Default to worktree for backwards compatibility
+
+    # SAFETY: Backup uncommitted changes before removing
+    if [ "$has_changes" = true ] && [ -d "$worktree_dir" ]; then
+        local backup_dir="$HOME/.pwt/trash"
+        local timestamp=$(date +%Y%m%d_%H%M%S)
+        local backup_name="${name}_${timestamp}"
+
+        mkdir -p "$backup_dir"
+
+        # Save metadata for restore (branch, base, port, etc.)
+        local meta_branch=$(get_metadata "$name" "branch" 2>/dev/null || git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "")
+        local meta_base=$(get_metadata "$name" "base" 2>/dev/null || echo "")
+        local meta_port=$(get_metadata "$name" "port" 2>/dev/null || echo "")
+        local meta_desc=$(get_metadata "$name" "description" 2>/dev/null || echo "")
+        local meta_project="$CURRENT_PROJECT"
+
+        cat > "$backup_dir/${backup_name}.json" << EOF
+{
+  "worktree": "$name",
+  "branch": "$meta_branch",
+  "base": "$meta_base",
+  "port": "$meta_port",
+  "description": "$meta_desc",
+  "project": "$meta_project",
+  "timestamp": "$timestamp",
+  "date": "$(date -r $(date +%s) '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')"
+}
+EOF
+        echo -e "  ${CYAN}✓ Metadata saved to ~/.pwt/trash/${backup_name}.json${NC}"
+
+        # Try to stash tracked changes
+        if git -C "$worktree_dir" stash push -m "pwt-backup-$timestamp" 2>/dev/null; then
+            local stash_ref=$(git -C "$worktree_dir" stash list | head -1 | cut -d: -f1)
+            if [ -n "$stash_ref" ]; then
+                # Export stash to backup dir
+                git -C "$worktree_dir" stash show -p "$stash_ref" > "$backup_dir/${backup_name}.patch" 2>/dev/null
+                echo -e "  ${CYAN}✓ Tracked changes backed up to ~/.pwt/trash/${backup_name}.patch${NC}"
+            fi
+        fi
+
+        # Backup untracked files
+        local untracked_files=$(git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null)
+        if [ -n "$untracked_files" ]; then
+            local untracked_backup="$backup_dir/${backup_name}_untracked"
+            mkdir -p "$untracked_backup"
+            cd "$worktree_dir"
+            echo "$untracked_files" | while read -r file; do
+                if [ -f "$file" ]; then
+                    local dir=$(dirname "$file")
+                    mkdir -p "$untracked_backup/$dir"
+                    cp "$file" "$untracked_backup/$file" 2>/dev/null
+                fi
+            done
+            echo -e "  ${CYAN}✓ Untracked files backed up to ~/.pwt/trash/${backup_name}_untracked/${NC}"
+        fi
+    fi
 
     if [ "$workspace_mode" = "clone" ]; then
         rm -rf "$worktree_dir"
@@ -3248,6 +3435,27 @@ cmd_remove() {
 # Start the server using Pwtfile's server() function
 # Usage: cmd_server [worktree]
 cmd_server() {
+    # Handle --help before any processing
+    if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+        echo "Usage: pwt server [worktree]"
+        echo ""
+        echo "Start development server for a worktree."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree        Worktree name (default: current worktree or symlink)"
+        echo ""
+        echo "Options:"
+        echo "  -h, --help      Show this help"
+        echo ""
+        echo "Detection order:"
+        echo "  1. Argument provided: pwt server ACME-1234-50XX"
+        echo "  2. Inside worktree directory"
+        echo "  3. Current symlink set via 'pwt use'"
+        echo ""
+        echo "Server runs on port from worktree metadata (usually 50XX)."
+        return 0
+    fi
+
     local arg="${1:-}"
     local current_dir=$(pwd)
     local worktree_name=""
@@ -3941,6 +4149,23 @@ cmd_meta() {
             echo -e "${GREEN}✓ Updated $name.$field = $value${NC}"
             clear_list_cache  # Invalidate cache so next list shows updated metadata
             ;;
+        -h|--help|help)
+            echo "Usage: pwt meta [command] [args]"
+            echo ""
+            echo "Manage worktree metadata."
+            echo ""
+            echo "Commands:"
+            echo "  list                           List all worktree metadata (default)"
+            echo "  show <worktree>                Show metadata for a worktree"
+            echo "  set <worktree> <field> <value> Update a metadata field"
+            echo "  import                         Import metadata for existing worktrees"
+            echo ""
+            echo "Fields: branch, base, description, port"
+            echo ""
+            echo "Options:"
+            echo "  -h, --help, help    Show this help"
+            return 0
+            ;;
         import)
             # Import metadata for existing worktrees
             echo -e "${BLUE}Importing metadata for existing worktrees...${NC}"
@@ -4290,12 +4515,27 @@ cmd_shell() {
 
     export PWT_SHELL_PS1="[pwt:${CURRENT_PROJECT}@${wt_display}]\$ "
 
-    echo -e "${BLUE}Entering shell in $wt_path${NC}"
-    echo "Type 'exit' or Ctrl+D to return"
+    # Mark as pwt subshell (user can detect in .zshrc)
+    export PWT_SHELL=1
+
+    # Print banner
+    local banner_text="pwt subshell: ${CURRENT_PROJECT} @ ${wt_display}"
+    local exit_hint="Ctrl+D or 'exit' to return"
+    local banner_len=${#banner_text}
+    local exit_len=${#exit_hint}
+    local content_width=$((banner_len > exit_len ? banner_len : exit_len))
+    local box_width=$((content_width + 4))
+    local border=$(printf '─%.0s' $(seq 1 $((box_width - 2))))
+
+    echo ""
+    echo -e "${BLUE}┌${border}┐${NC}"
+    printf "${BLUE}│${NC}  %-${content_width}s  ${BLUE}│${NC}\n" "$banner_text"
+    printf "${BLUE}│${NC}  ${DIM}%-${content_width}s${NC}  ${BLUE}│${NC}\n" "$exit_hint"
+    echo -e "${BLUE}└${border}┘${NC}"
     echo ""
 
-    # Start subshell with custom prompt
-    (cd "$wt_path" && PS1="$PWT_SHELL_PS1" exec "${SHELL:-/bin/bash}")
+    # Start subshell
+    (cd "$wt_path" && PWT_SHELL=1 exec "${SHELL:-/bin/bash}")
 
     echo -e "${GREEN}Exited pwt shell${NC}"
 }
@@ -4371,6 +4611,260 @@ cmd_exec() {
             return $status
         fi
     done
+}
+
+# Command: restore
+# Recover backed up changes from ~/.pwt/trash/
+# Backups are created automatically when removing dirty worktrees
+# Usage:
+#   pwt restore                       # List available backups
+#   pwt restore <backup>              # Auto-create worktree and restore
+#   pwt restore <backup> <worktree>   # Apply to existing worktree
+cmd_restore() {
+    local TRASH_DIR="$HOME/.pwt/trash"
+    local first_arg="${1:-}"
+
+    # Handle help first (doesn't need trash directory)
+    case "$first_arg" in
+        help|--help|-h)
+            echo "Usage: pwt [project] restore [backup] [worktree]"
+            echo ""
+            echo "  pwt restore                   List available backups"
+            echo "  pwt restore <backup>          Recreate worktree and apply backup"
+            echo "  pwt restore <backup> <wt>     Apply backup to existing worktree"
+            echo ""
+            echo "Backups are created automatically when removing dirty worktrees."
+            echo "Location: ~/.pwt/trash/"
+            return 0
+            ;;
+    esac
+
+    # Ensure trash directory exists
+    if [ ! -d "$TRASH_DIR" ]; then
+        echo -e "${YELLOW}No backups found.${NC}"
+        echo "Backups are created when removing worktrees with uncommitted changes."
+        return 0
+    fi
+
+    # No argument = list backups
+    if [ -z "$first_arg" ]; then
+        _restore_list
+        return $?
+    fi
+
+    # Argument provided = treat as backup name (exact or fuzzy match)
+    local backup_name=""
+
+    # Try exact match first
+    if [ -f "$TRASH_DIR/${first_arg}.json" ] || [ -f "$TRASH_DIR/${first_arg}.patch" ]; then
+        backup_name="$first_arg"
+    else
+        # Try fuzzy match by worktree name prefix (most recent)
+        local matching=$(find "$TRASH_DIR" -maxdepth 1 -name "${first_arg}*.json" -print0 2>/dev/null | \
+            xargs -0 ls -t 2>/dev/null | head -1)
+
+        if [ -n "$matching" ]; then
+            backup_name=$(basename "$matching" .json)
+            echo -e "${DIM}Found: $backup_name${NC}"
+        fi
+    fi
+
+    if [ -z "$backup_name" ]; then
+        echo -e "${RED}Backup not found: $first_arg${NC}"
+        echo "Use 'pwt restore' to see available backups."
+        return 1
+    fi
+
+    local target_worktree="${2:-}"
+    _restore_backup "$backup_name" "$target_worktree"
+}
+
+# Helper: list available backups
+_restore_list() {
+    local TRASH_DIR="$HOME/.pwt/trash"
+
+    echo -e "${BLUE}Available backups:${NC}"
+    echo ""
+
+    local found=false
+    local json_files=()
+
+    # Collect JSON metadata files (newest first)
+    while IFS= read -r -d '' file; do
+        json_files+=("$file")
+        found=true
+    done < <(find "$TRASH_DIR" -maxdepth 1 -name "*.json" -print0 2>/dev/null | sort -z -r)
+
+    if [ "$found" = false ]; then
+        # Fall back to patch files without JSON (legacy)
+        local patches=()
+        while IFS= read -r -d '' file; do
+            patches+=("$file")
+            found=true
+        done < <(find "$TRASH_DIR" -maxdepth 1 -name "*.patch" -print0 2>/dev/null | sort -z -r)
+
+        if [ "$found" = false ]; then
+            echo -e "${YELLOW}No backups found.${NC}"
+            return 0
+        fi
+
+        for patch in "${patches[@]}"; do
+            local basename=$(basename "$patch" .patch)
+            local wt_name=$(echo "$basename" | sed -E 's/_[0-9]{8}_[0-9]{6}$//')
+            echo -e "  ${GREEN}$basename${NC} ${DIM}(legacy)${NC}"
+            echo -e "     Worktree: ${CYAN}$wt_name${NC}"
+            echo ""
+        done
+    else
+        for json_file in "${json_files[@]}"; do
+            local basename=$(basename "$json_file" .json)
+            local wt_name=$(jq -r '.worktree // empty' "$json_file" 2>/dev/null)
+            local branch=$(jq -r '.branch // empty' "$json_file" 2>/dev/null)
+            local date=$(jq -r '.date // empty' "$json_file" 2>/dev/null)
+
+            # Check what backup files exist
+            local has_patch=false
+            local has_untracked=false
+            [ -f "$TRASH_DIR/${basename}.patch" ] && has_patch=true
+            [ -d "$TRASH_DIR/${basename}_untracked" ] && has_untracked=true
+
+            local contents=""
+            [ "$has_patch" = true ] && contents="patch"
+            [ "$has_untracked" = true ] && contents="${contents:+$contents+}untracked"
+
+            echo -e "  ${GREEN}$wt_name${NC}  ${DIM}$date${NC}  ${YELLOW}[$contents]${NC}"
+            [ -n "$branch" ] && echo -e "     Branch: ${CYAN}$branch${NC}"
+            echo ""
+        done
+    fi
+
+    echo -e "${DIM}Usage: pwt restore <worktree-name> [target-worktree]${NC}"
+}
+
+# Helper: restore a backup to a worktree
+# Usage: _restore_backup <backup_name> [target_worktree]
+#   If target_worktree is empty, auto-creates from backup metadata
+_restore_backup() {
+    local backup_name="$1"
+    local target_worktree="$2"
+    local TRASH_DIR="$HOME/.pwt/trash"
+
+    local json_file="$TRASH_DIR/${backup_name}.json"
+    local patch_file="$TRASH_DIR/${backup_name}.patch"
+    local untracked_dir="$TRASH_DIR/${backup_name}_untracked"
+
+    # Check backup exists
+    if [ ! -f "$json_file" ] && [ ! -f "$patch_file" ] && [ ! -d "$untracked_dir" ]; then
+        echo -e "${RED}Backup not found: $backup_name${NC}"
+        return 1
+    fi
+
+    local target_dir=""
+
+    # If target worktree specified, resolve it
+    if [ -n "$target_worktree" ]; then
+        target_dir=$(resolve_worktree_path "$target_worktree") || true
+        if [ -z "$target_dir" ] || [ ! -d "$target_dir" ]; then
+            echo -e "${RED}Worktree not found: $target_worktree${NC}"
+            return 1
+        fi
+        echo -e "${BLUE}Restoring to existing worktree: $target_worktree${NC}"
+    else
+        # Auto-create worktree from metadata
+        if [ ! -f "$json_file" ]; then
+            echo -e "${RED}Cannot auto-create worktree: no metadata (legacy backup)${NC}"
+            echo "Specify target worktree: pwt restore $backup_name <worktree>"
+            return 1
+        fi
+
+        local branch=$(jq -r '.branch // empty' "$json_file" 2>/dev/null)
+        local base=$(jq -r '.base // empty' "$json_file" 2>/dev/null)
+        local desc=$(jq -r '.description // empty' "$json_file" 2>/dev/null)
+
+        if [ -z "$branch" ]; then
+            echo -e "${RED}Cannot auto-create worktree: no branch in metadata${NC}"
+            echo "Specify target worktree: pwt restore $backup_name <worktree>"
+            return 1
+        fi
+
+        echo -e "${BLUE}Creating worktree from backup metadata...${NC}"
+        echo -e "  Branch: ${YELLOW}$branch${NC}"
+        echo -e "  Base:   ${base:-master}"
+        echo ""
+
+        # Create the worktree using cmd_create
+        # Pass description if available
+        if [ -n "$desc" ]; then
+            cmd_create "$branch" "${base:-master}" "$desc"
+        else
+            cmd_create "$branch" "${base:-master}"
+        fi
+
+        local create_status=$?
+        if [ $create_status -ne 0 ]; then
+            echo -e "${RED}Failed to create worktree${NC}"
+            return 1
+        fi
+
+        # Find the newly created worktree
+        target_dir=$(resolve_worktree_path "$branch") || true
+        if [ -z "$target_dir" ] || [ ! -d "$target_dir" ]; then
+            echo -e "${RED}Could not find created worktree${NC}"
+            return 1
+        fi
+
+        echo ""
+    fi
+
+    local restored_something=false
+
+    # Apply patch if exists
+    if [ -f "$patch_file" ]; then
+        echo -e "${BLUE}Applying patch...${NC}"
+
+        if git -C "$target_dir" apply --check "$patch_file" 2>/dev/null; then
+            if git -C "$target_dir" apply "$patch_file"; then
+                echo -e "${GREEN}✓ Patch applied successfully${NC}"
+                restored_something=true
+            else
+                echo -e "${RED}Failed to apply patch${NC}"
+                echo -e "${YELLOW}Manual: git apply $patch_file${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠️  Patch cannot be applied cleanly${NC}"
+            echo "Options:"
+            echo "  git apply --3way $patch_file"
+            echo "  git apply --reject $patch_file"
+        fi
+    fi
+
+    # Copy untracked files if exist
+    if [ -d "$untracked_dir" ]; then
+        echo -e "${BLUE}Restoring untracked files...${NC}"
+
+        find "$untracked_dir" -type f | while read -r file; do
+            local rel_path="${file#$untracked_dir/}"
+            local dest_file="$target_dir/$rel_path"
+            local dest_dir=$(dirname "$dest_file")
+
+            mkdir -p "$dest_dir"
+
+            if [ -f "$dest_file" ]; then
+                echo -e "  ${YELLOW}⚠️  Skip (exists): $rel_path${NC}"
+            else
+                cp "$file" "$dest_file"
+                echo -e "  ${GREEN}✓ $rel_path${NC}"
+            fi
+        done
+
+        restored_something=true
+    fi
+
+    if [ "$restored_something" = true ]; then
+        echo ""
+        echo -e "${GREEN}✓ Restore complete!${NC}"
+        echo -e "${DIM}Worktree: $target_dir${NC}"
+    fi
 }
 
 # Command: editor
@@ -5954,6 +6448,7 @@ cmd_setup_shell() {
     local shell_name=$(basename "$SHELL")
     local rc_file=""
     local init_line='eval "$(pwt shell-init)"'
+    local needs_source=false
 
     # Detect shell config file
     case "$shell_name" in
@@ -5980,25 +6475,43 @@ cmd_setup_shell() {
             ;;
     esac
 
-    # Check if already configured
+    # Check/add shell-init integration
     if grep -q "pwt shell-init" "$rc_file" 2>/dev/null; then
         echo -e "${GREEN}✓ Shell integration already configured${NC}"
-        echo "  File: $rc_file"
-        return 0
+    else
+        echo "" >> "$rc_file"
+        echo "# pwt shell integration (added by pwt setup-shell)" >> "$rc_file"
+        echo "$init_line" >> "$rc_file"
+        echo -e "${GREEN}✓ Shell integration installed${NC}"
+        needs_source=true
     fi
 
-    # Add to config
-    echo "" >> "$rc_file"
-    echo "# pwt shell integration (added by pwt setup-shell)" >> "$rc_file"
-    echo "$init_line" >> "$rc_file"
+    # Check/add subshell prompt indicator (zsh/bash only)
+    if [[ "$shell_name" == "zsh" || "$shell_name" == "bash" ]]; then
+        if grep -q "PWT_SHELL" "$rc_file" 2>/dev/null; then
+            echo -e "${GREEN}✓ Subshell prompt already configured${NC}"
+        else
+            echo "" >> "$rc_file"
+            echo "# pwt subshell prompt indicator (added by pwt setup-shell)" >> "$rc_file"
+            if [[ "$shell_name" == "zsh" ]]; then
+                echo '[[ -n "$PWT_SHELL" ]] && PROMPT="%F{blue}(pwt)%f $PROMPT"' >> "$rc_file"
+            else
+                echo '[[ -n "$PWT_SHELL" ]] && PS1="(pwt) $PS1"' >> "$rc_file"
+            fi
+            echo -e "${GREEN}✓ Subshell prompt indicator installed${NC}"
+            needs_source=true
+        fi
+    fi
 
-    echo -e "${GREEN}✓ Shell integration installed${NC}"
     echo "  File: $rc_file"
-    echo ""
-    echo "To activate now, run:"
-    echo -e "  ${BLUE}source $rc_file${NC}"
-    echo ""
-    echo "Or restart your terminal."
+
+    if [ "$needs_source" = true ]; then
+        echo ""
+        echo "To activate now, run:"
+        echo -e "  ${BLUE}source $rc_file${NC}"
+        echo ""
+        echo "Or restart your terminal."
+    fi
 }
 
 # Command: config
@@ -6026,6 +6539,28 @@ cmd_config() {
     fi
 
     case "$key" in
+        -h|--help|help)
+            echo "Usage: pwt config [key] [value]"
+            echo ""
+            echo "View or set project configuration."
+            echo ""
+            echo "Commands:"
+            echo "  show                 Show all settings (default)"
+            echo "  <key>                Show value for key"
+            echo "  <key> <value>        Set value for key"
+            echo ""
+            echo "Keys:"
+            echo "  main_app       - Path to main project"
+            echo "  worktrees_dir  - Path to worktrees directory"
+            echo "  branch_prefix  - Prefix for branches (e.g., gl/)"
+            echo "  base_port      - Base port for allocation (default: 5000)"
+            echo ""
+            echo "Options:"
+            echo "  -h, --help, help    Show this help"
+            echo ""
+            echo "Config location: ~/.pwt/projects/<project>/config.json"
+            return 0
+            ;;
         ""|show)
             # Show current config
             echo -e "${BLUE}Project: $CURRENT_PROJECT${NC}"
@@ -6233,6 +6768,26 @@ cmd_project() {
                 echo -e "${GREEN}✓ Set alias '$new_alias' for $project${NC}"
             fi
             ;;
+        -h|--help|help)
+            echo "Usage: pwt project [command] [args]"
+            echo ""
+            echo "Manage project configurations."
+            echo ""
+            echo "Commands:"
+            echo "  list                           List all configured projects (default)"
+            echo "  init <name>                    Initialize a new project config"
+            echo "  show <name>                    Show project config and hooks"
+            echo "  set <name> <key> <value>       Update project config value"
+            echo "  path <name>                    Print project config directory path"
+            echo "  alias <name> [alias|--clear]   Get/set/clear project alias"
+            echo ""
+            echo "Options:"
+            echo "  -h, --help, help    Show this help"
+            echo ""
+            echo "Config location: ~/.pwt/projects/<project>/config.json"
+            echo "Hooks location: ~/.pwt/projects/<project>/hooks/"
+            return 0
+            ;;
         *)
             echo -e "${RED}Unknown action: $action${NC}"
             echo "Usage: pwt project [list|init|show|set|path|alias]"
@@ -6431,6 +6986,10 @@ case "${1:-}" in
         shift  # remove "auto-remove" from args
         cmd_auto_remove "$@"
         ;;
+    restore)
+        shift  # remove "restore" from args
+        cmd_restore "$@"
+        ;;
     fix-port)
         require_project
         cmd_fix_port "${2:-}"
@@ -6605,7 +7164,8 @@ case "${1:-}" in
         echo "  marker [worktree] [emoji]      Set/show worktree marker (--clear)"
         echo "  server [worktree]              Start dev server (from Pwtfile)"
         echo "  fix-port [worktree]            Fix port conflict"
-        echo "  auto-remove [target] [--dry-run] Remove worktrees merged into target"
+        echo "  auto-remove [target] [--execute] Remove worktrees merged into target"
+        echo "  restore [backup] [worktree]    Recover backed up changes from trash"
         echo "  doctor                         Check system health and configuration"
         echo "  benchmark                      Compare worktree vs clone disk usage"
         echo "  shell-init                     Output shell function for cd integration"
@@ -6631,7 +7191,9 @@ case "${1:-}" in
         echo "  pwt list --dirty                           # Only show dirty worktrees"
         echo "  pwt run TICKET-123 npm test                # Run command in worktree"
         echo "  pwt diff TICKET-123                        # Diff worktree vs main"
-        echo "  pwt auto-remove master --dry-run           # Preview cleanup"
+        echo "  pwt auto-remove master                     # Preview cleanup (dry-run by default)"
+        echo "  pwt restore list                           # List available backups"
+        echo "  pwt restore apply BACKUP-NAME              # Restore backup to current dir"
         echo "  pwt doctor                                 # Check configuration"
         echo ""
         echo "Shell integration (add to ~/.zshrc):"

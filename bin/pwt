@@ -6768,6 +6768,80 @@ cmd_project() {
                 echo -e "${GREEN}✓ Set alias '$new_alias' for $project${NC}"
             fi
             ;;
+        validate|check)
+            # Validate current project setup
+            local errors=0
+            local warnings=0
+
+            echo -e "${BLUE}Validating project: $CURRENT_PROJECT${NC}"
+            echo ""
+
+            # Check main_app exists
+            if [ -d "$MAIN_APP" ]; then
+                echo -e "  ${GREEN}✓${NC} main_app exists: $MAIN_APP"
+            else
+                echo -e "  ${RED}✗${NC} main_app not found: $MAIN_APP"
+                ((errors++))
+            fi
+
+            # Check worktrees_dir exists
+            if [ -d "$WORKTREES_DIR" ]; then
+                echo -e "  ${GREEN}✓${NC} worktrees_dir exists: $WORKTREES_DIR"
+            else
+                echo -e "  ${YELLOW}!${NC} worktrees_dir not found: $WORKTREES_DIR"
+                echo -e "    (will be created on first worktree)"
+                ((warnings++))
+            fi
+
+            # Check Pwtfile exists
+            local pwtfile="$MAIN_APP/Pwtfile"
+            if [ -f "$pwtfile" ]; then
+                echo -e "  ${GREEN}✓${NC} Pwtfile found"
+            else
+                echo -e "  ${YELLOW}!${NC} No Pwtfile (optional)"
+                ((warnings++))
+            fi
+
+            # Check md-docs symlink in main app
+            local md_docs_link="$MAIN_APP/md-docs"
+            if [ -L "$md_docs_link" ]; then
+                if [ -d "$md_docs_link" ]; then
+                    echo -e "  ${GREEN}✓${NC} md-docs symlink valid"
+                else
+                    echo -e "  ${RED}✗${NC} md-docs symlink broken"
+                    ((errors++))
+                fi
+            else
+                echo -e "  ${YELLOW}!${NC} No md-docs symlink (optional)"
+                ((warnings++))
+            fi
+
+            # Check .env exists in main app
+            if [ -f "$MAIN_APP/.env" ]; then
+                echo -e "  ${GREEN}✓${NC} .env file found"
+            else
+                echo -e "  ${YELLOW}!${NC} No .env file"
+                ((warnings++))
+            fi
+
+            # Check git repo
+            if git -C "$MAIN_APP" rev-parse --git-dir >/dev/null 2>&1; then
+                echo -e "  ${GREEN}✓${NC} Git repository"
+            else
+                echo -e "  ${RED}✗${NC} Not a git repository"
+                ((errors++))
+            fi
+
+            echo ""
+            if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
+                echo -e "${GREEN}All checks passed!${NC}"
+            elif [ $errors -eq 0 ]; then
+                echo -e "${YELLOW}$warnings warning(s), no errors${NC}"
+            else
+                echo -e "${RED}$errors error(s), $warnings warning(s)${NC}"
+                exit 1
+            fi
+            ;;
         -h|--help|help)
             echo "Usage: pwt project [command] [args]"
             echo ""
@@ -6780,6 +6854,7 @@ cmd_project() {
             echo "  set <name> <key> <value>       Update project config value"
             echo "  path <name>                    Print project config directory path"
             echo "  alias <name> [alias|--clear]   Get/set/clear project alias"
+            echo "  validate                       Validate current project setup"
             echo ""
             echo "Options:"
             echo "  -h, --help, help    Show this help"

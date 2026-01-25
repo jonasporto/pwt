@@ -1491,6 +1491,7 @@ run_pwtfile() {
     export PWT_BRANCH="${PWT_BRANCH:-}"
     export PWT_TICKET="${PWT_TICKET:-}"
     export PWT_PROJECT="${PWT_PROJECT:-$CURRENT_PROJECT}"
+    export PWT_ARGS="${PWT_ARGS:-}"
     export MAIN_APP="${MAIN_APP:-}"
 
     # Back-compat aliases (short names)
@@ -2773,11 +2774,18 @@ cmd_tree() {
         local project="$1"
         local project_dir="$PROJECTS_DIR/$project"
         local config_file="$project_dir/config.json"
+        local main_app=""
+        local worktrees_dir=""
 
-        [ -f "$config_file" ] || return
+        # Try to get paths from config file first, fall back to global vars
+        if [ -f "$config_file" ]; then
+            main_app=$(jq -r '.path // empty' "$config_file")
+            worktrees_dir=$(jq -r '.worktrees_dir // empty' "$config_file")
+        fi
 
-        local main_app=$(jq -r '.path // empty' "$config_file")
-        local worktrees_dir=$(jq -r '.worktrees_dir // empty' "$config_file")
+        # Fall back to global variables (for auto-detected projects)
+        [ -z "$main_app" ] && main_app="$MAIN_APP"
+        [ -z "$worktrees_dir" ] && worktrees_dir="$WORKTREES_DIR"
 
         [ -d "$main_app" ] || return
 

@@ -207,6 +207,49 @@ assert_contains "Config default (no key)" "true" "$config_result"
 rm "$TEST_CONFIG"
 
 echo
+echo "--- pwt-only Mode ---"
+
+# Test pwt_only config option
+TEST_CONFIG=$(mktemp)
+
+# pwt-only enabled, not in pwt context
+echo '{"pwt_only": true}' > "$TEST_CONFIG"
+pwt_only_result=$(jq -r '.pwt_only // false' "$TEST_CONFIG")
+assert_contains "pwt_only config true" "true" "$pwt_only_result"
+
+# pwt-only disabled (default)
+echo '{}' > "$TEST_CONFIG"
+pwt_only_result=$(jq -r '.pwt_only // false' "$TEST_CONFIG")
+assert_contains "pwt_only config default" "false" "$pwt_only_result"
+
+# Test worktree detection patterns
+test_worktree_detection() {
+  local path="$1"
+  local expected_pwt="$2"
+  local desc="$3"
+
+  local is_pwt="false"
+  if echo "$path" | grep -q '\-worktrees/' || echo "$path" | grep -q '\.pwt/'; then
+    is_pwt="true"
+  fi
+
+  if [ "$is_pwt" = "$expected_pwt" ]; then
+    echo -e "${GREEN}✓${RESET} $desc"
+    ((PASS++))
+  else
+    echo -e "${RED}✗${RESET} $desc (expected $expected_pwt, got $is_pwt)"
+    ((FAIL++))
+  fi
+}
+
+test_worktree_detection "/Users/foo/project-worktrees/feature" "true" "Worktree path detected"
+test_worktree_detection "/Users/foo/.pwt/myworktree" "true" ".pwt path detected"
+test_worktree_detection "/Users/foo/regular-project" "false" "Regular path not pwt"
+test_worktree_detection "/Users/foo/Projects/fprojects" "false" "fprojects not pwt"
+
+rm "$TEST_CONFIG"
+
+echo
 echo "--- Integration Test ---"
 
 if [ -f "$SCRIPT" ]; then

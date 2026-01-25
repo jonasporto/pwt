@@ -6009,11 +6009,50 @@ PROJECT: $CURRENT_PROJECT
 
 OUTPUT: Compact ASCII diagram. No ANSI codes. Max 40 lines."
 
-    # Call the AI
+    # Call the AI and capture output
     echo "" >&2
-    echo -e "$prompt" | "$ai_cmd" -p 2>/dev/null || {
-        echo -e "$prompt" | "$ai_cmd" --print 2>/dev/null
-    }
+    local ai_output
+    local ai_exit_code
+
+    ai_output=$(echo -e "$prompt" | "$ai_cmd" -p 2>&1) && ai_exit_code=0 || ai_exit_code=$?
+
+    # If -p flag failed, try --print
+    if [ $ai_exit_code -ne 0 ] || [ -z "$ai_output" ]; then
+        ai_output=$(echo -e "$prompt" | "$ai_cmd" --print 2>&1) && ai_exit_code=0 || ai_exit_code=$?
+    fi
+
+    # Check for common API errors and provide user-friendly messages
+    if echo "$ai_output" | grep -qi "authentication_error\|401\|unauthorized\|token.*expired"; then
+        echo -e "${RED}Authentication Error${NC}" >&2
+        echo "" >&2
+        echo "Your API credentials have expired or are invalid." >&2
+        echo "" >&2
+        echo "To fix this:" >&2
+        echo "  1. Run: $ai_cmd /login" >&2
+        echo "  2. Or set a valid API key in your environment" >&2
+        echo "" >&2
+        echo "You can also use a different AI tool:" >&2
+        echo "  pwt topology ollama    # if you have Ollama installed" >&2
+        echo "  pwt project set $CURRENT_PROJECT ai <command>" >&2
+        return 1
+    fi
+
+    if echo "$ai_output" | grep -qi "rate_limit\|429\|too many requests"; then
+        echo -e "${RED}Rate Limit Exceeded${NC}" >&2
+        echo "The AI API is rate-limited. Please wait a moment and try again." >&2
+        return 1
+    fi
+
+    if echo "$ai_output" | grep -qi "API Error\|error.*type"; then
+        echo -e "${RED}API Error${NC}" >&2
+        echo "$ai_output" >&2
+        echo "" >&2
+        echo "Try running: $ai_cmd /login" >&2
+        return 1
+    fi
+
+    # Success - show output
+    echo "$ai_output"
 
     # Show timing
     local end_time=$(date +%s)

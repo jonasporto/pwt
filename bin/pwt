@@ -4632,18 +4632,23 @@ cmd_restore() {
     local TRASH_DIR="$HOME/.pwt/trash"
     local first_arg="${1:-}"
 
-    # Handle help first (doesn't need trash directory)
+    # Handle help and list first (don't need trash directory for help)
     case "$first_arg" in
         help|--help|-h)
             echo "Usage: pwt [project] restore [backup] [worktree]"
             echo ""
             echo "  pwt restore                   List available backups"
+            echo "  pwt restore list              List available backups"
             echo "  pwt restore <backup>          Recreate worktree and apply backup"
             echo "  pwt restore <backup> <wt>     Apply backup to existing worktree"
             echo ""
             echo "Backups are created automatically when removing dirty worktrees."
             echo "Location: ~/.pwt/trash/"
             return 0
+            ;;
+        list|--list|-l)
+            # Explicit list command - fall through to listing logic
+            first_arg=""
             ;;
     esac
 

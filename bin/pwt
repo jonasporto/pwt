@@ -6357,8 +6357,10 @@ input=$(cat)
 cwd=$(echo "$input" | jq -r '.workspace.current_dir // empty')
 [ -z "$cwd" ] && cwd=$(pwd)
 
-# Detect worktree and project (using perl for cross-shell compatibility)
+# Detect worktree and project
 worktree="" project="" is_pwt_context=false
+
+# Fast path: check common patterns
 if echo "$cwd" | grep -q '\-worktrees/'; then
   project=$(echo "$cwd" | perl -ne 'print $1 if /\/([^\/]+)-worktrees\//')
   worktree=$(echo "$cwd" | perl -ne 'print $1 if /-worktrees\/([^\/]+)/')
@@ -6367,6 +6369,38 @@ elif echo "$cwd" | grep -q '\.pwt/'; then
   worktree=$(echo "$cwd" | perl -ne 'print $1 if /\.pwt\/([^\/]+)/')
   is_pwt_context=true
 fi
+
+# Fallback: check against configured projects
+if [ "$is_pwt_context" = "false" ] && [ -d "$PWT_DIR/projects" ]; then
+  for proj_config in "$PWT_DIR/projects"/*/config.json; do
+    [ -f "$proj_config" ] || continue
+    proj_name=$(basename "$(dirname "$proj_config")")
+    proj_path=$(jq -r '.path // empty' "$proj_config" 2>/dev/null)
+    proj_wt_dir=$(jq -r '.worktrees_dir // empty' "$proj_config" 2>/dev/null)
+
+    # Check if cwd is inside worktrees_dir
+    if [ -n "$proj_wt_dir" ] && [[ "$cwd" == "$proj_wt_dir"/* ]]; then
+      project="$proj_name"
+      worktree=$(echo "$cwd" | sed "s|^$proj_wt_dir/||" | cut -d/ -f1)
+      is_pwt_context=true
+      break
+    fi
+
+    # Infer main path from worktrees_dir if not configured (remove -worktrees suffix)
+    if [ -z "$proj_path" ] && [ -n "$proj_wt_dir" ]; then
+      proj_path="${proj_wt_dir%-worktrees}"
+    fi
+
+    # Check if cwd is the main project path (or inside it)
+    if [ -n "$proj_path" ] && [[ "$cwd" == "$proj_path" || "$cwd" == "$proj_path"/* ]]; then
+      project="$proj_name"
+      worktree="@"
+      is_pwt_context=true
+      break
+    fi
+  done
+fi
+
 [ -z "$project" ] && project=$(basename "$cwd")
 
 # Check pwt-only mode: if enabled, only show status in pwt projects/worktrees

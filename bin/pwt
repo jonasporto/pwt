@@ -46,6 +46,20 @@ PROJECT_REMOTE=""
 DEFAULT_BRANCH=""  # Detected from remote (master or main)
 BASE_PORT=5000
 
+# Version
+PWT_VERSION="1.0.0"
+
+# Exit codes (for scripting)
+EXIT_SUCCESS=0
+EXIT_ERROR=1        # General error
+EXIT_USAGE=2        # Usage/argument error
+EXIT_NOT_FOUND=3    # Resource not found (worktree, project, branch)
+EXIT_CONFLICT=4     # Conflict (already exists, port in use)
+
+# Output control (set via --quiet or --verbose flags)
+PWT_QUIET=false
+PWT_VERBOSE=false
+
 # Performance: List cache and fetch state
 LIST_CACHE_DIR="$PWT_DIR/cache"
 LIST_CACHE_TTL=300  # 5 minutes
@@ -73,6 +87,84 @@ sed_inplace() {
     fi
 }
 
+# Output helpers for --quiet/--verbose control
+# Usage: pwt_info "message"     - Normal output (suppressed with --quiet)
+# Usage: pwt_debug "message"    - Debug output (only with --verbose)
+# Usage: pwt_warn "message"     - Warning (always shown unless --quiet)
+# Usage: pwt_error "message"    - Error (always shown)
+pwt_info() {
+    [ "$PWT_QUIET" = true ] || echo -e "$@"
+}
+
+pwt_debug() {
+    [ "$PWT_VERBOSE" = true ] && echo -e "${DIM}[debug] $*${NC}" >&2
+    return 0
+}
+
+pwt_warn() {
+    [ "$PWT_QUIET" = true ] || echo -e "${YELLOW}$*${NC}" >&2
+}
+
+pwt_error() {
+    echo -e "${RED}$*${NC}" >&2
+}
+
+# Find similar string from a list (for "did you mean?" suggestions)
+# Usage: find_similar "input" "candidate1 candidate2 ..."
+# Returns the closest match if similarity > 50%, empty otherwise
+find_similar() {
+    local input="$1"
+    local candidates="$2"
+    local best_match=""
+    local best_score=0
+    local input_len=${#input}
+
+    for candidate in $candidates; do
+        local score=0
+        local cand_len=${#candidate}
+
+        # Skip if lengths are too different (more than 3 chars apart)
+        local len_diff=$((input_len - cand_len))
+        [ "$len_diff" -lt 0 ] && len_diff=$((-len_diff))
+        [ "$len_diff" -gt 3 ] && continue
+
+        # Check prefix match (strongest signal)
+        local prefix_len=2
+        [ "$input_len" -lt 2 ] && prefix_len="$input_len"
+        if [[ "${candidate:0:$prefix_len}" == "${input:0:$prefix_len}" ]]; then
+            score=$((score + 30))
+        fi
+
+        # Count common characters
+        local i=0
+        while [ $i -lt $input_len ]; do
+            local char="${input:$i:1}"
+            if [[ "$candidate" == *"$char"* ]]; then
+                score=$((score + 5))
+            fi
+            i=$((i + 1))
+        done
+
+        # Bonus for similar length
+        if [ "$len_diff" -eq 0 ]; then
+            score=$((score + 10))
+        elif [ "$len_diff" -eq 1 ]; then
+            score=$((score + 5))
+        fi
+
+        # Update best match
+        if [ "$score" -gt "$best_score" ]; then
+            best_score="$score"
+            best_match="$candidate"
+        fi
+    done
+
+    # Only suggest if similarity is reasonable (score > 40)
+    if [ "$best_score" -gt 40 ]; then
+        echo "$best_match"
+    fi
+}
+
 # Check required command exists
 # Usage: require_cmd <cmd> [optional]
 # If optional=true, just warn instead of exit
@@ -84,7 +176,7 @@ require_cmd() {
         if [ "$optional" = true ]; then
             return 1
         else
-            echo -e "${RED}Error: Required command not found: $cmd${NC}" >&2
+            pwt_error "Error: Required command not found: $cmd"
             # Provide install hints for common tools
             case "$cmd" in
                 git)
@@ -495,7 +587,7 @@ require_project() {
             echo "  pwt <project> <command>     # e.g., pwt acme list"
             echo "  pwt project list            # see configured projects"
         else
-            echo -e "${RED}Error: No project detected${NC}"
+            pwt_error "Error: No project detected"
             echo ""
             echo "You're not inside a git repository."
             echo ""
@@ -603,7 +695,7 @@ EOF
 
     # No URL - configure current directory
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
-        echo -e "${RED}Error: Not a git repository${NC}"
+        pwt_error "Error: Not a git repository"
         echo ""
         echo "Usage:"
         echo "  pwt init <url>    # Clone and configure new project"
@@ -696,7 +788,7 @@ EOF
 
     # No URL - configure current directory with given name
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
-        echo -e "${RED}Error: Not a git repository${NC}"
+        pwt_error "Error: Not a git repository"
         echo ""
         echo "Usage:"
         echo "  pwt <name> init <url>    # Clone and configure with name"
@@ -1819,7 +1911,7 @@ cmd_create() {
     fi
 
     if [ -z "$branch" ]; then
-        echo -e "${RED}Error: Branch/ticket not specified${NC}"
+        pwt_error "Error: Branch/ticket not specified"
         echo "Usage: pwt create <branch> [base-ref] [description...] [options]"
         echo "       pwt create <branch> [options] -- description with spaces"
         echo ""
@@ -1845,6 +1937,9 @@ cmd_create() {
     # Ensure worktrees_dir exists
     mkdir -p "$WORKTREES_DIR"
 
+    pwt_debug "Creating worktree: branch=$branch, base=${base_ref:-default}, from_current=${from_current:-false}"
+    pwt_debug "Options: dry_run=${dry_run:-false}, open_editor=${open_editor:-false}, start_ai=${start_ai:-false}"
+
     # Extract worktree name from branch (removes path prefix, sanitizes)
     local worktree_name=$(extract_worktree_name "$branch")
     local worktree_dir="$WORKTREES_DIR/$worktree_name"
@@ -1856,7 +1951,7 @@ cmd_create() {
         echo "Options:"
         echo "  1. Remove existing: pwt remove $worktree_name"
         echo "  2. Use a different branch name"
-        exit 1
+        exit $EXIT_CONFLICT
     fi
 
     # Read PORT_BASE from Pwtfile (if defined)
@@ -2013,9 +2108,14 @@ cmd_create() {
     echo -e "\n${GREEN}✓ $mode_label created successfully!${NC}"
     clear_list_cache  # Invalidate cache so next list shows new worktree
     echo ""
-    echo "To use:"
-    echo -e "  ${BLUE}cd $worktree_dir${NC}  or  ${BLUE}z ${worktree_name}${NC}"
-    echo -e "  Port: ${BLUE}$port${NC}"
+    echo -e "${BLUE}Next steps:${NC}"
+    echo ""
+    echo -e "  Navigate:    ${DIM}pwt cd ${worktree_name}${NC}  or  ${DIM}cd $worktree_dir${NC}"
+    echo -e "  Open editor: ${DIM}pwt editor ${worktree_name}${NC}"
+    echo -e "  Start AI:    ${DIM}pwt ai ${worktree_name}${NC}"
+    echo -e "  Run server:  ${DIM}pwt server ${worktree_name}${NC}  (port ${port})"
+    echo ""
+    echo -e "  ${DIM}Tip: Set as current with 'pwt use ${worktree_name}' for quick access${NC}"
 
     # Open editor if requested
     if [ "$open_editor" = true ]; then
@@ -2219,6 +2319,25 @@ cmd_list() {
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
+            -h|--help)
+                echo "Usage: pwt list [options]"
+                echo ""
+                echo "List all worktrees for the current project."
+                echo ""
+                echo "Options:"
+                echo "  -d, --dirty      Only show dirty worktrees"
+                echo "  -v, --verbose    Show detailed info (original format)"
+                echo "  -q, --quick      Skip network operations (faster)"
+                echo "  -r, --refresh    Force refresh cache"
+                echo "  --porcelain      Output JSON (for scripts)"
+                echo "  statusline       Compact single-line for prompts"
+                echo ""
+                echo "Examples:"
+                echo "  pwt list              # Default tabular view"
+                echo "  pwt list -d           # Only dirty worktrees"
+                echo "  pwt list --porcelain  # JSON output"
+                return 0
+                ;;
             -d|--dirty)
                 show_dirty_only=true
                 shift
@@ -2917,7 +3036,7 @@ cmd_repair() {
         local worktree_dir="$WORKTREES_DIR/$name"
         if [ ! -d "$worktree_dir" ]; then
             echo -e "${RED}Error: Worktree not found: $name${NC}"
-            exit 1
+            exit $EXIT_NOT_FOUND
         fi
         echo -e "${BLUE}Repairing: $name${NC}"
         export PWT_WORKTREE="$name"
@@ -3900,6 +4019,24 @@ cmd_use() {
 cmd_info() {
     local name="$1"
 
+    # Handle --help
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        echo "Usage: pwt info [worktree]"
+        echo ""
+        echo "Show detailed information about a worktree."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree  Name of the worktree (optional if inside one)"
+        echo ""
+        echo "Information shown:"
+        echo "  - Branch and tracking information"
+        echo "  - Assigned port number"
+        echo "  - Server status"
+        echo "  - Creation metadata"
+        echo "  - Git status (dirty files)"
+        return 0
+    fi
+
     # If no name specified, try to detect from current directory
     if [ -z "$name" ]; then
         local current_dir=$(pwd)
@@ -4306,6 +4443,22 @@ cmd_alias() {
 #   - = previous worktree (like cd -)
 #   worktree = specific worktree
 cmd_cd() {
+    # Handle --help
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        echo "Usage: pwt cd [worktree|@|-]"
+        echo ""
+        echo "Navigate to a worktree (outputs path for shell integration)."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree  Name of the worktree"
+        echo "  @         Main app directory"
+        echo "  -         Previous worktree (like cd -)"
+        echo "  (none)    Last used worktree, or main"
+        echo ""
+        echo "Tip: Run 'eval \"\$(pwt shell-init)\"' for real cd integration."
+        return 0
+    fi
+
     local target="${1:-}"
 
     # No target: try last-used, fallback to main
@@ -4460,6 +4613,23 @@ resolve_worktree_path() {
 # Usage: pwt run <worktree> <command...>
 #   @ = main worktree
 cmd_run() {
+    # Handle --help
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        echo "Usage: pwt run <worktree> <command...>"
+        echo ""
+        echo "Run a command in a worktree without changing directory."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree   Target worktree (@ for main app)"
+        echo "  command    Command to run in the worktree"
+        echo ""
+        echo "Examples:"
+        echo "  pwt run TICKET-123 npm test"
+        echo "  pwt run @ git status"
+        echo "  pwt run TICKET-123 bin/rails console"
+        return 0
+    fi
+
     local target="$1"
     shift
 
@@ -4992,6 +5162,23 @@ cmd_open() {
 # Show diff between worktrees or worktree vs main
 # Usage: pwt diff <worktree1> [worktree2]
 cmd_diff() {
+    # Handle --help
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        echo "Usage: pwt diff <worktree1> [worktree2]"
+        echo ""
+        echo "Show file differences between worktrees."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree1  First worktree to compare"
+        echo "  worktree2  Second worktree (default: @ for main app)"
+        echo ""
+        echo "Examples:"
+        echo "  pwt diff TICKET-123         # Compare TICKET-123 vs main"
+        echo "  pwt diff TICKET-123 @       # Same as above"
+        echo "  pwt diff TICKET-123 TICKET-456  # Compare two worktrees"
+        return 0
+    fi
+
     local wt1="$1"
     local wt2="${2:-@}"
 
@@ -5401,6 +5588,21 @@ cmd_copy() {
 # Check system health and configuration
 # Usage: pwt doctor
 cmd_doctor() {
+    # Handle --help
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        echo "Usage: pwt doctor"
+        echo ""
+        echo "Check system health and pwt configuration."
+        echo ""
+        echo "Checks performed:"
+        echo "  - Required tools (git, jq)"
+        echo "  - Optional tools (lsof, fzf)"
+        echo "  - PWT directory structure"
+        echo "  - Project configurations"
+        echo "  - Worktree integrity"
+        return 0
+    fi
+
     echo -e "${BLUE}pwt doctor${NC}"
     echo ""
 
@@ -6145,6 +6347,26 @@ cmd_marker() {
 # Usage: pwt for-each <command...>
 # If command is a Pwtfile function, runs it via run_pwtfile
 cmd_for_each() {
+    # Handle --help
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        echo "Usage: pwt for-each <command...>"
+        echo ""
+        echo "Run a command in all worktrees."
+        echo ""
+        echo "Arguments:"
+        echo "  command    Command to run in each worktree"
+        echo ""
+        echo "Notes:"
+        echo "  - If command is a Pwtfile function, runs it via Pwtfile"
+        echo "  - Skips main app, only runs in worktrees"
+        echo ""
+        echo "Examples:"
+        echo "  pwt for-each git status"
+        echo "  pwt for-each npm test"
+        echo "  pwt for-each migrate      # Runs Pwtfile migrate()"
+        return 0
+    fi
+
     if [ $# -eq 0 ]; then
         echo -e "${RED}Error: No command specified${NC}"
         echo "Usage: pwt for-each <command...>"
@@ -6586,6 +6808,539 @@ cmd_setup_shell() {
     fi
 }
 
+# Command: claude-setup
+# Install Claude Code status line integration for pwt
+cmd_claude_setup() {
+    local action="${1:-install}"
+    local claude_dir="$HOME/.claude"
+    local script_file="$claude_dir/statusline-command.sh"
+    local config_file="$PWT_DIR/claude-statusline.json"
+    local default_format='[{worktree}] {project} ({branch}) [{server}] {arrow}'
+
+    case "$action" in
+        -h|--help|help)
+            echo "Usage: pwt claude-setup [action]"
+            echo ""
+            echo "Manage Claude Code status line integration."
+            echo ""
+            echo "Actions:"
+            echo "  install              Install/update status line script (default)"
+            echo "  vars                 Show all available variables and colors"
+            echo "  format [fmt]         Show or set global format"
+            echo "  format --project [fmt]  Set format for current project only"
+            echo "  preview              Preview status line with current settings"
+            echo "  test                 Run color and template engine tests"
+            echo "  toggle               Toggle status line on/off globally"
+            echo "  toggle --session     Toggle for current session only"
+            echo "  on | off             Enable/disable globally"
+            echo "  on|off --session     Show command for session toggle"
+            echo "  reset                Reset to default configuration"
+            echo ""
+            echo "Format Template:"
+            echo "  Use {variable} placeholders with any text around them."
+            echo "  Run 'pwt claude-setup vars' to see all variables."
+            echo ""
+            echo "Priority: Project format > Global format > Default"
+            echo ""
+            echo "Examples:"
+            echo "  pwt claude-setup                              # Install"
+            echo "  pwt claude-setup vars                         # List variables"
+            echo "  pwt claude-setup format                       # Show formats"
+            echo "  pwt claude-setup format '{project} ({branch}) {arrow}'"
+            echo "  pwt claude-setup format --project '{project} {arrow}'  # This project only"
+            echo "  pwt claude-setup preview                      # Test output"
+            return 0
+            ;;
+
+        vars)
+            echo "Available variables for status line format:"
+            echo ""
+            echo "  {worktree}   Worktree name (e.g., 'mobile-ux-fixes')"
+            echo "  {project}    Project name (e.g., 'dropflow-app')"
+            echo "  {branch}     Git branch name"
+            echo "  {server}     Server URL if running (e.g., 'localhost:4001')"
+            echo "  {port}       Just the port number (e.g., '4001')"
+            echo "  {arrow}      Arrow symbol (default: ❯)"
+            echo ""
+            echo "Named Colors:"
+            echo "  {magenta:...}   Magenta text"
+            echo "  {cyan:...}      Cyan text"
+            echo "  {yellow:...}    Yellow text"
+            echo "  {green:...}     Green text"
+            echo "  {blue:...}      Blue text"
+            echo "  {red:...}       Red text"
+            echo "  {dim:...}       Dimmed text"
+            echo "  {bold:...}      Bold text"
+            echo ""
+            echo "Custom Colors (24-bit true color):"
+            echo "  {rgb:R,G,B:...}    RGB values 0-255 (e.g., {rgb:255,100,0:text})"
+            echo "  {#RRGGBB:...}      Hex color (e.g., {#FF6400:text})"
+            echo ""
+            echo "Conditionals (show only if value exists):"
+            echo "  {?worktree:[...]}   Show [...] only if worktree exists"
+            echo "  {?server:[...]}     Show [...] only if server is running"
+            echo "  {?branch:(...)}     Show (...) only if branch exists"
+            echo ""
+            echo "Default format:"
+            echo "  $default_format"
+            echo ""
+            echo "Custom Variables (from Pwtfile):"
+            echo "  Static:   CLAUDE_ENV=\"staging\"     -> use as {env}"
+            echo "  Dynamic:  claude_env() { ... }      -> use as {env}"
+            echo ""
+            echo "  Available in functions: \$PWT_WORKTREE, \$PWT_PROJECT, \$PWT_PORT, \$PWT_BRANCH"
+            echo ""
+            echo "Example formats:"
+            echo "  '{project} {arrow}'                           # Minimal"
+            echo "  '{?worktree:[{worktree}] }{project} {arrow}'  # Conditional worktree"
+            echo "  '{project}/{worktree} ({branch}) {arrow}'     # Slash separator"
+            echo "  '{cyan:{project}} {yellow:({branch})} {arrow}' # Explicit colors"
+            echo "  '{project} [{env}] {arrow}'                   # Custom var from Pwtfile"
+            return 0
+            ;;
+
+        format)
+            local scope="${2:-}"
+            local new_format="${3:-}"
+
+            # Check if second arg is a format (not --project)
+            if [ -n "$scope" ] && [[ "$scope" != "--project" ]]; then
+                new_format="$scope"
+                scope=""
+            fi
+
+            if [ "$scope" = "--project" ]; then
+                # Project-specific format
+                if [ -z "$CURRENT_PROJECT" ]; then
+                    echo -e "${RED}Error: No project detected. Run from inside a project.${NC}"
+                    return 1
+                fi
+
+                local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config.json"
+                mkdir -p "$(dirname "$proj_config")"
+                [ ! -f "$proj_config" ] && echo '{}' > "$proj_config"
+
+                if [ -n "$new_format" ]; then
+                    local tmp=$(mktemp)
+                    jq --arg fmt "$new_format" '.claude_format = $fmt' "$proj_config" > "$tmp" && mv "$tmp" "$proj_config"
+                    echo -e "${GREEN}✓ Project format set for $CURRENT_PROJECT${NC}"
+                    echo "  $new_format"
+                else
+                    local proj_format=$(jq -r '.claude_format // ""' "$proj_config" 2>/dev/null)
+                    if [ -n "$proj_format" ]; then
+                        echo "Project format ($CURRENT_PROJECT):"
+                        echo "  $proj_format"
+                    else
+                        echo "No project-specific format for $CURRENT_PROJECT"
+                        echo "Using global format: $default_format"
+                    fi
+                fi
+                echo ""
+                echo "Run 'pwt claude-setup install' to apply."
+            elif [ -n "$new_format" ]; then
+                # Set global format
+                [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+                local tmp=$(mktemp)
+                jq --arg fmt "$new_format" '.format = $fmt' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                echo -e "${GREEN}✓ Global format set${NC}"
+                echo "  $new_format"
+                echo ""
+                echo "Run 'pwt claude-setup install' to apply."
+            else
+                # Show current format
+                echo "Global format:"
+                local current_format="$default_format"
+                if [ -f "$config_file" ]; then
+                    current_format=$(jq -r '.format // ""' "$config_file")
+                    [ -z "$current_format" ] && current_format="$default_format"
+                fi
+                echo "  $current_format"
+
+                # Show project format if inside a project
+                if [ -n "$CURRENT_PROJECT" ]; then
+                    local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config.json"
+                    if [ -f "$proj_config" ]; then
+                        local proj_format=$(jq -r '.claude_format // ""' "$proj_config" 2>/dev/null)
+                        if [ -n "$proj_format" ]; then
+                            echo ""
+                            echo "Project format ($CURRENT_PROJECT):"
+                            echo "  $proj_format"
+                        fi
+                    fi
+                fi
+                echo ""
+                echo "To change global:  pwt claude-setup format '<format>'"
+                echo "To change project: pwt claude-setup format --project '<format>'"
+                echo "See variables:     pwt claude-setup vars"
+            fi
+            return 0
+            ;;
+
+        preview)
+            # Generate preview with current directory
+            local current_format="$default_format"
+            if [ -f "$config_file" ]; then
+                current_format=$(jq -r '.format // ""' "$config_file")
+                [ -z "$current_format" ] && current_format="$default_format"
+            fi
+
+            local cwd=$(pwd)
+            local worktree_name="" project_name=""
+
+            if [[ "$cwd" =~ ([^/]+)-worktrees/([^/]+) ]]; then
+                project_name="${BASH_REMATCH[1]}"
+                worktree_name="${BASH_REMATCH[2]}"
+            elif [[ "$cwd" =~ \.pwt/([^/]+) ]]; then
+                worktree_name="${BASH_REMATCH[1]}"
+            fi
+            [ -z "$project_name" ] && project_name=$(basename "$cwd")
+
+            local branch=""
+            if git rev-parse --git-dir >/dev/null 2>&1; then
+                branch=$(git branch --show-current 2>/dev/null)
+            fi
+
+            local port="" server=""
+            if [ -n "$worktree_name" ] && [ -f "$PWT_META_FILE" ]; then
+                port=$(jq -r --arg wt "$worktree_name" '.[] | .[$wt]? | select(.) | .port // empty' "$PWT_META_FILE" 2>/dev/null | head -1)
+                if [ -n "$port" ] && lsof -ti :$port -sTCP:LISTEN >/dev/null 2>&1; then
+                    server="localhost:$port"
+                fi
+            fi
+
+            echo "Preview with current directory:"
+            echo "  worktree: ${worktree_name:-<none>}"
+            echo "  project:  $project_name"
+            echo "  branch:   ${branch:-<none>}"
+            echo "  server:   ${server:-<not running>}"
+            echo "  port:     ${port:-<none>}"
+            echo ""
+            echo "Format: $current_format"
+            echo ""
+            echo -n "Output: "
+            # Simple preview (without full template engine)
+            local output="$current_format"
+            output="${output//\{worktree\}/$worktree_name}"
+            output="${output//\{project\}/$project_name}"
+            output="${output//\{branch\}/$branch}"
+            output="${output//\{server\}/$server}"
+            output="${output//\{port\}/$port}"
+            output="${output//\{arrow\}/❯}"
+            echo -e "$output"
+            return 0
+            ;;
+
+        reset)
+            rm -f "$config_file"
+            echo -e "${GREEN}✓ Configuration reset to defaults${NC}"
+            echo "Run 'pwt claude-setup install' to apply."
+            return 0
+            ;;
+
+        test)
+            local test_script="$PWT_DIR/tests/statusline-test.sh"
+            if [ -f "$test_script" ]; then
+                bash "$test_script"
+            else
+                echo -e "${RED}Test script not found at $test_script${NC}"
+                echo "Tests may not be installed yet."
+                return 1
+            fi
+            return 0
+            ;;
+
+        toggle)
+            local scope="${2:-}"
+            if [ "$scope" = "--session" ]; then
+                # Session toggle - just show the command to run
+                if [ "${PWT_STATUSLINE_OFF:-}" = "1" ]; then
+                    echo -e "${GREEN}To enable for this session:${NC}"
+                    echo "  unset PWT_STATUSLINE_OFF"
+                else
+                    echo -e "${YELLOW}To disable for this session:${NC}"
+                    echo "  export PWT_STATUSLINE_OFF=1"
+                fi
+                echo ""
+                echo "Add to your shell to persist: ~/.zshrc or ~/.bashrc"
+            else
+                # Global toggle
+                [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+                local current=$(jq -r 'if has("enabled") then .enabled else true end' "$config_file")
+                local new_state="true"
+                [ "$current" = "true" ] && new_state="false"
+                local tmp=$(mktemp)
+                jq --argjson enabled "$new_state" '.enabled = $enabled' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                if [ "$new_state" = "true" ]; then
+                    echo -e "${GREEN}✓ Status line enabled (all sessions)${NC}"
+                else
+                    echo -e "${YELLOW}✓ Status line disabled (all sessions)${NC}"
+                fi
+                echo "Run 'pwt claude-setup install' to apply."
+            fi
+            return 0
+            ;;
+
+        on)
+            local scope="${2:-}"
+            if [ "$scope" = "--session" ]; then
+                echo -e "${GREEN}To enable for this session:${NC}"
+                echo "  unset PWT_STATUSLINE_OFF"
+            else
+                [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+                local tmp=$(mktemp)
+                jq '.enabled = true' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                echo -e "${GREEN}✓ Status line enabled (all sessions)${NC}"
+                echo "Run 'pwt claude-setup install' to apply."
+            fi
+            return 0
+            ;;
+
+        off)
+            local scope="${2:-}"
+            if [ "$scope" = "--session" ]; then
+                echo -e "${YELLOW}To disable for this session:${NC}"
+                echo "  export PWT_STATUSLINE_OFF=1"
+            else
+                [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+                local tmp=$(mktemp)
+                jq '.enabled = false' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                echo -e "${YELLOW}✓ Status line disabled (all sessions)${NC}"
+                echo "Run 'pwt claude-setup install' to apply."
+            fi
+            return 0
+            ;;
+
+        install|"")
+            ;;
+
+        *)
+            echo -e "${RED}Unknown action: $action${NC}"
+            echo "Run 'pwt claude-setup help' for usage"
+            return 1
+            ;;
+    esac
+
+    # Create .claude directory if needed
+    mkdir -p "$claude_dir"
+
+    # Read config
+    local format="$default_format"
+    if [ -f "$config_file" ]; then
+        local cfg_format=$(jq -r '.format // ""' "$config_file")
+        [ -n "$cfg_format" ] && format="$cfg_format"
+    fi
+
+    # Write the status line script with template engine
+    cat > "$script_file" << 'STATUSLINE_EOF'
+#!/bin/bash
+# Claude Code Status Line for pwt (Power Worktrees)
+# Generated by: pwt claude-setup
+# Docs: pwt claude-setup help
+
+DEFAULT_FORMAT='__FORMAT_PLACEHOLDER__'
+PWT_DIR="${PWT_DIR:-$HOME/.pwt}"
+
+# Check if disabled via environment (session toggle)
+[ "${PWT_STATUSLINE_OFF:-}" = "1" ] && exit 0
+
+# Check if status line is enabled (global toggle)
+config_file="$PWT_DIR/claude-statusline.json"
+if [ -f "$config_file" ]; then
+  enabled=$(jq -r 'if has("enabled") then .enabled else true end' "$config_file" 2>/dev/null)
+  [ "$enabled" = "false" ] && exit 0
+fi
+
+input=$(cat)
+cwd=$(echo "$input" | jq -r '.workspace.current_dir // empty')
+[ -z "$cwd" ] && cwd=$(pwd)
+
+# Detect worktree and project (using perl for cross-shell compatibility)
+worktree="" project=""
+if echo "$cwd" | grep -q '\-worktrees/'; then
+  project=$(echo "$cwd" | perl -ne 'print $1 if /\/([^\/]+)-worktrees\//')
+  worktree=$(echo "$cwd" | perl -ne 'print $1 if /-worktrees\/([^\/]+)/')
+elif echo "$cwd" | grep -q '\.pwt/'; then
+  worktree=$(echo "$cwd" | perl -ne 'print $1 if /\.pwt\/([^\/]+)/')
+fi
+[ -z "$project" ] && project=$(basename "$cwd")
+
+# Check for format: global config first, then project-specific
+FORMAT="$DEFAULT_FORMAT"
+global_config="$PWT_DIR/claude-statusline.json"
+if [ -f "$global_config" ]; then
+  global_format=$(jq -r '.format // ""' "$global_config" 2>/dev/null)
+  [ -n "$global_format" ] && FORMAT="$global_format"
+fi
+project_config="$PWT_DIR/projects/$project/config.json"
+if [ -f "$project_config" ]; then
+  proj_format=$(jq -r '.claude_format // ""' "$project_config" 2>/dev/null)
+  [ -n "$proj_format" ] && FORMAT="$proj_format"
+fi
+
+# Git branch
+branch=""
+if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
+  branch=$(git -C "$cwd" branch --show-current 2>/dev/null)
+fi
+
+# Server port from pwt metadata
+port="" server=""
+PWT_META="${PWT_DIR:-$HOME/.pwt}/meta.json"
+if [ -n "$worktree" ] && [ -f "$PWT_META" ]; then
+  port=$(jq -r --arg wt "$worktree" '.[] | .[$wt]? | select(.) | .port // empty' "$PWT_META" 2>/dev/null | head -1)
+  if [ -n "$port" ] && lsof -ti :$port -sTCP:LISTEN >/dev/null 2>&1; then
+    server="localhost:$port"
+  else
+    port=""
+  fi
+fi
+
+# Fallback: Rails pid file
+if [ -z "$server" ] && [ -f "$cwd/tmp/pids/server.pid" ]; then
+  pid=$(cat "$cwd/tmp/pids/server.pid" 2>/dev/null)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    port=$(lsof -Pan -p "$pid" -iTCP -sTCP:LISTEN 2>/dev/null | grep -oE ':\d+' | head -1 | tr -d ':')
+    [ -n "$port" ] && server="localhost:$port"
+  fi
+fi
+
+# Custom variables from Pwtfile
+# Supports:
+#   CLAUDE_VAR="static value"     -> {var}
+#   claude_var() { echo "dynamic"; }  -> {var} (called each time)
+#
+# Find Pwtfile: prefer worktree's own Pwtfile, fallback to main app
+main_app=""
+pwtfile=""
+if [ -f "$cwd/Pwtfile" ]; then
+  # Worktree has its own Pwtfile
+  pwtfile="$cwd/Pwtfile"
+  main_app="$cwd"
+elif echo "$cwd" | grep -q '\-worktrees/'; then
+  # Fallback to main app Pwtfile
+  main_app=$(echo "$cwd" | perl -ne 'print $1 if /(.+)-worktrees\//')
+  [ -f "$main_app/Pwtfile" ] && pwtfile="$main_app/Pwtfile"
+fi
+
+# Will hold custom var replacements as "name=value" lines
+custom_vars_data=""
+if [ -n "$pwtfile" ] && [ -f "$pwtfile" ]; then
+  # Source Pwtfile in subshell to get variables and functions
+  custom_vars_data=$(
+    cd "$main_app" 2>/dev/null || true
+    # Export context vars that Pwtfile might need
+    export PWT_WORKTREE="$worktree"
+    export PWT_PROJECT="$project"
+    export PWT_PORT="$port"
+    export PWT_BRANCH="$branch"
+
+    # Source the Pwtfile
+    source "$pwtfile" 2>/dev/null
+
+    # Output CLAUDE_* variables (static) - use set to see all vars
+    set | grep '^CLAUDE_' | while IFS='=' read -r key value; do
+      var_name=$(echo "${key#CLAUDE_}" | tr '[:upper:]' '[:lower:]')
+      # Remove quotes
+      value="${value#\'}"
+      value="${value%\'}"
+      echo "$var_name=$value"
+    done
+
+    # Call claude_* functions (dynamic)
+    declare -F 2>/dev/null | awk '{print $3}' | grep '^claude_' | while read -r func; do
+      var_name="${func#claude_}"
+      value=$("$func" 2>/dev/null)
+      [ -n "$value" ] && echo "$var_name=$value"
+    done
+  )
+fi
+
+# Template engine
+output="$FORMAT"
+
+# Process conditionals: {?var:content} -> show content only if var has value
+while [[ "$output" =~ \{\?([a-z]+):([^}]*)\} ]]; do
+  var_name="${BASH_REMATCH[1]}"
+  content="${BASH_REMATCH[2]}"
+  var_value="${!var_name}"
+
+  if [ -n "$var_value" ]; then
+    # Replace {var} inside content
+    content="${content//\{$var_name\}/$var_value}"
+    output="${output/\{?$var_name:$content\}/$content}"
+  else
+    output="${output/\{?$var_name:*\}/}"
+  fi
+done
+
+# Replace simple variables first (before colors, so colors can wrap them)
+output="${output//\{worktree\}/$worktree}"
+output="${output//\{project\}/$project}"
+output="${output//\{branch\}/$branch}"
+output="${output//\{port\}/$port}"
+output="${output//\{arrow\}/❯}"
+
+# Replace custom variables from Pwtfile
+if [ -n "$custom_vars_data" ]; then
+  while IFS='=' read -r var_name var_value; do
+    [ -n "$var_name" ] && output="${output//\{$var_name\}/$var_value}"
+  done <<< "$custom_vars_data"
+fi
+
+# Server with clickable link
+if [ -n "$server" ]; then
+  url="http://$server"
+  link_start=$'\e]8;;'"${url}"$'\e\\'
+  link_end=$'\e]8;;\e\\'
+  server_linked="${link_start}${server}${link_end}"
+  output="${output//\{server\}/$server_linked}"
+else
+  output="${output//\{server\}/}"
+fi
+
+# Process colors: {color:content}, {rgb:R,G,B:content}, {#RRGGBB:content}
+# Using perl for reliable regex
+if command -v perl >/dev/null 2>&1; then
+  output=$(echo "$output" | perl -pe '
+    # Named colors
+    s/\{magenta:([^}]*)\}/\033[35m$1\033[0m/g;
+    s/\{cyan:([^}]*)\}/\033[36m$1\033[0m/g;
+    s/\{yellow:([^}]*)\}/\033[33m$1\033[0m/g;
+    s/\{green:([^}]*)\}/\033[32m$1\033[0m/g;
+    s/\{blue:([^}]*)\}/\033[34m$1\033[0m/g;
+    s/\{red:([^}]*)\}/\033[31m$1\033[0m/g;
+    s/\{dim:([^}]*)\}/\033[2m$1\033[0m/g;
+    s/\{bold:([^}]*)\}/\033[1m$1\033[0m/g;
+    # RGB: {rgb:R,G,B:content}
+    s/\{rgb:(\d+),(\d+),(\d+):([^}]*)\}/\033[38;2;$1;$2;$3m$4\033[0m/g;
+    # Hex: {#RRGGBB:content}
+    s/\{#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2}):([^}]*)\}/sprintf("\033[38;2;%d;%d;%dm%s\033[0m", hex($1), hex($2), hex($3), $4)/ge;
+  ')
+fi
+
+# Clean up empty brackets/parens from missing values
+output=$(echo "$output" | sed 's/\[\]//g; s/()//g; s/  */ /g; s/^ *//; s/ *$//')
+
+echo -en "$output"
+STATUSLINE_EOF
+
+    # Insert the actual format into the script
+    sed -i '' "s|__FORMAT_PLACEHOLDER__|$format|g" "$script_file"
+
+    chmod +x "$script_file"
+
+    echo -e "${GREEN}✓ Claude Code status line installed${NC}"
+    echo ""
+    echo "Format: $format"
+    echo ""
+    echo "Commands:"
+    echo "  pwt claude-setup vars      # See all variables"
+    echo "  pwt claude-setup format    # Change format"
+    echo "  pwt claude-setup preview   # Test output"
+    echo ""
+    echo "Restart Claude Code or run /statusline to apply."
+}
+
 # Command: config
 # Configure current project (zero-config override)
 cmd_config() {
@@ -6594,7 +7349,7 @@ cmd_config() {
 
     # Ensure project is detected
     if [ -z "$CURRENT_PROJECT" ]; then
-        echo -e "${RED}Error: No project detected${NC}"
+        pwt_error "Error: No project detected"
         echo "Run from inside a git repository."
         exit 1
     fi
@@ -6978,6 +7733,21 @@ cmd_port() {
     echo "$port"
 }
 
+# Handle short flags that look like commands (before the main loop)
+case "${1:-}" in
+    -v|-V)
+        echo "pwt version $PWT_VERSION"
+        exit 0
+        ;;
+    -h)
+        set -- "help"
+        ;;
+    -q)
+        PWT_QUIET=true
+        shift
+        ;;
+esac
+
 # Parse global flags
 while [[ "${1:-}" == --* ]]; do
     case "$1" in
@@ -6986,13 +7756,25 @@ while [[ "${1:-}" == --* ]]; do
             PROJECT_EXPLICIT=true
             shift 2
             ;;
-        --help|-h)
+        --help)
             set -- "help"
             break
             ;;
+        --version)
+            echo "pwt version $PWT_VERSION"
+            exit 0
+            ;;
+        --quiet)
+            PWT_QUIET=true
+            shift
+            ;;
+        --verbose)
+            PWT_VERBOSE=true
+            shift
+            ;;
         *)
             echo -e "${RED}Unknown option: $1${NC}"
-            exit 1
+            exit $EXIT_USAGE
             ;;
     esac
 done
@@ -7233,7 +8015,8 @@ case "${1:-}" in
         cmd_step "$@"
         ;;
     doctor)
-        cmd_doctor
+        shift  # remove "doctor" from args
+        cmd_doctor "$@"
         ;;
     benchmark)
         shift  # remove "benchmark" from args
@@ -7269,11 +8052,18 @@ case "${1:-}" in
     setup-shell)
         cmd_setup_shell
         ;;
+    claude-setup)
+        shift  # remove "claude-setup" from args
+        cmd_claude_setup "$@"
+        ;;
     project)
         cmd_project "${2:-}" "${3:-}" "${4:-}" "${5:-}"
         ;;
     port)
         cmd_port "${2:-}"
+        ;;
+    version)
+        echo "pwt version $PWT_VERSION"
         ;;
     help|"")
         echo "pwt - Power Worktrees"
@@ -7375,8 +8165,14 @@ case "${1:-}" in
             run_pwtfile_command "$_pwtfile_cmd" "$@"
         else
             echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
+            # Try to suggest similar commands
+            _known_commands="create list tree info current use pick select remove cd run shell editor ai open diff conflicts context copy marker server fix-port auto-remove restore doctor benchmark meta project port help version topology for-each"
+            _suggestion=$(find_similar "$_pwtfile_cmd" "$_known_commands")
+            if [ -n "$_suggestion" ]; then
+                echo -e "Did you mean: ${GREEN}pwt $_suggestion${NC}?"
+            fi
             echo "Run 'pwt help' for usage"
-            exit 1
+            exit $EXIT_USAGE
         fi
         ;;
 esac

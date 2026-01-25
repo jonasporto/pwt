@@ -6834,6 +6834,7 @@ cmd_claude_setup() {
             echo "  toggle --session     Toggle for current session only"
             echo "  on | off             Enable/disable globally"
             echo "  on|off --session     Show command for session toggle"
+            echo "  pwt-only [on|off]    Only show in pwt projects/worktrees"
             echo "  reset                Reset to default configuration"
             echo ""
             echo "Format Template:"
@@ -7110,6 +7111,36 @@ cmd_claude_setup() {
             return 0
             ;;
 
+        pwt-only)
+            local state="${2:-}"
+            [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+            if [ -z "$state" ]; then
+                # Show current state
+                local current=$(jq -r '.pwt_only // false' "$config_file")
+                if [ "$current" = "true" ]; then
+                    echo "pwt-only: ${GREEN}on${NC} (status line only shows in pwt projects/worktrees)"
+                else
+                    echo "pwt-only: ${YELLOW}off${NC} (status line shows everywhere)"
+                fi
+            elif [ "$state" = "on" ]; then
+                local tmp=$(mktemp)
+                jq '.pwt_only = true' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                echo -e "${GREEN}✓ pwt-only enabled${NC}"
+                echo "Status line will only show in pwt projects/worktrees."
+                echo "Run 'pwt claude-setup install' to apply."
+            elif [ "$state" = "off" ]; then
+                local tmp=$(mktemp)
+                jq '.pwt_only = false' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                echo -e "${YELLOW}✓ pwt-only disabled${NC}"
+                echo "Status line will show in all directories."
+                echo "Run 'pwt claude-setup install' to apply."
+            else
+                echo -e "${RED}Usage: pwt claude-setup pwt-only [on|off]${NC}"
+                return 1
+            fi
+            return 0
+            ;;
+
         install|"")
             ;;
 
@@ -7155,14 +7186,22 @@ cwd=$(echo "$input" | jq -r '.workspace.current_dir // empty')
 [ -z "$cwd" ] && cwd=$(pwd)
 
 # Detect worktree and project (using perl for cross-shell compatibility)
-worktree="" project=""
+worktree="" project="" is_pwt_context=false
 if echo "$cwd" | grep -q '\-worktrees/'; then
   project=$(echo "$cwd" | perl -ne 'print $1 if /\/([^\/]+)-worktrees\//')
   worktree=$(echo "$cwd" | perl -ne 'print $1 if /-worktrees\/([^\/]+)/')
+  is_pwt_context=true
 elif echo "$cwd" | grep -q '\.pwt/'; then
   worktree=$(echo "$cwd" | perl -ne 'print $1 if /\.pwt\/([^\/]+)/')
+  is_pwt_context=true
 fi
 [ -z "$project" ] && project=$(basename "$cwd")
+
+# Check pwt-only mode: if enabled, only show status in pwt projects/worktrees
+if [ -f "$config_file" ]; then
+  pwt_only=$(jq -r '.pwt_only // false' "$config_file" 2>/dev/null)
+  [ "$pwt_only" = "true" ] && [ "$is_pwt_context" = "false" ] && exit 0
+fi
 
 # Check for format: global config first, then project-specific
 FORMAT="$DEFAULT_FORMAT"

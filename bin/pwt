@@ -2058,10 +2058,30 @@ check_port_status() {
         return
     fi
 
-    # Port is in use - show process info
+    # Port is in use - get process info
     local first_pid=$(echo "$pids" | head -1)
     local proc=$(ps -p "$first_pid" -o comm= 2>/dev/null || echo "?")
-    echo -e "${GREEN}[port $port: $proc]${NC}"
+    local proc_path=$(ps -p "$first_pid" -o command= 2>/dev/null || echo "")
+
+    # Filter out known system processes (not dev servers)
+    # These commonly bind to ports but aren't related to development
+    local is_system_process=false
+    case "$proc" in
+        ControlCenter|controlcenter|rapportd|AirPlayXPCHelper|sharingd)
+            is_system_process=true
+            ;;
+    esac
+    # Also check if it's a system path
+    if [[ "$proc_path" == /System/* ]] || [[ "$proc_path" == /usr/libexec/* ]]; then
+        is_system_process=true
+    fi
+
+    if [ "$is_system_process" = true ]; then
+        # System process on this port - treat as if port is available for dev
+        echo -e "${YELLOW}[port $port: system]${NC}"
+    else
+        echo -e "${GREEN}[port $port: $proc]${NC}"
+    fi
 }
 
 # Prefetch remote refs once (for list performance)

@@ -50,6 +50,13 @@ teardown() {
     [ -d "$TEST_WORKTREES/TEST-1234" ]
 }
 
+@test "pwt add is alias for create" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" add TEST-ADD HEAD
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/TEST-ADD" ]
+}
+
 @test "pwt create shows next steps after success" {
     cd "$TEST_REPO"
     run "$PWT_BIN" create TEST-NEXTSTEPS HEAD

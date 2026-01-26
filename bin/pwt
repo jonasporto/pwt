@@ -7301,9 +7301,9 @@ case "${1:-}" in
     init)
         cmd_init "${2:-}"
         ;;
-    create)
+    create|add)
         require_project --clone
-        shift  # remove "create" from args
+        shift  # remove "create/add" from args
         cmd_create "$@"
         ;;
     list|ls)
@@ -7486,7 +7486,7 @@ case "${1:-}" in
         echo "Commands:"
         echo "  init [url]                     Initialize project (clone URL or configure current repo)"
         echo "  <name> init [url]              Initialize with specific name (pwt pc init <url>)"
-        echo "  create <branch> [base] [desc]  Create new worktree (-e -a --from --from-current --dry-run)"
+        echo "  create|add <name> [base] [desc] Create new worktree (-e -a --from --from-current --dry-run)"
         echo "  list [flags]                   List worktrees (-v/--verbose, --dirty, --porcelain)"
         echo "  list statusline                Output for shell prompts"
         echo "  tree [--all|--dirty|--ports]   Visual tree view of worktrees"

@@ -331,6 +331,29 @@ EOF
     [[ "$output" == *"ARGS:--foo bar --baz"* ]]
 }
 
+@test "pwt <custom_cmd> PWT_ARGS is always defined (even when empty)" {
+    cd "$TEST_REPO"
+
+    # Create Pwtfile that uses set -u (strict mode) and iterates over PWT_ARGS
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+stricttest() {
+    set -u  # Enable strict mode - unbound variables will error
+    echo "BEFORE_LOOP"
+    for arg in $PWT_ARGS; do
+        echo "ARG:$arg"
+    done
+    echo "AFTER_LOOP"
+}
+EOF
+
+    # Run WITHOUT arguments - should not fail with "unbound variable"
+    run "$PWT_BIN" stricttest
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"BEFORE_LOOP"* ]]
+    [[ "$output" == *"AFTER_LOOP"* ]]
+    [[ "$output" != *"unbound variable"* ]]
+}
+
 @test "pwt <custom_cmd> in worktree gets correct context" {
     cd "$TEST_REPO"
 

@@ -5113,7 +5113,7 @@ cmd_ai() {
     fi
 
     # Collect args after --
-    if [ "$1" = "--" ]; then
+    if [ "${1:-}" = "--" ]; then
         shift
         ai_args=("$@")
     fi
@@ -5234,285 +5234,6 @@ cmd_diff() {
 
     # Show git diff using commit hashes (works across worktrees via main repo)
     git -C "$MAIN_APP" diff "$commit2".."$commit1" --stat
-}
-
-# Command: conflicts
-# Show file overlap between worktrees (files modified in multiple worktrees)
-# Usage: pwt conflicts [worktree1] [worktree2]
-#   No args: show all overlaps
-#   Two args: compare specific pair
-cmd_conflicts() {
-    require_project --info-only
-
-    local wt1="$1"
-    local wt2="$2"
-
-    if [ -n "$wt1" ] && [ -n "$wt2" ]; then
-        # Compare specific pair
-        compare_worktree_conflicts "$wt1" "$wt2"
-    else
-        # Compare all worktrees
-        show_all_conflicts
-    fi
-}
-
-# Helper: get modified files for a worktree (vs default branch)
-get_modified_files() {
-    local dir="$1"
-    git -C "$dir" diff --name-only "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null || true
-}
-
-# Helper: compare two worktrees for conflicts
-compare_worktree_conflicts() {
-    local wt1="$1"
-    local wt2="$2"
-
-    local path1 path2
-
-    # Resolve paths
-    if [ "$wt1" = "@" ]; then
-        path1="$MAIN_APP"
-    else
-        path1="$WORKTREES_DIR/$wt1"
-    fi
-
-    if [ "$wt2" = "@" ]; then
-        path2="$MAIN_APP"
-    else
-        path2="$WORKTREES_DIR/$wt2"
-    fi
-
-    if [ ! -d "$path1" ]; then
-        echo -e "${RED}Worktree not found: $wt1${NC}"
-        exit 1
-    fi
-    if [ ! -d "$path2" ]; then
-        echo -e "${RED}Worktree not found: $wt2${NC}"
-        exit 1
-    fi
-
-    echo -e "${BLUE}Comparing:${NC} $wt1 vs $wt2"
-    echo ""
-
-    local files1=$(get_modified_files "$path1")
-    local files2=$(get_modified_files "$path2")
-
-    local conflicts=$(comm -12 <(echo "$files1" | sort) <(echo "$files2" | sort))
-
-    if [ -z "$conflicts" ]; then
-        echo -e "${GREEN}No file conflicts found${NC}"
-    else
-        local count=$(echo "$conflicts" | wc -l | tr -d ' ')
-        echo -e "${YELLOW}⚠️  $count file(s) modified in both worktrees:${NC}"
-        echo "$conflicts" | while read -r file; do
-            echo "  $file"
-        done
-    fi
-}
-
-# Helper: show all conflicts across all worktrees
-show_all_conflicts() {
-    if [ ! -d "$WORKTREES_DIR" ]; then
-        echo -e "${YELLOW}No worktrees found${NC}"
-        return 0
-    fi
-
-    local tmpfile=$(mktemp)
-    trap "rm -f '$tmpfile'" EXIT
-
-    # Collect all modified files with their worktree names
-    for dir in "$WORKTREES_DIR"/*/; do
-        [ -d "$dir" ] || continue
-        local name=$(basename "$dir")
-        get_modified_files "$dir" | while read -r file; do
-            [ -n "$file" ] && echo "$name:$file" >> "$tmpfile"
-        done
-    done
-
-    if [ ! -s "$tmpfile" ]; then
-        echo -e "${GREEN}No modified files in any worktree${NC}"
-        return 0
-    fi
-
-    # Find files that appear in multiple worktrees
-    local duplicates=$(cut -d: -f2 "$tmpfile" | sort | uniq -d)
-
-    if [ -z "$duplicates" ]; then
-        echo -e "${GREEN}No file conflicts found${NC}"
-        echo ""
-        echo -e "${BLUE}Summary:${NC}"
-        echo "  Worktrees with changes: $(cut -d: -f1 "$tmpfile" | sort -u | wc -l | tr -d ' ')"
-        echo "  Total files modified: $(cut -d: -f2 "$tmpfile" | sort -u | wc -l | tr -d ' ')"
-    else
-        local count=$(echo "$duplicates" | wc -l | tr -d ' ')
-        echo -e "${YELLOW}⚠️  $count file(s) modified in multiple worktrees:${NC}"
-        echo ""
-        echo "$duplicates" | while read -r file; do
-            echo -e "${YELLOW}$file${NC}"
-            grep ":$file$" "$tmpfile" | cut -d: -f1 | sed 's/^/  /'
-        done
-    fi
-}
-
-# Command: context
-# Generate markdown context for AI agents about worktrees
-# Usage: pwt context [worktree]
-#   No args: context for all worktrees
-#   worktree: context focused on specific worktree
-cmd_context() {
-    require_project --info-only
-
-    local focus_wt="$1"
-
-    echo "# Worktree Context: ${CURRENT_PROJECT}"
-    echo ""
-    echo "Generated: $(date '+%Y-%m-%d %H:%M')"
-    echo ""
-
-    # Project info
-    echo "## Project"
-    echo ""
-    echo "| Key | Value |"
-    echo "|-----|-------|"
-    echo "| Project | ${CURRENT_PROJECT} |"
-    echo "| Main App | ${MAIN_APP} |"
-    echo "| Worktrees Dir | ${WORKTREES_DIR} |"
-    [ -n "$PROJECT_REMOTE" ] && echo "| Remote | ${PROJECT_REMOTE} |"
-    echo ""
-
-    # Active worktrees
-    echo "## Active Worktrees"
-    echo ""
-    echo "| Worktree | Branch | Base | Status | Ahead/Behind |"
-    echo "|----------|--------|------|--------|--------------|"
-
-    # Main app
-    local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "?")
-    local main_hash=$(get_short_hash "$MAIN_APP")
-    local main_status=$(get_status_symbols "$MAIN_APP")
-    echo "| @ (main) | ${main_branch} | - | ${main_status:-clean} | - |"
-
-    # Worktrees
-    if [ -d "$WORKTREES_DIR" ]; then
-        for dir in "$WORKTREES_DIR"/*/; do
-            [ -d "$dir" ] || continue
-            local name=$(basename "$dir")
-            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
-            local base=$(get_base_branch "$name" "$dir")
-            local status=$(get_status_symbols "$dir")
-            local divergence=$(get_divergence "$dir" "origin/${DEFAULT_BRANCH:-master}")
-
-            # Get description from metadata
-            local desc=$(get_metadata "$name" "description")
-
-            echo "| ${name} | ${branch} | ${base} | ${status:-clean} | ${divergence:-synced} |"
-        done
-    fi
-    echo ""
-
-    # Worktree descriptions
-    echo "## Worktree Details"
-    echo ""
-    if [ -d "$WORKTREES_DIR" ]; then
-        for dir in "$WORKTREES_DIR"/*/; do
-            [ -d "$dir" ] || continue
-            local name=$(basename "$dir")
-
-            # If focus_wt is set, only show that worktree
-            if [ -n "$focus_wt" ] && [ "$name" != "$focus_wt" ]; then
-                continue
-            fi
-
-            local desc=$(get_metadata "$name" "description")
-            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
-            local base=$(get_base_branch "$name" "$dir")
-
-            echo "### ${name}"
-            echo ""
-            [ -n "$desc" ] && echo "**Purpose:** ${desc}"
-            echo ""
-            echo "- **Branch:** ${branch}"
-            echo "- **Base:** ${base}"
-            echo "- **Path:** ${dir}"
-            echo ""
-
-            # Recent commits (last 5)
-            echo "**Recent commits:**"
-            echo ""
-            echo '```'
-            git -C "$dir" log --oneline -5 2>/dev/null || echo "No commits"
-            echo '```'
-            echo ""
-
-            # Modified files (summary)
-            local modified=$(git -C "$dir" diff --name-only "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null | wc -l | tr -d ' ')
-            if [ "$modified" -gt 0 ]; then
-                echo "**Modified files:** ${modified} file(s) changed from ${base}"
-                echo ""
-                if [ "$modified" -le 20 ]; then
-                    echo '```'
-                    git -C "$dir" diff --name-only "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null
-                    echo '```'
-                else
-                    echo '```'
-                    git -C "$dir" diff --name-only "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null | head -15
-                    echo "... and $((modified - 15)) more files"
-                    echo '```'
-                fi
-                echo ""
-            fi
-        done
-    fi
-
-    # Conflicts section
-    if [ -z "$focus_wt" ]; then
-        echo "## Potential Conflicts"
-        echo ""
-        echo "Files modified in multiple worktrees:"
-        echo ""
-
-        local tmpfile=$(mktemp)
-        trap "rm -f '$tmpfile'" EXIT
-
-        # Collect all modified files
-        for dir in "$WORKTREES_DIR"/*/; do
-            [ -d "$dir" ] || continue
-            local name=$(basename "$dir")
-            get_modified_files "$dir" | while read -r file; do
-                [ -n "$file" ] && echo "$name:$file" >> "$tmpfile"
-            done
-        done
-
-        if [ -s "$tmpfile" ]; then
-            local duplicates=$(cut -d: -f2 "$tmpfile" | sort | uniq -d)
-            if [ -n "$duplicates" ]; then
-                local count=$(echo "$duplicates" | wc -l | tr -d ' ')
-                echo "⚠️ **${count} file(s)** have potential merge conflicts:"
-                echo ""
-                echo '```'
-                echo "$duplicates" | head -20
-                [ $(echo "$duplicates" | wc -l) -gt 20 ] && echo "... and more"
-                echo '```'
-            else
-                echo "✅ No conflicting files detected."
-            fi
-        else
-            echo "No modified files in worktrees."
-        fi
-        echo ""
-    fi
-
-    # Instructions for AI
-    echo "## Instructions for AI Agents"
-    echo ""
-    echo "When working in a worktree:"
-    echo ""
-    echo "1. **Stay focused** on the worktree's purpose (see description above)"
-    echo "2. **Avoid modifying** files that are being changed in other worktrees (see conflicts)"
-    echo "3. **Coordinate** if you need to touch a conflicting file"
-    echo "4. **Base branch** - always create PRs against the base branch shown"
-    echo "5. **Status symbols:** + = staged, ! = modified, ? = untracked"
-    echo ""
 }
 
 # Command: copy
@@ -5704,101 +5425,6 @@ cmd_doctor() {
     else
         echo -e "${GREEN}All checks passed!${NC}"
     fi
-}
-
-# Command: benchmark
-# Show disk usage comparison between worktrees and clones
-# Usage: pwt benchmark [N]
-cmd_benchmark() {
-    require_project
-
-    local n="${1:-1}"
-
-    # Validate N
-    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ]; then
-        echo -e "${RED}Error: N must be a positive integer${NC}"
-        echo "Usage: pwt benchmark [N]"
-        exit 1
-    fi
-
-    local run_id="bench-$$"
-    local bench_dir=$(mktemp -d)
-
-    echo -e "${BLUE}pwt benchmark${NC}"
-    echo "Repo: $MAIN_APP"
-    echo "N:    $n"
-    echo ""
-
-    # Cleanup via inline trap (captures variables)
-    trap "
-        if [ -d '$bench_dir/worktrees' ]; then
-            for d in '$bench_dir/worktrees'/*; do
-                [ -d \"\$d\" ] || continue
-                git -C '$MAIN_APP' worktree remove \"\$d\" --force 2>/dev/null || true
-            done
-            git -C '$MAIN_APP' branch --list 'bench/$run_id-*' 2>/dev/null | xargs -r git -C '$MAIN_APP' branch -d 2>/dev/null || true
-        fi
-        rm -rf '$bench_dir' 2>/dev/null || true
-    " EXIT
-
-    # Helper for human-readable sizes
-    _human_du() { du -sh "$1" 2>/dev/null | cut -f1; }
-
-    # Show main repo sizes
-    local main_git=$(_human_du "$MAIN_APP/.git")
-    local main_objects=$(_human_du "$MAIN_APP/.git/objects")
-    echo "Main repo:"
-    echo -e "  .git:         ${GREEN}$main_git${NC}"
-    echo -e "  .git/objects: ${GREEN}$main_objects${NC}"
-    echo ""
-
-    # Benchmark worktrees
-    echo "Creating $n worktree(s)..."
-    mkdir -p "$bench_dir/worktrees"
-
-    for i in $(seq 1 "$n"); do
-        local wt="$bench_dir/worktrees/wt-$i"
-        local br="bench/$run_id-$i"
-        git -C "$MAIN_APP" worktree add "$wt" -b "$br" HEAD --quiet 2>/dev/null
-        printf "  wt-%d .git: %s\n" "$i" "$(_human_du "$wt/.git")"
-    done
-
-    echo ""
-    echo "After $n worktree(s):"
-    echo -e "  main .git:        ${GREEN}$(_human_du "$MAIN_APP/.git")${NC}"
-    echo -e "  main objects:     ${GREEN}$(_human_du "$MAIN_APP/.git/objects")${NC}"
-    echo -e "  worktrees total:  ${GREEN}$(_human_du "$bench_dir/worktrees")${NC}"
-    echo ""
-
-    # Benchmark clones
-    echo "Creating $n clone(s)..."
-    mkdir -p "$bench_dir/clones"
-
-    for i in $(seq 1 "$n"); do
-        local c="$bench_dir/clones/clone-$i"
-        git clone --quiet "$MAIN_APP" "$c" 2>/dev/null
-        printf "  clone-%d .git: %s\n" "$i" "$(_human_du "$c/.git")"
-    done
-
-    echo ""
-    echo "After $n clone(s):"
-    echo -e "  clones total:     ${GREEN}$(_human_du "$bench_dir/clones")${NC}"
-    echo ""
-
-    # Summary
-    local wt_total=$(_human_du "$bench_dir/worktrees")
-    local clone_total=$(_human_du "$bench_dir/clones")
-
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo -e "Summary (${GREEN}$n${NC} instances):"
-    echo -e "  Worktrees: ${GREEN}$wt_total${NC} (shared .git)"
-    echo -e "  Clones:    ${GREEN}$clone_total${NC} (.git × $n)"
-    echo ""
-    echo "Worktrees share Git objects, not files."
-    echo "Clones duplicate everything."
-    echo ""
-    echo -e "${GREEN}✓${NC} Done (cleanup automatic)"
 }
 
 # Command: select
@@ -6035,313 +5661,6 @@ cmd_pick() {
     cmd_use "$target"
 }
 
-# Command: topology
-# Show project topology (shared vs per-worktree) using LLM
-# Usage: pwt topology [ai_tool] [--json]
-cmd_topology() {
-    local output_format="ascii"
-    local ai_override=""
-
-    # Parse arguments
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --json)
-                output_format="json"
-                shift
-                ;;
-            -h|--help)
-                echo "Usage: pwt topology [ai_tool] [--json]"
-                echo ""
-                echo "Analyze Pwtfile to show project topology:"
-                echo "  - [SHARED] services (postgres, redis, solr)"
-                echo "  - [PER-WT] per-worktree services (rails, vite)"
-                echo "  - [WARN] potential risks"
-                echo ""
-                echo "Arguments:"
-                echo "  ai_tool     AI to use (claude, codex, ollama, etc.)"
-                echo ""
-                echo "Options:"
-                echo "  --json      Output as JSON"
-                echo ""
-                echo "Examples:"
-                echo "  pwt topology              # uses default (claude)"
-                echo "  pwt topology codex        # use codex"
-                echo ""
-                echo "Note: Runs an LLM, may take a moment"
-                return 0
-                ;;
-            -*)
-                echo -e "${RED}Unknown option: $1${NC}" >&2
-                return 1
-                ;;
-            *)
-                # First non-option argument is the AI tool
-                if [ -z "$ai_override" ]; then
-                    ai_override="$1"
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    # Get AI command: arg > config > default
-    local ai_cmd
-    if [ -n "$ai_override" ]; then
-        ai_cmd="$ai_override"
-    else
-        ai_cmd=$(get_project_config "$CURRENT_PROJECT" "ai" 2>/dev/null)
-        [ -z "$ai_cmd" ] && ai_cmd="claude"
-    fi
-
-    # Check if AI command exists
-    if ! command -v "$ai_cmd" &>/dev/null; then
-        echo -e "${RED}Error: AI command '$ai_cmd' not found${NC}" >&2
-        echo "Install it or configure: pwt project set $CURRENT_PROJECT ai <command>" >&2
-        return 1
-    fi
-
-    # Determine project root
-    local project_root="$MAIN_APP"
-    if [ ! -d "$project_root" ]; then
-        echo -e "${RED}Error: Project root not found${NC}" >&2
-        return 1
-    fi
-
-    local start_time=$(date +%s)
-    echo -e "${BLUE}Analyzing project topology...${NC}" >&2
-
-    # Gather context - focus on Pwtfile and pwt config only
-    local context=""
-    local files_found=""
-
-    # Pwtfile (primary source of truth)
-    local pwtfile_path=""
-    pwtfile_path=$(get_project_config "$CURRENT_PROJECT" "pwtfile" 2>/dev/null)
-    [ -z "$pwtfile_path" ] && pwtfile_path="$project_root/Pwtfile"
-    if [ -f "$pwtfile_path" ]; then
-        context+="=== Pwtfile ===\n$(cat "$pwtfile_path")\n\n"
-        files_found+="Pwtfile "
-    fi
-
-    # pwt project config
-    local project_config="$PROJECTS_DIR/$CURRENT_PROJECT/config.json"
-    if [ -f "$project_config" ]; then
-        context+="=== pwt project config ===\n$(cat "$project_config")\n\n"
-        files_found+="pwt-config "
-    fi
-
-    # Worktree info
-    local worktree_info=""
-    if [ -d "$WORKTREES_DIR" ]; then
-        local wt_count=$(ls -d "$WORKTREES_DIR"/*/ 2>/dev/null | wc -l | tr -d ' ')
-        worktree_info+="Worktrees: $wt_count\n"
-        worktree_info+="Directory: $WORKTREES_DIR\n"
-
-        # Port allocation (sample)
-        init_metadata
-        for wt_path in $(ls -d "$WORKTREES_DIR"/*/ 2>/dev/null | head -3); do
-            local wt_name=$(basename "$wt_path")
-            local wt_port=$(get_metadata "$wt_name" "port" 2>/dev/null)
-            [ -n "$wt_port" ] && worktree_info+="  $wt_name: :$wt_port\n"
-        done
-    fi
-    [ -n "$worktree_info" ] && context+="=== Worktrees ===\n$worktree_info\n"
-
-    if [ -z "$files_found" ]; then
-        echo -e "${YELLOW}No Pwtfile found. Create one with: pwt init${NC}" >&2
-        return 1
-    fi
-
-    echo -e "${DIM}Sources: ${files_found}${NC}" >&2
-
-    # Build the prompt
-    # Note: LLMs don't reliably output ANSI escape codes, so we use text markers
-    local color_instruction="Do NOT use ANSI color codes. Use text markers instead:
-- Mark shared services with [SHARED]
-- Mark per-worktree services with [PER-WT]
-- Mark warnings/risks with [WARN]
-Keep the diagram clean and readable."
-
-    local format_instruction=""
-    if [ "$output_format" = "json" ]; then
-        format_instruction="Output ONLY valid JSON with this structure:
-{
-  \"shared\": [{\"name\": \"...\", \"type\": \"...\", \"port\": \"...\", \"evidence\": \"...\"}],
-  \"per_worktree\": [{\"name\": \"...\", \"type\": \"...\", \"evidence\": \"...\"}],
-  \"relationships\": [{\"from\": \"...\", \"to\": \"...\", \"type\": \"uses\"}],
-  \"risks\": [\"...\"]
-}"
-    else
-        format_instruction="Output an ASCII diagram with:
-1. Unicode box-drawing characters (┌ ┐ └ ┘ │ ─ ┬ ┴ ├ ┤ ┼)
-2. Arrows showing relationships (→ ← ↑ ↓ ◀ ▶)
-3. Clear labels inside boxes
-4. A legend at the bottom
-5. Brief risk notes if applicable
-
-Example style:
-┌─────────────────┐
-│  Rails (WT)     │
-│  per-worktree   │
-└────────┬────────┘
-         │ uses
-         ▼
-┌─────────────────┐
-│  Postgres       │
-│  shared :5432   │
-└─────────────────┘"
-    fi
-
-    local prompt="Analyze this Pwtfile for 'pwt' (a git worktree manager).
-
-CONTEXT: Multiple worktrees run simultaneously, each with its own port (5002, 5004, etc).
-
-FROM THE PWTFILE, identify:
-1. [SHARED] - services shared across worktrees (e.g., postgres, redis, solr)
-2. [PER-WT] - services each worktree runs its own (e.g., rails, vite)
-3. [WARN] - potential risks (namespace collisions, shared state)
-
-$format_instruction
-
-$color_instruction
-
-$context
-
-PROJECT: $CURRENT_PROJECT
-
-OUTPUT: Compact ASCII diagram. No ANSI codes. Max 40 lines."
-
-    # Call the AI and capture output
-    echo "" >&2
-    local ai_output
-    local ai_exit_code
-
-    ai_output=$(echo -e "$prompt" | "$ai_cmd" -p 2>&1) && ai_exit_code=0 || ai_exit_code=$?
-
-    # If -p flag failed, try --print
-    if [ $ai_exit_code -ne 0 ] || [ -z "$ai_output" ]; then
-        ai_output=$(echo -e "$prompt" | "$ai_cmd" --print 2>&1) && ai_exit_code=0 || ai_exit_code=$?
-    fi
-
-    # Check for common API errors and provide user-friendly messages
-    if echo "$ai_output" | grep -qi "authentication_error\|401\|unauthorized\|token.*expired"; then
-        echo -e "${RED}Authentication Error${NC}" >&2
-        echo "" >&2
-        echo "Your API credentials have expired or are invalid." >&2
-        echo "" >&2
-        echo "To fix this:" >&2
-        echo "  1. Run: $ai_cmd /login" >&2
-        echo "  2. Or set a valid API key in your environment" >&2
-        echo "" >&2
-        echo "You can also use a different AI tool:" >&2
-        echo "  pwt topology ollama    # if you have Ollama installed" >&2
-        echo "  pwt project set $CURRENT_PROJECT ai <command>" >&2
-        return 1
-    fi
-
-    if echo "$ai_output" | grep -qi "rate_limit\|429\|too many requests"; then
-        echo -e "${RED}Rate Limit Exceeded${NC}" >&2
-        echo "The AI API is rate-limited. Please wait a moment and try again." >&2
-        return 1
-    fi
-
-    if echo "$ai_output" | grep -qi "API Error\|error.*type"; then
-        echo -e "${RED}API Error${NC}" >&2
-        echo "$ai_output" >&2
-        echo "" >&2
-        echo "Try running: $ai_cmd /login" >&2
-        return 1
-    fi
-
-    # Success - show output
-    echo "$ai_output"
-
-    # Show timing
-    local end_time=$(date +%s)
-    local elapsed=$((end_time - start_time))
-    echo "" >&2
-    echo -e "${DIM}Generated in ${elapsed}s${NC}" >&2
-}
-
-# Command: marker
-# Set/get/clear marker on worktree
-# Usage: pwt marker [worktree] [marker]
-#        pwt marker TICKET-123 🚧      # set marker
-#        pwt marker TICKET-123         # show marker
-#        pwt marker --clear            # clear current worktree marker
-#        pwt marker TICKET-123 --clear # clear specific marker
-cmd_marker() {
-    local target=""
-    local marker=""
-    local clear=false
-
-    # Parse arguments
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --clear|-c)
-                clear=true
-                shift
-                ;;
-            -*)
-                echo -e "${RED}Unknown option: $1${NC}"
-                exit 1
-                ;;
-            *)
-                if [ -z "$target" ]; then
-                    target="$1"
-                else
-                    marker="$1"
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    # If no target, use current worktree
-    if [ -z "$target" ]; then
-        if [ -n "${PWT_WORKTREE:-}" ]; then
-            target="$PWT_WORKTREE"
-        else
-            # Try to detect from PWD
-            if [[ "$PWD" == *"-worktrees/"* ]]; then
-                target=$(basename "$PWD")
-            else
-                echo -e "${RED}Error: Not in a worktree. Specify target.${NC}"
-                exit 1
-            fi
-        fi
-    fi
-
-    # Verify worktree exists
-    local worktree_dir="$WORKTREES_DIR/$target"
-    if [ ! -d "$worktree_dir" ]; then
-        echo -e "${RED}Error: Worktree not found: $target${NC}"
-        exit 1
-    fi
-
-    # Clear marker
-    if [ "$clear" = true ]; then
-        update_metadata "$target" "marker" ""
-        echo -e "${GREEN}✓${NC} Cleared marker for $target"
-        return 0
-    fi
-
-    # Show current marker
-    if [ -z "$marker" ]; then
-        local current=$(get_metadata "$target" "marker")
-        if [ -n "$current" ]; then
-            echo "$current"
-        else
-            echo "(no marker)"
-        fi
-        return 0
-    fi
-
-    # Set marker
-    update_metadata "$target" "marker" "$marker"
-    echo -e "${GREEN}✓${NC} Set marker for $target: $marker"
-}
-
 # Command: for-each
 # Run command in all worktrees
 # Usage: pwt for-each <command...>
@@ -6524,105 +5843,6 @@ cmd_step() {
     export PWT_ARGS="$*"
 
     run_single_pwtfile "$pwtfile" "$func_name" "Step"
-}
-
-# Command: prompt
-# Output ready-to-use prompt integration snippets
-# Usage: pwt prompt [zsh|bash|starship]
-cmd_prompt() {
-    local shell_type="${1:-zsh}"
-
-    case "$shell_type" in
-        zsh)
-            cat << 'EOF'
-# pwt zsh prompt integration
-# Add to ~/.zshrc after eval "$(pwt shell-init)"
-
-# Option 1: Simple - show worktree name in prompt
-pwt_prompt_info() {
-    if [[ -n "$PWT_WORKTREE" ]]; then
-        echo "[${PWT_WORKTREE}] "
-    fi
-}
-PROMPT='$(pwt_prompt_info)'$PROMPT
-
-# Option 2: Rich - show name + port + status (slower)
-pwt_prompt_rich() {
-    local info=$(pwt current --name 2>/dev/null)
-    if [[ -n "$info" && "$info" != "Not in a worktree" ]]; then
-        local port=$(pwt current --port 2>/dev/null)
-        [[ -n "$port" ]] && info+=":$port"
-        echo "[$info] "
-    fi
-}
-# PROMPT='$(pwt_prompt_rich)'$PROMPT
-
-# Option 3: RPROMPT (right side) - non-blocking
-RPROMPT='${PWT_WORKTREE:+[$PWT_WORKTREE]}'
-EOF
-            ;;
-        bash)
-            cat << 'EOF'
-# pwt bash prompt integration
-# Add to ~/.bashrc after eval "$(pwt shell-init)"
-
-pwt_prompt_info() {
-    if [[ -n "$PWT_WORKTREE" ]]; then
-        echo "[${PWT_WORKTREE}] "
-    fi
-}
-PS1='$(pwt_prompt_info)'$PS1
-EOF
-            ;;
-        starship)
-            cat << 'EOF'
-# pwt starship integration
-# Add to ~/.config/starship.toml
-
-[custom.pwt]
-command = "echo $PWT_WORKTREE"
-when = "[[ -n $PWT_WORKTREE ]]"
-format = "[$output]($style) "
-style = "bold blue"
-EOF
-            ;;
-        fish)
-            cat << 'EOF'
-# pwt fish prompt integration
-# Add to ~/.config/fish/config.fish
-
-# Option 1: Using pwt ps1 (fast, works from anywhere)
-function fish_right_prompt
-    set -l pwt_info (pwt ps1 2>/dev/null)
-    if test -n "$pwt_info"
-        set_color blue
-        echo -n "[$pwt_info]"
-        set_color normal
-    end
-end
-
-# Option 2: Using environment variable (only in pwt cd)
-function fish_right_prompt
-    if test -n "$PWT_WORKTREE"
-        set_color blue
-        echo -n "[pwt:$PWT_WORKTREE]"
-        set_color normal
-    end
-end
-EOF
-            ;;
-        *)
-            echo "Usage: pwt prompt [zsh|bash|starship|fish]"
-            echo ""
-            echo "Outputs ready-to-use prompt integration code."
-            echo ""
-            echo "Examples:"
-            echo "  pwt prompt zsh      # For zsh users"
-            echo "  pwt prompt bash     # For bash users"
-            echo "  pwt prompt starship # For starship prompt"
-            echo "  pwt prompt fish     # For fish users"
-            ;;
-    esac
 }
 
 # Command: shell-init
@@ -7772,6 +6992,231 @@ cmd_port() {
     echo "$port"
 }
 
+# Command: plugin
+# Manage pwt plugins
+# Usage: pwt plugin [list|install|remove|path|help]
+cmd_plugin() {
+    local plugins_dir="$PWT_DIR/plugins"
+    local action="${1:-list}"
+
+    case "$action" in
+        list|ls)
+            echo -e "${BLUE}Installed plugins:${NC}"
+            echo ""
+            if [ -d "$plugins_dir" ] && [ "$(ls -A "$plugins_dir" 2>/dev/null)" ]; then
+                for plugin in "$plugins_dir"/pwt-*; do
+                    [ -x "$plugin" ] || continue
+                    local name=$(basename "$plugin" | sed 's/^pwt-//')
+                    local version=""
+                    local desc=""
+
+                    # Try to get version/description from plugin --version or first comment
+                    if head -5 "$plugin" | grep -q "^# Description:"; then
+                        desc=$(head -10 "$plugin" | grep "^# Description:" | sed 's/^# Description: *//')
+                    fi
+                    if head -5 "$plugin" | grep -q "^# Version:"; then
+                        version=$(head -10 "$plugin" | grep "^# Version:" | sed 's/^# Version: *//')
+                    fi
+
+                    printf "  ${GREEN}%-15s${NC}" "$name"
+                    [ -n "$version" ] && printf " v%s" "$version"
+                    [ -n "$desc" ] && printf "  - %s" "$desc"
+                    echo ""
+                done
+            else
+                echo "  (no plugins installed)"
+                echo ""
+                echo "Install plugins:"
+                echo "  pwt plugin install <path-or-url>"
+                echo "  cp my-plugin ~/.pwt/plugins/pwt-mycommand"
+            fi
+            echo ""
+            echo -e "${DIM}Plugin directory: $plugins_dir${NC}"
+            ;;
+
+        install)
+            local source="${2:-}"
+            if [ -z "$source" ]; then
+                echo -e "${RED}Usage: pwt plugin install <path-or-url>${NC}"
+                echo ""
+                echo "Examples:"
+                echo "  pwt plugin install ./my-plugin.sh"
+                echo "  pwt plugin install ~/scripts/pwt-docker"
+                echo "  pwt plugin install https://example.com/pwt-github"
+                exit 1
+            fi
+
+            mkdir -p "$plugins_dir"
+
+            local plugin_name=""
+            local dest=""
+
+            if [[ "$source" == http* ]]; then
+                # Download from URL
+                plugin_name=$(basename "$source")
+                [[ "$plugin_name" != pwt-* ]] && plugin_name="pwt-$plugin_name"
+                dest="$plugins_dir/$plugin_name"
+
+                echo -e "${BLUE}Downloading plugin...${NC}"
+                if command -v curl &>/dev/null; then
+                    curl -fsSL "$source" -o "$dest"
+                elif command -v wget &>/dev/null; then
+                    wget -q "$source" -O "$dest"
+                else
+                    echo -e "${RED}Error: curl or wget required for URL install${NC}"
+                    exit 1
+                fi
+            else
+                # Copy local file
+                if [ ! -f "$source" ]; then
+                    echo -e "${RED}Error: File not found: $source${NC}"
+                    exit 1
+                fi
+
+                plugin_name=$(basename "$source")
+                [[ "$plugin_name" != pwt-* ]] && plugin_name="pwt-$plugin_name"
+                dest="$plugins_dir/$plugin_name"
+
+                cp "$source" "$dest"
+            fi
+
+            chmod +x "$dest"
+            local cmd_name=$(echo "$plugin_name" | sed 's/^pwt-//')
+            echo -e "${GREEN}✓${NC} Installed plugin: $cmd_name"
+            echo "  Run: pwt $cmd_name"
+            ;;
+
+        remove|uninstall|rm)
+            local name="${2:-}"
+            if [ -z "$name" ]; then
+                echo -e "${RED}Usage: pwt plugin remove <name>${NC}"
+                exit 1
+            fi
+
+            # Normalize name
+            [[ "$name" != pwt-* ]] && name="pwt-$name"
+            local plugin="$plugins_dir/$name"
+
+            if [ ! -f "$plugin" ]; then
+                echo -e "${RED}Error: Plugin not found: ${name#pwt-}${NC}"
+                exit 1
+            fi
+
+            rm "$plugin"
+            echo -e "${GREEN}✓${NC} Removed plugin: ${name#pwt-}"
+            ;;
+
+        path)
+            echo "$plugins_dir"
+            ;;
+
+        create)
+            local name="${2:-}"
+            if [ -z "$name" ]; then
+                echo -e "${RED}Usage: pwt plugin create <name>${NC}"
+                exit 1
+            fi
+
+            mkdir -p "$plugins_dir"
+            [[ "$name" != pwt-* ]] && name="pwt-$name"
+            local plugin="$plugins_dir/$name"
+            local cmd_name="${name#pwt-}"
+
+            if [ -f "$plugin" ]; then
+                echo -e "${RED}Error: Plugin already exists: $cmd_name${NC}"
+                exit 1
+            fi
+
+            cat > "$plugin" << 'TEMPLATE'
+#!/bin/bash
+# pwt plugin: PLUGIN_NAME
+# Description: A custom pwt plugin
+# Version: 1.0.0
+#
+# Available environment variables:
+#   PWT_DIR            - pwt directory (~/.pwt)
+#   PWT_PROJECT        - Current project name
+#   PWT_MAIN_APP       - Main app directory
+#   PWT_WORKTREES_DIR  - Worktrees directory
+#   PWT_WORKTREE       - Current worktree name (if in one)
+#   PWT_WORKTREE_PATH  - Current worktree path
+#   PWT_PORT           - Current worktree port
+#   PWT_BRANCH         - Current worktree branch
+#   PWT_DEFAULT_BRANCH - Default branch (master/main)
+
+set -euo pipefail
+
+case "${1:-}" in
+    -h|--help|help)
+        echo "Usage: pwt PLUGIN_NAME [subcommand]"
+        echo ""
+        echo "A custom pwt plugin."
+        echo ""
+        echo "Subcommands:"
+        echo "  help    Show this help"
+        echo ""
+        echo "Environment:"
+        echo "  Project: ${PWT_PROJECT:-<none>}"
+        echo "  Worktree: ${PWT_WORKTREE:-<none>}"
+        ;;
+    *)
+        echo "Hello from PLUGIN_NAME plugin!"
+        echo ""
+        echo "Project: ${PWT_PROJECT:-<not detected>}"
+        echo "Worktree: ${PWT_WORKTREE:-<not in worktree>}"
+        ;;
+esac
+TEMPLATE
+
+            # Replace PLUGIN_NAME placeholder
+            sed -i.bak "s/PLUGIN_NAME/$cmd_name/g" "$plugin" && rm -f "$plugin.bak"
+            chmod +x "$plugin"
+
+            echo -e "${GREEN}✓${NC} Created plugin: $cmd_name"
+            echo "  Path: $plugin"
+            echo "  Edit: \$EDITOR $plugin"
+            echo "  Run:  pwt $cmd_name"
+            ;;
+
+        help|-h|--help)
+            echo "Usage: pwt plugin <action>"
+            echo ""
+            echo "Manage pwt plugins - extend pwt with custom commands."
+            echo ""
+            echo "Actions:"
+            echo "  list              List installed plugins"
+            echo "  install <source>  Install plugin from file or URL"
+            echo "  remove <name>     Remove installed plugin"
+            echo "  create <name>     Create new plugin from template"
+            echo "  path              Print plugins directory"
+            echo ""
+            echo "Plugin Structure:"
+            echo "  Plugins are executable scripts in ~/.pwt/plugins/"
+            echo "  Named pwt-<command>, invoked as 'pwt <command>'"
+            echo ""
+            echo "Environment Variables (available to plugins):"
+            echo "  PWT_PROJECT        Current project name"
+            echo "  PWT_MAIN_APP       Main app directory"
+            echo "  PWT_WORKTREES_DIR  Worktrees directory"
+            echo "  PWT_WORKTREE       Current worktree name"
+            echo "  PWT_PORT           Current worktree port"
+            echo "  PWT_BRANCH         Current worktree branch"
+            echo ""
+            echo "Examples:"
+            echo "  pwt plugin list"
+            echo "  pwt plugin create github"
+            echo "  pwt plugin install ./my-plugin.sh"
+            echo "  pwt plugin remove github"
+            ;;
+
+        *)
+            echo -e "${RED}Unknown action: $action${NC}"
+            echo "Run 'pwt plugin help' for usage"
+            exit 1
+            ;;
+    esac
+}
+
 # Handle short flags that look like commands (before the main loop)
 case "${1:-}" in
     -v|-V)
@@ -8021,23 +7466,10 @@ case "${1:-}" in
         require_project
         cmd_diff "${2:-}" "${3:-}"
         ;;
-    conflicts)
-        require_project
-        cmd_conflicts "${2:-}" "${3:-}"
-        ;;
-    context)
-        require_project
-        cmd_context "${2:-}"
-        ;;
     copy|cp)
         require_project
         shift  # remove "copy" from args
         cmd_copy "$@"
-        ;;
-    marker)
-        require_project
-        shift  # remove "marker" from args
-        cmd_marker "$@"
         ;;
     for-each)
         require_project
@@ -8057,10 +7489,6 @@ case "${1:-}" in
         shift  # remove "doctor" from args
         cmd_doctor "$@"
         ;;
-    benchmark)
-        shift  # remove "benchmark" from args
-        cmd_benchmark "$@"
-        ;;
     select)
         require_project --info-only
         shift  # remove "select" from args
@@ -8075,15 +7503,6 @@ case "${1:-}" in
         require_project
         shift  # remove "pick" from args
         cmd_pick "$@"
-        ;;
-    topology)
-        require_project
-        shift  # remove "topology" from args
-        cmd_topology "$@"
-        ;;
-    prompt)
-        shift  # remove "prompt" from args
-        cmd_prompt "$@"
         ;;
     shell-init)
         cmd_shell_init "${2:-}"
@@ -8125,7 +7544,6 @@ case "${1:-}" in
         echo "  use <worktree>                 Set worktree as current (atomic symlink swap)"
         echo "  pick                           Interactive select + auto-use (fzf)"
         echo "  ps1                            Fast prompt helper (O(1), no git)"
-        echo "  topology [--json]              Show project topology using LLM (shared vs per-wt)"
         echo "  remove [worktree] [flags]      Remove worktree (--with-branch, --force-branch)"
         echo "  cd [worktree|@|-]              Navigate to worktree (@ main, - previous)"
         echo "  run <worktree> <cmd>           Run command in worktree"
@@ -8134,20 +7552,16 @@ case "${1:-}" in
         echo "  ai [worktree] [-- args]        Start AI tool in worktree"
         echo "  open [worktree]                Open worktree in Finder"
         echo "  diff <wt1> [wt2]               Show diff between worktrees"
-        echo "  conflicts [wt1] [wt2]          Show file overlap between worktrees"
-        echo "  context [worktree]             Generate markdown context for AI"
         echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
-        echo "  marker [worktree] [emoji]      Set/show worktree marker (--clear)"
         echo "  server [worktree]              Start dev server (from Pwtfile)"
         echo "  fix-port [worktree]            Fix port conflict"
         echo "  auto-remove [target] [--execute] Remove worktrees merged into target"
         echo "  restore [backup] [worktree]    Recover backed up changes from trash"
         echo "  doctor                         Check system health and configuration"
-        echo "  benchmark                      Compare worktree vs clone disk usage"
         echo "  shell-init                     Output shell function for cd integration"
-        echo "  prompt [zsh|bash|starship]     Output prompt integration snippets"
         echo "  meta [action] [args]           Manage worktree metadata"
         echo "  project [action] [args]        Manage project configs"
+        echo "  plugin [action]                Manage plugins (list, install, create)"
         echo ""
         echo "Project selection (in order of priority):"
         echo "  1. pwt <project> <command>     Project as first argument"
@@ -8169,7 +7583,6 @@ case "${1:-}" in
         echo "  pwt diff TICKET-123                        # Diff worktree vs main"
         echo "  pwt auto-remove master                     # Preview cleanup (dry-run by default)"
         echo "  pwt restore list                           # List available backups"
-        echo "  pwt restore apply BACKUP-NAME              # Restore backup to current dir"
         echo "  pwt doctor                                 # Check configuration"
         echo ""
         echo "Shell integration (add to ~/.zshrc):"
@@ -8178,13 +7591,52 @@ case "${1:-}" in
         echo "After shell-init:"
         echo "  \$PWT_WORKTREE      Current worktree name (when in worktree)"
         echo "  \$PWT_PREVIOUS_PATH Previous path (enables 'pwt cd -')"
+        echo ""
+        echo "Plugins:"
+        echo "  Extend pwt with custom commands. Run 'pwt plugin help' for details."
+        echo "  Available via plugins: topology, context, benchmark, marker, conflicts, prompt"
+        ;;
+    plugin)
+        shift
+        cmd_plugin "$@"
         ;;
     *)
         # Try to run as Pwtfile command
         _pwtfile_cmd="$1"
         shift
 
-        # Check if project has Pwtfile with this function
+        # 1. Check for plugin first (global extension)
+        _plugin_dir="$PWT_DIR/plugins"
+        _plugin="$_plugin_dir/pwt-$_pwtfile_cmd"
+        if [ -x "$_plugin" ]; then
+            # Export context for plugin
+            export PWT_PLUGIN_NAME="$_pwtfile_cmd"
+            export PWT_VERSION="$PWT_VERSION"
+            export PWT_DIR="$PWT_DIR"
+
+            # Project context (may be empty if no project detected)
+            if detect_project 2>/dev/null; then
+                export PWT_PROJECT="$CURRENT_PROJECT"
+                export PWT_MAIN_APP="$MAIN_APP"
+                export PWT_WORKTREES_DIR="$WORKTREES_DIR"
+                export PWT_DEFAULT_BRANCH="${DEFAULT_BRANCH:-master}"
+                export PWT_BASE_PORT="$BASE_PORT"
+                export PWT_BRANCH_PREFIX="${BRANCH_PREFIX:-}"
+
+                # Current worktree context (if in one)
+                if [ -n "${PWT_WORKTREE:-}" ]; then
+                    export PWT_WORKTREE
+                    export PWT_WORKTREE_PATH="${WORKTREES_DIR}/${PWT_WORKTREE}"
+                    export PWT_PORT=$(get_metadata "$PWT_WORKTREE" "port" 2>/dev/null || echo "")
+                    export PWT_BRANCH=$(git -C "${WORKTREES_DIR}/${PWT_WORKTREE}" branch --show-current 2>/dev/null || echo "")
+                fi
+            fi
+
+            # Execute plugin
+            exec "$_plugin" "$@"
+        fi
+
+        # 2. Check if project has Pwtfile with this function
         if has_pwtfile_command "$_pwtfile_cmd"; then
             require_project --info-only
 
@@ -8204,8 +7656,14 @@ case "${1:-}" in
             run_pwtfile_command "$_pwtfile_cmd" "$@"
         else
             echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
-            # Try to suggest similar commands
-            _known_commands="create list tree info current use pick select remove cd run shell editor ai open diff conflicts context copy marker server fix-port auto-remove restore doctor benchmark meta project port help version topology for-each"
+            # Try to suggest similar commands (include installed plugins)
+            _known_commands="create list tree info current use pick select remove cd run shell editor ai open diff copy server fix-port auto-remove restore doctor meta project plugin port help version for-each"
+            # Add installed plugins to suggestions
+            if [ -d "$_plugin_dir" ]; then
+                for _p in "$_plugin_dir"/pwt-*; do
+                    [ -x "$_p" ] && _known_commands+=" $(basename "$_p" | sed 's/^pwt-//')"
+                done
+            fi
             _suggestion=$(find_similar "$_pwtfile_cmd" "$_known_commands")
             if [ -n "$_suggestion" ]; then
                 echo -e "Did you mean: ${GREEN}pwt $_suggestion${NC}?"

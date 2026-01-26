@@ -1,0 +1,428 @@
+#!/bin/bash
+# pwt plugin: extras
+# Description: Additional pwt utilities (benchmark, marker, conflicts, prompt)
+# Version: 1.0.0
+#
+# Subcommands:
+#   benchmark   Compare worktree vs clone disk usage
+#   marker      Set/get/clear worktree markers
+#   conflicts   Show file overlap between worktrees
+#   prompt      Output shell prompt integration snippets
+#
+# Install: cp plugins/pwt-extras ~/.pwt/plugins/
+
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Require project context
+require_project() {
+    if [ -z "${PWT_PROJECT:-}" ]; then
+        echo -e "${RED}Error: Not in a pwt project${NC}" >&2
+        echo "Run this command from a project directory or worktree." >&2
+        exit 1
+    fi
+}
+
+# Get/set metadata
+get_metadata() {
+    local name="$1"
+    local key="$2"
+    local meta_file="${PWT_DIR}/meta.json"
+    [ -f "$meta_file" ] && jq -r ".worktrees[\"$name\"][\"$key\"] // empty" "$meta_file" 2>/dev/null || true
+}
+
+update_metadata() {
+    local name="$1"
+    local key="$2"
+    local value="$3"
+    local meta_file="${PWT_DIR}/meta.json"
+
+    if [ ! -f "$meta_file" ]; then
+        echo '{"worktrees":{}}' > "$meta_file"
+    fi
+
+    local tmp=$(mktemp)
+    if [ -z "$value" ]; then
+        jq ".worktrees[\"$name\"] |= del(.[\"$key\"])" "$meta_file" > "$tmp"
+    else
+        jq ".worktrees[\"$name\"][\"$key\"] = \"$value\"" "$meta_file" > "$tmp"
+    fi
+    mv "$tmp" "$meta_file"
+}
+
+# Command: benchmark
+cmd_benchmark() {
+    require_project
+
+    local n="${1:-1}"
+
+    if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ]; then
+        echo -e "${RED}Error: N must be a positive integer${NC}"
+        echo "Usage: pwt extras benchmark [N]"
+        exit 1
+    fi
+
+    local run_id="bench-$$"
+    local bench_dir=$(mktemp -d)
+
+    echo -e "${BLUE}pwt benchmark${NC}"
+    echo "Repo: ${PWT_MAIN_APP}"
+    echo "N:    $n"
+    echo ""
+
+    trap "
+        if [ -d '$bench_dir/worktrees' ]; then
+            for d in '$bench_dir/worktrees'/*; do
+                [ -d \"\$d\" ] || continue
+                git -C '${PWT_MAIN_APP}' worktree remove \"\$d\" --force 2>/dev/null || true
+            done
+            git -C '${PWT_MAIN_APP}' branch --list 'bench/$run_id-*' 2>/dev/null | xargs -r git -C '${PWT_MAIN_APP}' branch -d 2>/dev/null || true
+        fi
+        rm -rf '$bench_dir' 2>/dev/null || true
+    " EXIT
+
+    _human_du() { du -sh "$1" 2>/dev/null | cut -f1; }
+
+    local main_git=$(_human_du "${PWT_MAIN_APP}/.git")
+    local main_objects=$(_human_du "${PWT_MAIN_APP}/.git/objects")
+    echo "Main repo:"
+    echo -e "  .git:         ${GREEN}$main_git${NC}"
+    echo -e "  .git/objects: ${GREEN}$main_objects${NC}"
+    echo ""
+
+    echo "Creating $n worktree(s)..."
+    mkdir -p "$bench_dir/worktrees"
+
+    for i in $(seq 1 "$n"); do
+        local wt="$bench_dir/worktrees/wt-$i"
+        local br="bench/$run_id-$i"
+        git -C "${PWT_MAIN_APP}" worktree add "$wt" -b "$br" HEAD --quiet 2>/dev/null
+        printf "  wt-%d .git: %s\n" "$i" "$(_human_du "$wt/.git")"
+    done
+
+    echo ""
+    echo "After $n worktree(s):"
+    echo -e "  main .git:        ${GREEN}$(_human_du "${PWT_MAIN_APP}/.git")${NC}"
+    echo -e "  main objects:     ${GREEN}$(_human_du "${PWT_MAIN_APP}/.git/objects")${NC}"
+    echo -e "  worktrees total:  ${GREEN}$(_human_du "$bench_dir/worktrees")${NC}"
+    echo ""
+
+    echo "Creating $n clone(s)..."
+    mkdir -p "$bench_dir/clones"
+
+    for i in $(seq 1 "$n"); do
+        local c="$bench_dir/clones/clone-$i"
+        git clone --quiet "${PWT_MAIN_APP}" "$c" 2>/dev/null
+        printf "  clone-%d .git: %s\n" "$i" "$(_human_du "$c/.git")"
+    done
+
+    echo ""
+    echo "After $n clone(s):"
+    echo -e "  clones total:     ${GREEN}$(_human_du "$bench_dir/clones")${NC}"
+    echo ""
+
+    local wt_total=$(_human_du "$bench_dir/worktrees")
+    local clone_total=$(_human_du "$bench_dir/clones")
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo -e "Summary (${GREEN}$n${NC} instances):"
+    echo -e "  Worktrees: ${GREEN}$wt_total${NC} (shared .git)"
+    echo -e "  Clones:    ${GREEN}$clone_total${NC} (.git × $n)"
+    echo ""
+    echo "Worktrees share Git objects, not files."
+    echo "Clones duplicate everything."
+    echo ""
+    echo -e "${GREEN}✓${NC} Done (cleanup automatic)"
+}
+
+# Command: marker
+cmd_marker() {
+    require_project
+
+    local target=""
+    local marker=""
+    local clear=false
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --clear|-c)
+                clear=true
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: pwt extras marker [worktree] [marker]"
+                echo ""
+                echo "Set/get/clear worktree markers."
+                echo ""
+                echo "Examples:"
+                echo "  pwt extras marker TICKET-123 WIP     # set marker"
+                echo "  pwt extras marker TICKET-123         # show marker"
+                echo "  pwt extras marker TICKET-123 --clear # clear marker"
+                return 0
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+            *)
+                if [ -z "$target" ]; then
+                    target="$1"
+                else
+                    marker="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$target" ]; then
+        if [ -n "${PWT_WORKTREE:-}" ]; then
+            target="$PWT_WORKTREE"
+        else
+            echo -e "${RED}Error: Not in a worktree. Specify target.${NC}"
+            exit 1
+        fi
+    fi
+
+    local worktree_dir="${PWT_WORKTREES_DIR}/$target"
+    if [ ! -d "$worktree_dir" ]; then
+        echo -e "${RED}Error: Worktree not found: $target${NC}"
+        exit 1
+    fi
+
+    if [ "$clear" = true ]; then
+        update_metadata "$target" "marker" ""
+        echo -e "${GREEN}✓${NC} Cleared marker for $target"
+        return 0
+    fi
+
+    if [ -z "$marker" ]; then
+        local current=$(get_metadata "$target" "marker")
+        if [ -n "$current" ]; then
+            echo "$current"
+        else
+            echo "(no marker)"
+        fi
+        return 0
+    fi
+
+    update_metadata "$target" "marker" "$marker"
+    echo -e "${GREEN}✓${NC} Set marker for $target: $marker"
+}
+
+# Helper for conflicts
+get_modified_files() {
+    local dir="$1"
+    local default_branch="${PWT_DEFAULT_BRANCH:-master}"
+    git -C "$dir" diff --name-only "origin/${default_branch}" 2>/dev/null || true
+}
+
+# Command: conflicts
+cmd_conflicts() {
+    require_project
+
+    local wt1="${1:-}"
+    local wt2="${2:-}"
+
+    if [ -n "$wt1" ] && [ -n "$wt2" ]; then
+        # Compare specific pair
+        local path1 path2
+
+        if [ "$wt1" = "@" ]; then
+            path1="${PWT_MAIN_APP}"
+        else
+            path1="${PWT_WORKTREES_DIR}/$wt1"
+        fi
+
+        if [ "$wt2" = "@" ]; then
+            path2="${PWT_MAIN_APP}"
+        else
+            path2="${PWT_WORKTREES_DIR}/$wt2"
+        fi
+
+        if [ ! -d "$path1" ]; then
+            echo -e "${RED}Worktree not found: $wt1${NC}"
+            exit 1
+        fi
+        if [ ! -d "$path2" ]; then
+            echo -e "${RED}Worktree not found: $wt2${NC}"
+            exit 1
+        fi
+
+        echo -e "${BLUE}Comparing:${NC} $wt1 vs $wt2"
+        echo ""
+
+        local files1=$(get_modified_files "$path1")
+        local files2=$(get_modified_files "$path2")
+
+        local conflicts=$(comm -12 <(echo "$files1" | sort) <(echo "$files2" | sort))
+
+        if [ -z "$conflicts" ]; then
+            echo -e "${GREEN}No file conflicts found${NC}"
+        else
+            local count=$(echo "$conflicts" | wc -l | tr -d ' ')
+            echo -e "${YELLOW}$count file(s) modified in both worktrees:${NC}"
+            echo "$conflicts" | while read -r file; do
+                echo "  $file"
+            done
+        fi
+    else
+        # Show all conflicts
+        if [ ! -d "${PWT_WORKTREES_DIR}" ]; then
+            echo -e "${YELLOW}No worktrees found${NC}"
+            return 0
+        fi
+
+        local tmpfile=$(mktemp)
+        trap "rm -f '$tmpfile'" EXIT
+
+        for dir in "${PWT_WORKTREES_DIR}"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            get_modified_files "$dir" | while read -r file; do
+                [ -n "$file" ] && echo "$name:$file" >> "$tmpfile"
+            done
+        done
+
+        if [ ! -s "$tmpfile" ]; then
+            echo -e "${GREEN}No modified files in any worktree${NC}"
+            return 0
+        fi
+
+        local duplicates=$(cut -d: -f2 "$tmpfile" | sort | uniq -d)
+
+        if [ -z "$duplicates" ]; then
+            echo -e "${GREEN}No file conflicts found${NC}"
+            echo ""
+            echo -e "${BLUE}Summary:${NC}"
+            echo "  Worktrees with changes: $(cut -d: -f1 "$tmpfile" | sort -u | wc -l | tr -d ' ')"
+            echo "  Total files modified: $(cut -d: -f2 "$tmpfile" | sort -u | wc -l | tr -d ' ')"
+        else
+            local count=$(echo "$duplicates" | wc -l | tr -d ' ')
+            echo -e "${YELLOW}$count file(s) modified in multiple worktrees:${NC}"
+            echo ""
+            echo "$duplicates" | while read -r file; do
+                echo -e "${YELLOW}$file${NC}"
+                grep ":$file$" "$tmpfile" | cut -d: -f1 | sed 's/^/  /'
+            done
+        fi
+    fi
+}
+
+# Command: prompt
+cmd_prompt() {
+    local shell_type="${1:-zsh}"
+
+    case "$shell_type" in
+        zsh)
+            cat << 'EOF'
+# pwt zsh prompt integration
+# Add to ~/.zshrc after eval "$(pwt shell-init)"
+
+pwt_prompt_info() {
+    if [[ -n "$PWT_WORKTREE" ]]; then
+        echo "[${PWT_WORKTREE}] "
+    fi
+}
+PROMPT='$(pwt_prompt_info)'$PROMPT
+
+# Alternative: RPROMPT
+RPROMPT='${PWT_WORKTREE:+[$PWT_WORKTREE]}'
+EOF
+            ;;
+        bash)
+            cat << 'EOF'
+# pwt bash prompt integration
+# Add to ~/.bashrc after eval "$(pwt shell-init)"
+
+pwt_prompt_info() {
+    if [[ -n "$PWT_WORKTREE" ]]; then
+        echo "[${PWT_WORKTREE}] "
+    fi
+}
+PS1='$(pwt_prompt_info)'$PS1
+EOF
+            ;;
+        starship)
+            cat << 'EOF'
+# pwt starship integration
+# Add to ~/.config/starship.toml
+
+[custom.pwt]
+command = "echo $PWT_WORKTREE"
+when = "[[ -n $PWT_WORKTREE ]]"
+format = "[$output]($style) "
+style = "bold blue"
+EOF
+            ;;
+        fish)
+            cat << 'EOF'
+# pwt fish prompt integration
+# Add to ~/.config/fish/config.fish
+
+function fish_right_prompt
+    if test -n "$PWT_WORKTREE"
+        set_color blue
+        echo -n "[pwt:$PWT_WORKTREE]"
+        set_color normal
+    end
+end
+EOF
+            ;;
+        *)
+            echo "Usage: pwt extras prompt [zsh|bash|starship|fish]"
+            echo ""
+            echo "Outputs ready-to-use prompt integration code."
+            ;;
+    esac
+}
+
+# Main dispatch
+case "${1:-help}" in
+    benchmark)
+        shift
+        cmd_benchmark "$@"
+        ;;
+    marker)
+        shift
+        cmd_marker "$@"
+        ;;
+    conflicts)
+        shift
+        cmd_conflicts "$@"
+        ;;
+    prompt)
+        shift
+        cmd_prompt "$@"
+        ;;
+    help|-h|--help)
+        echo "Usage: pwt extras <command> [options]"
+        echo ""
+        echo "Additional pwt utilities."
+        echo ""
+        echo "Commands:"
+        echo "  benchmark [N]              Compare worktree vs clone disk usage"
+        echo "  marker [wt] [marker]       Set/get/clear worktree markers"
+        echo "  conflicts [wt1] [wt2]      Show file overlap between worktrees"
+        echo "  prompt [shell]             Output prompt integration snippets"
+        echo ""
+        echo "Examples:"
+        echo "  pwt extras benchmark 5"
+        echo "  pwt extras marker TICKET-123 WIP"
+        echo "  pwt extras conflicts"
+        echo "  pwt extras prompt zsh"
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}" >&2
+        echo "Run 'pwt extras help' for usage" >&2
+        exit 1
+        ;;
+esac

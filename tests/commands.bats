@@ -120,15 +120,11 @@ teardown() {
     [[ "$output" == *"Unknown"* ]] || [[ "$output" == *"unknown"* ]]
 }
 
-# ============================================
-# pwt topology tests
-# ============================================
-
-@test "pwt topology --help runs without error" {
-    cd "$TEST_REPO"
-    run "$PWT_BIN" topology --help
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"topology"* ]]
+@test "pwt typo suggests correct command" {
+    run "$PWT_BIN" creat
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Did you mean"* ]]
+    [[ "$output" == *"create"* ]]
 }
 
 # ============================================

@@ -50,6 +50,15 @@ teardown() {
     [ -d "$TEST_WORKTREES/TEST-1234" ]
 }
 
+@test "pwt create shows next steps after success" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create TEST-NEXTSTEPS HEAD
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Next steps"* ]]
+    [[ "$output" == *"Navigate"* ]]
+    [[ "$output" == *"pwt cd"* ]]
+}
+
 @test "pwt create extracts name from feature/branch" {
     cd "$TEST_REPO"
     run "$PWT_BIN" create feature/TEST-5678 HEAD

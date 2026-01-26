@@ -33,7 +33,7 @@ pwt manages git worktrees with port allocation and project isolation. It's frame
 
 **Start here:** [Install](#install) · [30-Second Demo](#30-second-demo) · [Quick Start](#quick-start)
 
-**Deep dive:** [Why not clones?](#why-not-just-clones) · [Commands](#commands) · [Pwtfile](#pwtfile) · [Shell Integration](#shell-integration)
+**Deep dive:** [Why not clones?](#why-not-just-clones) · [Commands](#commands) · [Pwtfile](#pwtfile) · [Plugins](#plugins) · [Shell Integration](#shell-integration)
 
 **Philosophy:** [Capistrano-style symlink](#capistrano-style-current-symlink) · [rvm-like switching](#philosophy-rvm-like-context-switching)
 
@@ -197,19 +197,14 @@ pwt remove feature-branch
 | `ai [worktree] [-- args]` | Start AI tool in worktree |
 | `open [worktree]` | Open worktree in Finder |
 | `diff <wt1> [wt2]` | Show diff between worktrees |
-| `conflicts [wt1] [wt2]` | Show file overlap between worktrees |
-| `context [worktree]` | Generate markdown context for AI agents |
 | `copy <src> <dest> <patterns...>` | Copy files between worktrees |
-| `marker [worktree] [emoji]` | Set/show worktree marker |
 | `server` | Start development server |
 | `fix-port [worktree]` | Resolve port conflict |
 | `auto-remove [target] [flags]` | Remove merged worktrees |
 | `tree [flags]` | Visual tree view of worktrees (`--all`, `--dirty`, `--ports`) |
-| `topology [ai_tool]` | LLM-powered analysis of shared vs per-worktree services |
 | `doctor` | Check system health and configuration |
-| `benchmark` | Compare worktree vs clone disk usage |
 | `shell-init` | Output shell function for cd/select integration |
-| `prompt [shell]` | Output prompt integration code (zsh, bash, starship) |
+| `plugin [action]` | Manage plugins (list, install, remove, create) |
 | `meta [action]` | Manage metadata |
 | `project [action]` | Manage project configs |
 | `config [key] [value]` | Configure current project |
@@ -251,12 +246,6 @@ pwt remove feature-branch
 | `Ctrl+A` | Start AI tool in selected worktree |
 | `Ctrl+O` | Open selected worktree in Finder |
 | `Esc` | Cancel selection |
-
-### Marker Flags
-
-| Flag | Description |
-|------|-------------|
-| `--clear, -c` | Clear marker from worktree |
 
 ### Remove Flags
 
@@ -455,10 +444,111 @@ Config is stored in `~/.pwt/projects/<name>/config.json`:
 ~/.pwt/
 ├── meta.json           # Worktree metadata
 ├── Pwtfile             # Global hooks
+├── plugins/            # Custom plugins
 └── projects/
     └── myproject/
         └── config.json
 ```
+
+## Plugins
+
+pwt supports plugins for extending functionality. Plugins are executable scripts in `~/.pwt/plugins/` that pwt automatically discovers and runs.
+
+### Using Plugins
+
+```bash
+# List installed plugins
+pwt plugin list
+
+# Install a plugin from file
+pwt plugin install /path/to/my-plugin.sh
+
+# Create a new plugin from template
+pwt plugin create my-feature
+
+# Remove a plugin
+pwt plugin remove my-feature
+
+# Show plugins directory
+pwt plugin path
+```
+
+### Official Plugins
+
+pwt ships with two optional plugins in the `plugins/` directory:
+
+**pwt-aitools** — AI integration:
+```bash
+cp plugins/pwt-aitools ~/.pwt/plugins/
+pwt aitools topology              # LLM-powered analysis of Pwtfile
+pwt aitools context               # Generate markdown context for AI
+```
+
+**pwt-extras** — Extra utilities:
+```bash
+cp plugins/pwt-extras ~/.pwt/plugins/
+pwt extras benchmark              # Compare worktree vs clone disk usage
+pwt extras marker TICKET-123 🚧   # Set worktree markers
+pwt extras conflicts              # Show file overlap between worktrees
+pwt extras prompt zsh             # Output prompt integration snippets
+```
+
+### Creating Custom Plugins
+
+Create a plugin with `pwt plugin create`:
+
+```bash
+pwt plugin create deploy
+# Creates ~/.pwt/plugins/pwt-deploy
+```
+
+Or create manually. Plugin requirements:
+1. Named `pwt-<name>` (e.g., `pwt-deploy`)
+2. Located in `~/.pwt/plugins/`
+3. Executable (`chmod +x`)
+
+Example plugin:
+
+```bash
+#!/bin/bash
+# ~/.pwt/plugins/pwt-deploy
+# Description: Deploy worktree to staging
+
+case "${1:-}" in
+    staging)
+        echo "Deploying $PWT_WORKTREE to staging..."
+        # your deploy logic
+        ;;
+    production)
+        echo "Deploying $PWT_WORKTREE to production..."
+        ;;
+    *)
+        echo "Usage: pwt deploy [staging|production]"
+        ;;
+esac
+```
+
+### Plugin Environment Variables
+
+Plugins receive context from pwt:
+
+| Variable | Description |
+|----------|-------------|
+| `$PWT_DIR` | pwt config directory (~/.pwt) |
+| `$PWT_VERSION` | pwt version |
+| `$PWT_PROJECT` | Current project name (if in project) |
+| `$PWT_MAIN_APP` | Main app directory |
+| `$PWT_WORKTREES_DIR` | Worktrees directory |
+| `$PWT_WORKTREE` | Current worktree name (if in worktree) |
+
+### Plugin vs Pwtfile
+
+| Feature | Pwtfile | Plugin |
+|---------|---------|--------|
+| Scope | Per-project | Global |
+| Location | Project root | ~/.pwt/plugins/ |
+| Use case | Project-specific setup/server/teardown | Reusable commands across all projects |
+| Example | Rails setup, npm install | Custom deploy, CI integration |
 
 ## Port Allocation
 
@@ -517,14 +607,6 @@ Useful for:
 - Integration with other tools
 
 ### Prompt Integration
-
-pwt provides ready-to-use prompt integration. Run `pwt prompt` for copy-paste snippets:
-
-```bash
-pwt prompt zsh       # zsh/oh-my-zsh snippets
-pwt prompt bash      # bash PS1 integration
-pwt prompt starship  # starship.toml custom module
-```
 
 **Quick setup (zsh):**
 ```bash
@@ -707,28 +789,6 @@ myapp
 
 Flags: `--all` (all projects), `--dirty` (uncommitted only), `--ports` (show ports)
 
-### `pwt topology` — Inferred Architecture
-
-LLM-powered analysis of what's shared vs isolated:
-
-```
-$ pwt topology
-Project: myapp
-
-[SHARED]
-  └─ postgres (5432), redis (6379), solr (8983)
-
-[PER-WORKTREE]
-  ├─ TICKET-123  rails :5001 + vite :5101
-  ├─ TICKET-456  rails :5002 + vite :5102
-  └─ TICKET-789  rails :5003 + sidekiq
-
-[WARN]
-  └─ All worktrees share same Redis — job queues may conflict
-```
-
-> **Note:** `tree` shows facts. `topology` interprets your Pwtfile and infers architecture.
-
 ## Examples
 
 ```bash
@@ -829,11 +889,6 @@ pwt select --no-preview     # without preview pane
 pwt for-each git status -s
 pwt for-each npm test
 
-# Set worktree markers
-pwt marker TICKET-123 🚧     # set marker
-pwt marker                   # show current marker
-pwt marker --clear           # clear marker
-
 # Get statusline for shell prompts
 pwt list statusline          # outputs: [TICKET-123 +! ↑3]
 
@@ -853,10 +908,6 @@ pwt pick --dirty             # only dirty worktrees
 # Fast prompt helper
 pwt ps1                      # outputs: pwt@TICKET-123
 pwt ps1                      # outputs: pwt@TICKET-123! (if pwd differs)
-
-# Generate prompt integration
-pwt prompt zsh               # zsh snippets
-pwt prompt starship          # starship.toml module
 
 # Use project alias
 pwt myapp list

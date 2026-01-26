@@ -1,0 +1,366 @@
+#!/bin/bash
+# pwt plugin: ai
+# Description: AI integration for pwt (topology analysis, context generation)
+# Version: 1.0.0
+#
+# Subcommands:
+#   topology    Analyze Pwtfile with LLM to show shared vs per-worktree services
+#   context     Generate markdown context for AI agents
+#
+# Install: cp plugins/pwt-ai ~/.pwt/plugins/
+
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Require project context
+require_project() {
+    if [ -z "${PWT_PROJECT:-}" ]; then
+        echo -e "${RED}Error: Not in a pwt project${NC}" >&2
+        echo "Run this command from a project directory or worktree." >&2
+        exit 1
+    fi
+}
+
+# Get metadata value for a worktree
+get_metadata() {
+    local name="$1"
+    local key="$2"
+    local meta_file="${PWT_DIR}/meta.json"
+
+    if [ -f "$meta_file" ]; then
+        jq -r ".worktrees[\"$name\"][\"$key\"] // empty" "$meta_file" 2>/dev/null || true
+    fi
+}
+
+# Get project config value
+get_project_config() {
+    local project="$1"
+    local key="$2"
+    local config_file="${PWT_DIR}/projects/${project}/config.json"
+
+    if [ -f "$config_file" ]; then
+        jq -r ".[\"$key\"] // empty" "$config_file" 2>/dev/null || true
+    fi
+}
+
+# Command: topology
+cmd_topology() {
+    require_project
+
+    local output_format="ascii"
+    local ai_override=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --json)
+                output_format="json"
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: pwt aitools topology [ai_tool] [--json]"
+                echo ""
+                echo "Analyze Pwtfile to show project topology:"
+                echo "  - [SHARED] services (postgres, redis, solr)"
+                echo "  - [PER-WT] per-worktree services (rails, vite)"
+                echo "  - [WARN] potential risks"
+                echo ""
+                echo "Arguments:"
+                echo "  ai_tool     AI to use (claude, codex, ollama, etc.)"
+                echo ""
+                echo "Options:"
+                echo "  --json      Output as JSON"
+                echo ""
+                echo "Examples:"
+                echo "  pwt aitools topology              # uses default (claude)"
+                echo "  pwt aitools topology codex        # use codex"
+                echo ""
+                echo "Note: Runs an LLM, may take a moment"
+                return 0
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}" >&2
+                return 1
+                ;;
+            *)
+                if [ -z "$ai_override" ]; then
+                    ai_override="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Get AI command
+    local ai_cmd
+    if [ -n "$ai_override" ]; then
+        ai_cmd="$ai_override"
+    else
+        ai_cmd=$(get_project_config "$PWT_PROJECT" "ai" 2>/dev/null)
+        [ -z "$ai_cmd" ] && ai_cmd="claude"
+    fi
+
+    if ! command -v "$ai_cmd" &>/dev/null; then
+        echo -e "${RED}Error: AI command '$ai_cmd' not found${NC}" >&2
+        echo "Install it or configure: pwt project set $PWT_PROJECT ai <command>" >&2
+        return 1
+    fi
+
+    local project_root="${PWT_MAIN_APP}"
+    if [ ! -d "$project_root" ]; then
+        echo -e "${RED}Error: Project root not found${NC}" >&2
+        return 1
+    fi
+
+    local start_time=$(date +%s)
+    echo -e "${BLUE}Analyzing project topology...${NC}" >&2
+
+    # Gather context
+    local context=""
+    local files_found=""
+
+    # Pwtfile
+    local pwtfile_path=""
+    pwtfile_path=$(get_project_config "$PWT_PROJECT" "pwtfile" 2>/dev/null)
+    [ -z "$pwtfile_path" ] && pwtfile_path="$project_root/Pwtfile"
+    if [ -f "$pwtfile_path" ]; then
+        context+="=== Pwtfile ===\n$(cat "$pwtfile_path")\n\n"
+        files_found+="Pwtfile "
+    fi
+
+    # Project config
+    local project_config="${PWT_DIR}/projects/$PWT_PROJECT/config.json"
+    if [ -f "$project_config" ]; then
+        context+="=== pwt project config ===\n$(cat "$project_config")\n\n"
+        files_found+="pwt-config "
+    fi
+
+    # Worktree info
+    local worktree_info=""
+    if [ -d "${PWT_WORKTREES_DIR}" ]; then
+        local wt_count=$(ls -d "${PWT_WORKTREES_DIR}"/*/ 2>/dev/null | wc -l | tr -d ' ')
+        worktree_info+="Worktrees: $wt_count\n"
+        worktree_info+="Directory: ${PWT_WORKTREES_DIR}\n"
+
+        for wt_path in $(ls -d "${PWT_WORKTREES_DIR}"/*/ 2>/dev/null | head -3); do
+            local wt_name=$(basename "$wt_path")
+            local wt_port=$(get_metadata "$wt_name" "port" 2>/dev/null)
+            [ -n "$wt_port" ] && worktree_info+="  $wt_name: :$wt_port\n"
+        done
+    fi
+    [ -n "$worktree_info" ] && context+="=== Worktrees ===\n$worktree_info\n"
+
+    if [ -z "$files_found" ]; then
+        echo -e "${YELLOW}No Pwtfile found. Create one with: pwt init${NC}" >&2
+        return 1
+    fi
+
+    echo -e "${DIM}Sources: ${files_found}${NC}" >&2
+
+    # Build prompt
+    local color_instruction="Do NOT use ANSI color codes. Use text markers instead:
+- Mark shared services with [SHARED]
+- Mark per-worktree services with [PER-WT]
+- Mark warnings/risks with [WARN]
+Keep the diagram clean and readable."
+
+    local format_instruction=""
+    if [ "$output_format" = "json" ]; then
+        format_instruction="Output ONLY valid JSON with this structure:
+{
+  \"shared\": [{\"name\": \"...\", \"type\": \"...\", \"port\": \"...\", \"evidence\": \"...\"}],
+  \"per_worktree\": [{\"name\": \"...\", \"type\": \"...\", \"evidence\": \"...\"}],
+  \"relationships\": [{\"from\": \"...\", \"to\": \"...\", \"type\": \"uses\"}],
+  \"risks\": [\"...\"]
+}"
+    else
+        format_instruction="Output an ASCII diagram with:
+1. Unicode box-drawing characters
+2. Arrows showing relationships
+3. Clear labels inside boxes
+4. A legend at the bottom
+5. Brief risk notes if applicable"
+    fi
+
+    local prompt="Analyze this Pwtfile for 'pwt' (a git worktree manager).
+
+CONTEXT: Multiple worktrees run simultaneously, each with its own port.
+
+FROM THE PWTFILE, identify:
+1. [SHARED] - services shared across worktrees (e.g., postgres, redis, solr)
+2. [PER-WT] - services each worktree runs its own (e.g., rails, vite)
+3. [WARN] - potential risks (namespace collisions, shared state)
+
+$format_instruction
+
+$color_instruction
+
+$context
+
+PROJECT: $PWT_PROJECT
+
+OUTPUT: Compact ASCII diagram. No ANSI codes. Max 40 lines."
+
+    echo "" >&2
+    local ai_output
+    local ai_exit_code
+
+    ai_output=$(echo -e "$prompt" | "$ai_cmd" -p 2>&1) && ai_exit_code=0 || ai_exit_code=$?
+
+    if [ $ai_exit_code -ne 0 ] || [ -z "$ai_output" ]; then
+        ai_output=$(echo -e "$prompt" | "$ai_cmd" --print 2>&1) && ai_exit_code=0 || ai_exit_code=$?
+    fi
+
+    # Check for API errors
+    if echo "$ai_output" | grep -qi "authentication_error\|401\|unauthorized"; then
+        echo -e "${RED}Authentication Error${NC}" >&2
+        echo "Run: $ai_cmd /login" >&2
+        return 1
+    fi
+
+    if echo "$ai_output" | grep -qi "rate_limit\|429"; then
+        echo -e "${RED}Rate Limit Exceeded${NC}" >&2
+        return 1
+    fi
+
+    echo "$ai_output"
+
+    local end_time=$(date +%s)
+    local elapsed=$((end_time - start_time))
+    echo "" >&2
+    echo -e "${DIM}Generated in ${elapsed}s${NC}" >&2
+}
+
+# Command: context
+cmd_context() {
+    require_project
+
+    local focus_wt="${1:-}"
+
+    echo "# Worktree Context: ${PWT_PROJECT}"
+    echo ""
+    echo "Generated: $(date '+%Y-%m-%d %H:%M')"
+    echo ""
+
+    # Project info
+    echo "## Project"
+    echo ""
+    echo "| Key | Value |"
+    echo "|-----|-------|"
+    echo "| Project | ${PWT_PROJECT} |"
+    echo "| Main App | ${PWT_MAIN_APP} |"
+    echo "| Worktrees Dir | ${PWT_WORKTREES_DIR} |"
+    echo ""
+
+    # Active worktrees
+    echo "## Active Worktrees"
+    echo ""
+    echo "| Worktree | Branch | Status |"
+    echo "|----------|--------|--------|"
+
+    # Main app
+    local main_branch=$(git -C "${PWT_MAIN_APP}" branch --show-current 2>/dev/null || echo "?")
+    local main_status=""
+    [ -n "$(git -C "${PWT_MAIN_APP}" status --porcelain 2>/dev/null)" ] && main_status="dirty"
+    echo "| @ (main) | ${main_branch} | ${main_status:-clean} |"
+
+    # Worktrees
+    if [ -d "${PWT_WORKTREES_DIR}" ]; then
+        for dir in "${PWT_WORKTREES_DIR}"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+            local status=""
+            [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ] && status="dirty"
+            echo "| ${name} | ${branch} | ${status:-clean} |"
+        done
+    fi
+    echo ""
+
+    # Worktree details
+    echo "## Worktree Details"
+    echo ""
+    if [ -d "${PWT_WORKTREES_DIR}" ]; then
+        for dir in "${PWT_WORKTREES_DIR}"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+
+            if [ -n "$focus_wt" ] && [ "$name" != "$focus_wt" ]; then
+                continue
+            fi
+
+            local desc=$(get_metadata "$name" "description")
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+            local port=$(get_metadata "$name" "port")
+
+            echo "### ${name}"
+            echo ""
+            [ -n "$desc" ] && echo "**Purpose:** ${desc}"
+            echo ""
+            echo "- **Branch:** ${branch}"
+            [ -n "$port" ] && echo "- **Port:** ${port}"
+            echo "- **Path:** ${dir}"
+            echo ""
+
+            # Recent commits
+            echo "**Recent commits:**"
+            echo ""
+            echo '```'
+            git -C "$dir" log --oneline -5 2>/dev/null || echo "No commits"
+            echo '```'
+            echo ""
+        done
+    fi
+
+    # Instructions
+    echo "## Instructions for AI Agents"
+    echo ""
+    echo "1. **Stay focused** on the worktree's purpose"
+    echo "2. **Check for conflicts** before modifying shared files"
+    echo "3. **Base branch** - create PRs against the base branch"
+    echo ""
+}
+
+# Main dispatch
+case "${1:-help}" in
+    topology)
+        shift
+        cmd_topology "$@"
+        ;;
+    context)
+        shift
+        cmd_context "$@"
+        ;;
+    help|-h|--help)
+        echo "Usage: pwt aitools <command> [options]"
+        echo ""
+        echo "AI integration for pwt."
+        echo ""
+        echo "Commands:"
+        echo "  topology [ai_tool] [--json]  Analyze Pwtfile with LLM"
+        echo "  context [worktree]           Generate markdown context for AI"
+        echo ""
+        echo "Environment (from pwt):"
+        echo "  PWT_PROJECT        Current project"
+        echo "  PWT_MAIN_APP       Main app directory"
+        echo "  PWT_WORKTREES_DIR  Worktrees directory"
+        echo "  PWT_WORKTREE       Current worktree (if in one)"
+        echo ""
+        echo "Examples:"
+        echo "  pwt aitools topology"
+        echo "  pwt aitools topology ollama"
+        echo "  pwt aitools context"
+        echo "  pwt aitools context TICKET-123"
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}" >&2
+        echo "Run 'pwt aitools help' for usage" >&2
+        exit 1
+        ;;
+esac

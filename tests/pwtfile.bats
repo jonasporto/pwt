@@ -679,48 +679,27 @@ EOF
     [[ "$result" == *"FUZZY-MATCH"* ]]
 }
 
-@test "pwt exec runs single command in worktree" {
+# ============================================
+# pwt <project> <worktree> -- <cmd> syntax
+# ============================================
+
+@test "pwt <project> <worktree> -- <cmd> runs command in worktree" {
     cd "$TEST_REPO"
 
-    run "$PWT_BIN" test-project @ -- echo "hello from exec"
+    run "$PWT_BIN" test-project @ -- echo "hello from run"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"hello from exec"* ]]
+    [[ "$output" == *"hello from run"* ]]
 }
 
-@test "pwt exec runs multiple commands with -- separator" {
-    cd "$TEST_REPO"
-
-    run "$PWT_BIN" test-project @ -- echo "one" -- echo "two"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"one"* ]]
-    [[ "$output" == *"two"* ]]
-}
-
-@test "pwt exec stops on first failure" {
-    cd "$TEST_REPO"
-
-    run "$PWT_BIN" test-project @ -- false -- echo "should not run"
-    [ "$status" -ne 0 ]
-    [[ "$output" != *"should not run"* ]]
-}
-
-@test "pwt exec sets PWT_* environment variables" {
-    cd "$TEST_REPO"
-
-    run "$PWT_BIN" test-project @ -- 'echo "PATH:$PWT_WORKTREE_PATH"'
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"PATH:$TEST_REPO"* ]]
-}
-
-@test "pwt exec with fuzzy worktree match" {
+@test "pwt <project> <worktree> -- <cmd> with fuzzy match" {
     cd "$TEST_REPO"
 
     # Create a worktree
-    "$PWT_BIN" create EXEC-FUZZY-456 HEAD
+    "$PWT_BIN" create RUN-FUZZY-456 HEAD
 
-    run "$PWT_BIN" test-project EXEC-FUZZY -- pwd
+    run "$PWT_BIN" test-project RUN-FUZZY -- pwd
     [ "$status" -eq 0 ]
-    [[ "$output" == *"EXEC-FUZZY"* ]]
+    [[ "$output" == *"RUN-FUZZY"* ]]
 }
 
 @test "pwt shell shows usage when no target" {

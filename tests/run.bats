@@ -67,11 +67,11 @@ teardown() {
     [[ "$output" == *"No command"* ]] || [[ "$output" == *"Usage"* ]]
 }
 
-@test "pwt run fails without target" {
+@test "pwt run without args shows usage" {
     cd "$TEST_REPO"
     run "$PWT_BIN" run
     [ "$status" -ne 0 ]
-    # May fail with unbound variable or usage message
+    [[ "$output" == *"Usage"* ]]
 }
 
 # ============================================
@@ -185,4 +185,55 @@ teardown() {
 
     run "$PWT_BIN" run WT-RUN2 cat marker.txt
     [[ "$output" == *"wt2"* ]]
+}
+
+# ============================================
+# run with optional worktree (uses current/main)
+# ============================================
+
+@test "pwt run without worktree uses current or main" {
+    cd "$TEST_REPO"
+
+    # Clear current symlink to test fallback to main
+    rm -f "$PWT_DIR/projects/test-project/current"
+
+    echo "main-marker" > "$TEST_REPO/main-file.txt"
+
+    # When no worktree specified and no current, should use main
+    run "$PWT_BIN" run cat main-file.txt
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"main-marker"* ]]
+}
+
+@test "pwt run without worktree uses current symlink" {
+    cd "$TEST_REPO"
+
+    # Set current to WT-RUN
+    "$PWT_BIN" use WT-RUN
+
+    # Create marker in worktree
+    echo "current-marker" > "$TEST_WORKTREES/WT-RUN/current-file.txt"
+
+    run "$PWT_BIN" run cat current-file.txt
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"current-marker"* ]]
+}
+
+@test "pwt run detects worktree vs command" {
+    cd "$TEST_REPO"
+
+    # 'echo' is not a worktree, so it should be treated as command
+    run "$PWT_BIN" run echo "test"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test"* ]]
+}
+
+@test "pwt run with explicit worktree takes precedence" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" use WT-RUN
+
+    # Even though current is WT-RUN, @ should run in main
+    run "$PWT_BIN" run @ pwd
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$TEST_REPO"* ]] || [[ "$output" == *"test-repo"* ]]
 }

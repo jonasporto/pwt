@@ -497,7 +497,7 @@ auto_detect_project() {
 }
 
 # Resolve project alias to real project name
-# Scans all project configs for "aliases" array
+# Scans all project configs for "aliases" array or "alias" string
 resolve_project_alias() {
     local name="$1"
 
@@ -514,6 +514,15 @@ resolve_project_alias() {
     # Scan all projects for alias match
     for config in "$PWT_PROJECTS_DIR"/*/config.json; do
         [ -f "$config" ] || continue
+
+        # Check "aliases" array first (preferred format)
+        local found_in_aliases=$(jq -r --arg name "$name" '.aliases // [] | index($name) // empty' "$config" 2>/dev/null)
+        if [ -n "$found_in_aliases" ]; then
+            basename "$(dirname "$config")"
+            return 0
+        fi
+
+        # Fall back to legacy "alias" string
         local proj_alias=$(jq -r '.alias // empty' "$config")
         if [ "$proj_alias" = "$name" ]; then
             basename "$(dirname "$config")"

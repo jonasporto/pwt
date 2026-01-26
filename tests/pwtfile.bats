@@ -730,7 +730,7 @@ EOF
     cat > "$TEST_REPO/Pwtfile" << 'EOF'
 setup() { :; }
 EOF
-    run "$PWT_BIN" create "$wt_name"
+    run "$PWT_BIN" create "$wt_name" HEAD
     [ "$status" -eq 0 ]
 
     local wt_dir="$TEST_WORKTREES/$wt_name"
@@ -759,7 +759,7 @@ EOF
     cat > "$TEST_REPO/Pwtfile" << 'EOF'
 setup() { :; }
 EOF
-    run "$PWT_BIN" create "$wt_name"
+    run "$PWT_BIN" create "$wt_name" HEAD
     [ "$status" -eq 0 ]
 
     local wt_dir="$TEST_WORKTREES/$wt_name"
@@ -800,7 +800,7 @@ EOF
     cat > "$TEST_REPO/Pwtfile" << 'EOF'
 setup() { :; }
 EOF
-    run "$PWT_BIN" create "$wt_name"
+    run "$PWT_BIN" create "$wt_name" HEAD
     [ "$status" -eq 0 ]
 
     local wt_dir="$TEST_WORKTREES/$wt_name"

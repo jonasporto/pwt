@@ -1,0 +1,63 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install bats-core (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Install bats-core (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install bats-core
+
+      - name: Install dependencies
+        run: |
+          # Ensure jq is available (required by pwt)
+          if ! command -v jq &> /dev/null; then
+            if [ "$RUNNER_OS" == "Linux" ]; then
+              sudo apt-get install -y jq
+            else
+              brew install jq
+            fi
+          fi
+
+      - name: Make pwt executable
+        run: chmod +x bin/pwt
+
+      - name: Run tests
+        run: bats tests/*.bats
+
+      - name: Run tests with verbose output on failure
+        if: failure()
+        run: bats --tap tests/*.bats
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck
+        run: shellcheck -x bin/pwt || true  # Non-blocking for now
+        continue-on-error: true

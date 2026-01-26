@@ -191,7 +191,7 @@ pwt remove feature-branch
 | `use <worktree>` | Switch current symlink to worktree (Capistrano-style) |
 | `current [flags]` | Show current worktree (path on stdout, context on stderr) |
 | `ps1` | Fast prompt helper (e.g., `pwt@TICKET-123`) |
-| `run <worktree> <cmd>` | Run command in worktree without cd'ing |
+| `run [worktree] <cmd>` | Run command in worktree (uses current/main if omitted) |
 | `for-each <cmd>` | Run command in all worktrees |
 | `editor [worktree]` | Open worktree in configured editor |
 | `ai [worktree] [-- args]` | Start AI tool in worktree |
@@ -834,8 +834,9 @@ pwt list --dirty
 pwt list --porcelain | jq '.worktrees[].name'
 
 # Run command in worktree without cd'ing
-pwt run TICKET-123 npm test
-pwt run @ git status
+pwt run TICKET-123 npm test    # in specific worktree
+pwt run @ git status           # in main app
+pwt run npm test               # in current worktree or main
 
 # Open worktree in editor
 pwt editor TICKET-123

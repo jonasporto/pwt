@@ -317,3 +317,40 @@ EOF
     [ "$status" -eq 0 ]
     [ "$output" = "$TEST_WORKTREES/wt-one" ]
 }
+
+# ============================================
+# pwt <project> without command = cd @
+# ============================================
+
+@test "pwt <project> without command outputs main app path" {
+    cd "$HOME"
+    run "$PWT_BIN" test-repo
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_REPO" ]
+}
+
+@test "pwt <alias> without command outputs main app path" {
+    cd "$HOME"
+    run "$PWT_BIN" tr
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_REPO" ]
+}
+
+@test "pwt <project> --help shows help" {
+    cd "$HOME"
+    run "$PWT_BIN" test-repo --help
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Power Worktrees"* ]]
+    [[ "$output" == *"Commands"* ]]
+}
+
+@test "pwt <project> -h shows help" {
+    cd "$HOME"
+    run "$PWT_BIN" test-repo -h
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Power Worktrees"* ]]
+}

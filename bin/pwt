@@ -7337,8 +7337,12 @@ status_init() {
     tput civis 2>/dev/null || true
     # Enable keypad mode for arrow keys
     tput smkx 2>/dev/null || true
+    # Reset scroll region (ensure full screen is usable)
+    printf '\033[r' 2>/dev/null || true
     # Clear screen once at start
     tput clear 2>/dev/null || true
+    # Position cursor at top-left
+    tput cup 0 0 2>/dev/null || true
 
     # Get terminal dimensions - try multiple methods
     status_update_terminal_size
@@ -7381,30 +7385,37 @@ status_read_key() {
     local key=""
     local escape_seq=""
 
-    # Open /dev/tty on fd 3 for reading
-    exec 3</dev/tty
-
-    # Read single character with timeout
-    if IFS= read -rsn1 -t 0.5 key <&3 2>/dev/null; then
+    # Read single character with timeout from /dev/tty
+    if IFS= read -rsn1 -t 0.5 key </dev/tty 2>/dev/null; then
         # Check for escape sequences (arrow keys, etc.)
-        if [[ "$key" == $'\x1b' ]] || [[ "$key" == $'\e' ]]; then
-            # Try to read more of the escape sequence
-            IFS= read -rsn2 -t 0.2 escape_seq <&3 2>/dev/null || escape_seq=""
-            case "$escape_seq" in
-                '[A'|'OA') STATUS_KEY="UP" ;;
-                '[B'|'OB') STATUS_KEY="DOWN" ;;
-                '[C'|'OC') STATUS_KEY="RIGHT" ;;
-                '[D'|'OD') STATUS_KEY="LEFT" ;;
-                '[Z')      STATUS_KEY="SHIFT_TAB" ;;
-                *)         STATUS_KEY="ESC" ;;
-            esac
+        if [[ "$key" == $'\e' ]]; then
+            # Read up to 2 more characters for escape sequence with short timeout
+            if IFS= read -rsn1 -t 0.1 escape_seq </dev/tty 2>/dev/null; then
+                if [[ "$escape_seq" == "[" ]] || [[ "$escape_seq" == "O" ]]; then
+                    local third=""
+                    if IFS= read -rsn1 -t 0.1 third </dev/tty 2>/dev/null; then
+                        case "${escape_seq}${third}" in
+                            '[A'|'OA') STATUS_KEY="UP" ;;
+                            '[B'|'OB') STATUS_KEY="DOWN" ;;
+                            '[C'|'OC') STATUS_KEY="RIGHT" ;;
+                            '[D'|'OD') STATUS_KEY="LEFT" ;;
+                            '[Z')      STATUS_KEY="SHIFT_TAB" ;;
+                            *)         STATUS_KEY="ESC" ;;
+                        esac
+                    else
+                        STATUS_KEY="ESC"
+                    fi
+                else
+                    STATUS_KEY="ESC"
+                fi
+            else
+                STATUS_KEY="ESC"
+            fi
         else
             STATUS_KEY="$key"
         fi
-        exec 3<&-
         return 0
     fi
-    exec 3<&-
     return 1
 }
 
@@ -7553,8 +7564,10 @@ status_drill_down_project() {
             STATUS_VIEW="project"
             STATUS_NEEDS_CLEAR=true  # Clear screen on view change
 
-            # Load project config
-            load_project_config "$selected_project"
+            # Load project config (suppress any errors to prevent exit)
+            if ! load_project_config "$selected_project" 2>/dev/null; then
+                status_add_activity "Warning: Could not load config for $selected_project"
+            fi
             CURRENT_PROJECT="$selected_project"
 
             # Reset project view state
@@ -7562,8 +7575,8 @@ status_drill_down_project() {
             STATUS_SCROLL=0
             STATUS_PANE=0
 
-            # Collect project data
-            status_collect_data
+            # Collect project data (suppress errors)
+            status_collect_data 2>/dev/null || true
             status_add_activity "Entered project: $selected_project"
         fi
     fi
@@ -9069,12 +9082,15 @@ status_render() {
 
     # Clear screen if needed (view change, resize, help toggle)
     if [ "$STATUS_NEEDS_CLEAR" = true ]; then
-        tput clear
+        # Reset scroll region and clear completely
+        printf '\033[r' 2>/dev/null || true
+        tput clear 2>/dev/null || true
+        tput cup 0 0 2>/dev/null || true
         STATUS_NEEDS_CLEAR=false
     fi
 
     # Move cursor to top-left
-    tput cup 0 0
+    tput cup 0 0 2>/dev/null || true
 
     # Minimum size check
     if [ $STATUS_TERM_WIDTH -lt 60 ] || [ $STATUS_TERM_HEIGHT -lt 15 ]; then
@@ -9114,6 +9130,9 @@ status_render() {
     if [ "$STATUS_SHOW_HELP" = true ]; then
         status_render_help
     fi
+
+    # Position cursor at safe location to prevent any stray output
+    tput cup 0 $((STATUS_TERM_WIDTH - 1)) 2>/dev/null || true
 }
 
 # Handle navigation
@@ -9351,6 +9370,20 @@ status_action_git_fetch() {
 status_handle_key() {
     local key="$1"
 
+    # Debug mode: log key to activity
+    if [ "${PWT_DEBUG:-}" = "1" ]; then
+        local key_display="$key"
+        case "$key" in
+            $'\n') key_display="NEWLINE" ;;
+            $'\r') key_display="CR" ;;
+            $'\t') key_display="TAB" ;;
+            $'\e') key_display="ESC_CHAR" ;;
+            "") key_display="EMPTY" ;;
+            " ") key_display="SPACE" ;;
+        esac
+        status_add_activity "KEY: [$key_display] VIEW: $STATUS_VIEW PANE: $STATUS_PANE"
+    fi
+
     # Help mode toggle
     if [ "$STATUS_SHOW_HELP" = true ]; then
         STATUS_SHOW_HELP=false
@@ -9541,19 +9574,19 @@ cmd_status() {
         # Auto-refresh every N seconds based on current view
         if (( now - STATUS_LAST_REFRESH >= STATUS_REFRESH_INTERVAL )); then
             if [ "$STATUS_VIEW" = "global" ]; then
-                status_collect_global_data
+                status_collect_global_data 2>/dev/null || true
             else
-                status_collect_data
+                status_collect_data 2>/dev/null || true
             fi
             STATUS_LAST_REFRESH=$now
         fi
 
-        # Render
-        status_render
+        # Render (suppress any stray output)
+        status_render 2>/dev/null
 
         # Handle input
         if status_read_key; then
-            status_handle_key "$STATUS_KEY"
+            status_handle_key "$STATUS_KEY" 2>/dev/null || true
         fi
     done
 
@@ -9875,7 +9908,24 @@ case "${1:-}" in
     version)
         echo "pwt version $PWT_VERSION"
         ;;
-    help|"")
+    "")
+        # No command: if project was explicitly specified, cd to main; otherwise show help
+        if [ "$PROJECT_EXPLICIT" = true ]; then
+            cmd_cd "@"
+            exit $?
+        fi
+        # Show help (duplicated from help case for bash compatibility)
+        echo "pwt - Power Worktrees"
+        echo "A tool for managing git worktrees across multiple projects"
+        echo ""
+        if [ -n "$CURRENT_PROJECT" ]; then
+            echo -e "Current project: ${GREEN}$CURRENT_PROJECT${NC}"
+            echo ""
+        fi
+        echo "Run 'pwt help' for full usage"
+        ;;
+    -h|--help|help)
+        # Show help
         echo "pwt - Power Worktrees"
         echo "A tool for managing git worktrees across multiple projects"
         echo ""

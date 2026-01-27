@@ -227,3 +227,73 @@ teardown() {
     [[ "$output" == *"env"* ]]
     [[ "$output" == *"staging"* ]]
 }
+
+# ============================================
+# Empty metadata values should not be shown
+# ============================================
+
+@test "pwt list Meta column does not show keys with empty values" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-EMPTY HEAD
+
+    # Manually set description to empty string using jq (simulating existing empty metadata)
+    local project="test-project"
+    jq --arg p "$project" '.[$p]["WT-EMPTY"].description = ""' "$PWT_DIR/meta.json" > "$PWT_DIR/meta.json.tmp"
+    mv "$PWT_DIR/meta.json.tmp" "$PWT_DIR/meta.json"
+
+    run "$PWT_BIN" list --refresh
+    [ "$status" -eq 0 ]
+
+    # Get the line for WT-EMPTY
+    local wt_line=$(echo "$output" | grep "WT-EMPTY")
+
+    # Should show port= but NOT description= (since it's empty)
+    [[ "$wt_line" == *"port="* ]]
+    # description= should either not appear, or have a fallback value (not empty)
+    if [[ "$wt_line" == *"description="* ]]; then
+        # If description appears, it should have a non-empty value (fallback)
+        [[ "$wt_line" != *"description= "* ]]
+        [[ "$wt_line" != *"description=$"* ]]
+    fi
+}
+
+@test "pwt list Meta column does not show keys with null values" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-NULL HEAD
+
+    # Manually set a null value in metadata using jq
+    local project="test-project"
+    jq --arg p "$project" '.[$p]["WT-NULL"].customfield = null' "$PWT_DIR/meta.json" > "$PWT_DIR/meta.json.tmp"
+    mv "$PWT_DIR/meta.json.tmp" "$PWT_DIR/meta.json"
+
+    run "$PWT_BIN" list --refresh
+    [ "$status" -eq 0 ]
+
+    # Get the line for WT-NULL
+    local wt_line=$(echo "$output" | grep "WT-NULL")
+
+    # Should NOT show "customfield=" since it's null
+    [[ "$wt_line" != *"customfield="* ]]
+}
+
+@test "get_extra_metadata excludes empty string values" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-GETEXTRA HEAD
+
+    # Set one field with value
+    "$PWT_BIN" meta set WT-GETEXTRA env production
+
+    # Manually set empty notes using jq
+    local project="test-project"
+    jq --arg p "$project" '.[$p]["WT-GETEXTRA"].notes = ""' "$PWT_DIR/meta.json" > "$PWT_DIR/meta.json.tmp"
+    mv "$PWT_DIR/meta.json.tmp" "$PWT_DIR/meta.json"
+
+    # Check list output - empty "notes" should not appear
+    run "$PWT_BIN" list --refresh
+    local wt_line=$(echo "$output" | grep "WT-GETEXTRA")
+
+    # Should show env=production
+    [[ "$wt_line" == *"env=production"* ]]
+    # Should NOT show notes= (since it's empty)
+    [[ "$wt_line" != *"notes="* ]]
+}

@@ -269,7 +269,7 @@ teardown() {
     [ "$status" -eq 0 ]
 }
 
-@test "main script references status module" {
-    run grep 'source.*status.sh' "$PWT_BIN"
+@test "main script loads status module" {
+    run grep 'load_module status' "$PWT_BIN"
     [ "$status" -eq 0 ]
 }

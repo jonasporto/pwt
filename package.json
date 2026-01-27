@@ -1,0 +1,46 @@
+{
+  "name": "@jonasporto/pwt",
+  "version": "1.0.0",
+  "description": "Power Worktrees - Git worktree manager for multiple projects",
+  "main": "bin/pwt",
+  "bin": {
+    "pwt": "bin/pwt"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "completions/",
+    "plugins/",
+    "INSTALL.md",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "echo 'pwt installed! Run: pwt --help'",
+    "test": "bats tests/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jonasporto/pwt.git"
+  },
+  "keywords": [
+    "git",
+    "worktree",
+    "workflow",
+    "cli",
+    "bash",
+    "development"
+  ],
+  "author": "Jonas Porto",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/jonasporto/pwt/issues"
+  },
+  "homepage": "https://github.com/jonasporto/pwt#readme",
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "engines": {
+    "node": ">=14"
+  }
+}

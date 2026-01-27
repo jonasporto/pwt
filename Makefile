@@ -10,13 +10,14 @@ ZSH_COMPLETIONS ?= $(PREFIX)/share/zsh/site-functions
 BASH_COMPLETIONS ?= $(PREFIX)/share/bash-completion/completions
 FISH_COMPLETIONS ?= $(PREFIX)/share/fish/vendor_completions.d
 
-.PHONY: install uninstall test lint clean help
+.PHONY: install uninstall update test lint clean help
 
 help:
 	@echo "pwt - Power Worktrees"
 	@echo ""
 	@echo "Usage:"
 	@echo "  make install        Install to $(PREFIX)"
+	@echo "  make update         Update existing installation (auto-detects PREFIX)"
 	@echo "  make uninstall      Remove from $(PREFIX)"
 	@echo "  make test           Run tests"
 	@echo "  make lint           Check bash syntax"
@@ -76,6 +77,35 @@ install:
 	@echo "    fish_add_path $(BINDIR)"
 	@echo ""
 	@echo "View manual: man pwt"
+
+# Update existing installation (auto-detects PREFIX)
+update:
+	@pwt_path=$$(command -v pwt 2>/dev/null | head -1); \
+	if [ -z "$$pwt_path" ]; then \
+		echo "Error: pwt not found in PATH. Use 'make install' instead."; \
+		exit 1; \
+	fi; \
+	if [ "$$(type -t pwt 2>/dev/null)" = "function" ]; then \
+		pwt_path=$$(type pwt | grep -o '"/[^"]*"' | head -1 | tr -d '"'); \
+	fi; \
+	if [ -z "$$pwt_path" ] || [ ! -f "$$pwt_path" ]; then \
+		echo "Error: Could not determine pwt binary path"; \
+		exit 1; \
+	fi; \
+	prefix=$$(dirname $$(dirname $$pwt_path)); \
+	echo "Detected installation at: $$prefix"; \
+	echo "Updating..."; \
+	install -m 755 bin/pwt $$prefix/bin/pwt; \
+	echo "  ✓ Updated bin/pwt"; \
+	mkdir -p $$prefix/lib/pwt; \
+	install -m 644 lib/pwt/*.sh $$prefix/lib/pwt/; \
+	echo "  ✓ Updated lib/pwt modules"; \
+	if [ -d $$prefix/share/zsh/site-functions ]; then \
+		install -m 644 completions/_pwt $$prefix/share/zsh/site-functions/_pwt; \
+		echo "  ✓ Updated zsh completions"; \
+	fi; \
+	echo ""; \
+	echo "Updated successfully!"
 
 uninstall:
 	@echo "Uninstalling pwt from $(PREFIX)..."

@@ -2,9 +2,11 @@
 # Test helper for pwt tests
 # Sets up the environment and provides utility functions
 
-# Get the path to pwt binary
+# Get the path to pwt binary and module library
 PWD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PWT_BIN="$PWD_DIR/bin/pwt"
+PWT_LIB_DIR="$PWD_DIR/lib/pwt"
+PWT_STATUS_MODULE="$PWT_LIB_DIR/status.sh"
 
 # Create a temporary directory for each test
 setup_test_env() {

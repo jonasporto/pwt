@@ -3388,6 +3388,13 @@ cmd_remove() {
         echo -e "${BLUE}Removing current worktree: $name${NC}"
     fi
 
+    # Protect main app from removal
+    if [ "$name" = "@" ]; then
+        echo -e "${RED}Error: Cannot remove the main application.${NC}"
+        echo "Use 'git' commands directly if you need to modify the main repository."
+        exit 1
+    fi
+
     local worktree_dir="$WORKTREES_DIR/$name"
 
     if [ ! -d "$worktree_dir" ]; then
@@ -4087,15 +4094,23 @@ cmd_info() {
         local current_dir=$(pwd)
         if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
             name=$(basename "$current_dir")
+        elif [[ "$current_dir" == "$MAIN_APP" || "$current_dir" == "$MAIN_APP"/* ]]; then
+            name="@"
         else
             echo -e "${RED}Error: Worktree not specified${NC}"
             echo "Usage: pwt info <worktree>"
-            echo "Or run from inside a worktree"
+            echo "Or run from inside a worktree or main app"
             exit 1
         fi
     fi
 
-    local worktree_dir="$WORKTREES_DIR/$name"
+    # Handle @ as main app
+    local worktree_dir
+    if [ "$name" = "@" ]; then
+        worktree_dir="$MAIN_APP"
+    else
+        worktree_dir="$WORKTREES_DIR/$name"
+    fi
 
     if [ ! -d "$worktree_dir" ]; then
         echo -e "${RED}Error: Worktree not found: $name${NC}"
@@ -7607,19 +7622,20 @@ case "${1:-}" in
         echo "pwt version $PWT_VERSION"
         ;;
     "")
-        # No command: if project was explicitly specified, cd to main; otherwise show help
+        # No command: if project was explicitly specified, cd to main
         if [ "$PROJECT_EXPLICIT" = true ]; then
             cmd_cd "@"
             exit $?
         fi
-        # Show help (duplicated from help case for bash compatibility)
+        # If inside a project, show list
+        if [ -n "$CURRENT_PROJECT" ]; then
+            cmd_list
+            exit $?
+        fi
+        # Otherwise show brief help
         echo "pwt - Power Worktrees"
         echo "A tool for managing git worktrees across multiple projects"
         echo ""
-        if [ -n "$CURRENT_PROJECT" ]; then
-            echo -e "Current project: ${GREEN}$CURRENT_PROJECT${NC}"
-            echo ""
-        fi
         echo "Run 'pwt help' for full usage"
         ;;
     -h|--help|help)

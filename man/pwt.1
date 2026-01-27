@@ -1,0 +1,361 @@
+.\" pwt - Power Worktrees manual page
+.\" Generated for pwt v1.0.0
+.TH PWT 1 "January 2025" "pwt 1.0.0" "User Commands"
+
+.SH NAME
+pwt \- Power Worktrees: Git worktree manager for multiple projects
+
+.SH SYNOPSIS
+.B pwt
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR]
+.br
+.B pwt
+\fIPROJECT\fR \fICOMMAND\fR [\fIARGS\fR]
+.br
+.B pwt
+\fIPROJECT\fR \fIWORKTREE\fR \fICOMMAND\fR [\fIARGS\fR]
+
+.SH DESCRIPTION
+.B pwt
+(Power Worktrees) is a comprehensive tool for managing Git worktrees across multiple projects. It provides isolated development environments with automatic port allocation, custom commands via Pwtfile, and seamless navigation between worktrees.
+
+.SH OPTIONS
+.TP
+.BR \-\-project " " \fINAME\fR
+Specify project explicitly (useful when running from outside a project)
+.TP
+.BR \-h ", " \-\-help
+Show help message
+.TP
+.BR \-v ", " \-V ", " \-\-version
+Show version information
+
+.SH COMMANDS
+
+.SS Project Management
+.TP
+.B init \fR[\fIURL\fR]
+Initialize a project. Without URL, configures current directory. With URL, clones and configures.
+.TP
+.B project list
+List all configured projects
+.TP
+.B project show \fINAME\fR
+Show project configuration
+.TP
+.B project set \fINAME\fR \fIKEY\fR \fIVALUE\fR
+Update project configuration
+
+.SS Worktree Operations
+.TP
+.B create \fIBRANCH\fR [\fIBASE\fR] [\fIDESCRIPTION\fR]
+Create a new worktree. Allocates port automatically and optionally creates branch.
+.RS
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what would be created without creating
+.TP
+.BR \-e ", " \-\-editor
+Open editor after creating
+.TP
+.BR \-a ", " \-\-ai
+Start AI tool after creating
+.TP
+.BR \-\-from " " \fIREF\fR
+Create from specific ref (tag, commit, branch)
+.TP
+.BR \-\-from\-current
+Create from current branch
+.RE
+.TP
+.B remove \fINAME\fR
+Remove a worktree and clean up resources
+.RS
+.TP
+.BR \-\-with\-branch
+Also delete the branch (if merged)
+.TP
+.BR \-\-force\-branch
+Force delete the branch (even if not merged)
+.TP
+.BR \-\-kill\-port
+Kill processes using the port
+.TP
+.BR \-y ", " \-\-yes
+Skip confirmation prompts
+.RE
+.TP
+.B list \fR[\fIOPTIONS\fR]
+List all worktrees with status information
+.RS
+.TP
+.BR \-\-names
+Output only worktree names (for scripting)
+.TP
+.BR \-\-json
+Output as JSON
+.RE
+.TP
+.B tree \fR[\fIOPTIONS\fR]
+Visual tree view of worktrees
+.RS
+.TP
+.BR \-p ", " \-\-ports
+Show port numbers
+.RE
+
+.SS Navigation
+.TP
+.B cd \fINAME\fR
+Print path to worktree (use with shell integration for actual cd)
+.TP
+.B use \fINAME\fR
+Set worktree as "current" (updates symlink)
+.TP
+.B current \fR[\fIOPTIONS\fR]
+Show current worktree
+.RS
+.TP
+.BR \-\-resolved
+Show resolved path instead of symlink
+.RE
+.TP
+.B \-
+Go to previous worktree
+
+.SS Development
+.TP
+.B server \fR[\fINAME\fR]
+Start development server for worktree (runs Pwtfile server command)
+.TP
+.B run \fINAME\fR \fICOMMAND\fR...
+Run command in specific worktree context
+.TP
+.B for\-each \fICOMMAND\fR...
+Run command in all worktrees
+.TP
+.B shell \fR[\fINAME\fR]
+Start interactive shell in worktree context
+.TP
+.B editor \fR[\fINAME\fR]
+Open worktree in configured editor
+.TP
+.B ai \fR[\fINAME\fR]
+Start AI tool (Claude Code, Cursor, etc.) in worktree
+
+.SS Information
+.TP
+.B info \fINAME\fR
+Show detailed worktree information
+.TP
+.B port \fINAME\fR
+Get allocated port for worktree
+.TP
+.B diff \fIWORKTREE1\fR \fIWORKTREE2\fR
+Show git diff between two worktrees
+.TP
+.B doctor
+Check system health and configuration
+.TP
+.B status \fR[\fIOPTIONS\fR]
+Interactive TUI dashboard (like htop)
+.RS
+.TP
+.BR \-\-all
+Show all projects (global view)
+.RE
+
+.SS Maintenance
+.TP
+.B repair \fR[\fINAME\fR]
+Repair broken worktree (runs Pwtfile repair command)
+.TP
+.B auto\-remove \fR[\fITARGET\fR]
+Remove worktrees whose branches are merged into target
+.TP
+.B fix\-port \fINAME\fR
+Resolve port conflict by allocating new port
+.TP
+.B restore \fINAME\fR
+Recover backed up changes from trash
+
+.SS Interactive Selection (requires fzf)
+.TP
+.B select
+Interactive worktree selector
+.TP
+.B pick
+Interactive select with auto-use
+
+.SS Metadata
+.TP
+.B meta list
+List all metadata
+.TP
+.B meta show \fINAME\fR
+Show metadata for worktree
+.TP
+.B meta set \fINAME\fR \fIFIELD\fR \fIVALUE\fR
+Update metadata field
+
+.SS Plugins
+.TP
+.B plugin list
+List installed plugins
+.TP
+.B plugin install \fISOURCE\fR
+Install plugin from file or URL
+.TP
+.B plugin remove \fINAME\fR
+Remove plugin
+.TP
+.B plugin create \fINAME\fR
+Create new plugin template
+
+.SH PWTFILE
+A Pwtfile is a bash script in your project root that defines custom commands. Available functions:
+
+.TP
+.B server()
+Start development server. Receives $PWT_PORT, $PWT_WORKTREE, etc.
+.TP
+.B repair()
+Fix worktree issues (reinstall deps, reset state)
+.TP
+.B setup()
+Run after worktree creation
+.TP
+.B cleanup()
+Run before worktree removal
+.TP
+.I custom_command()
+Any function becomes available as \fBpwt custom_command\fR
+
+.SS Available Variables
+.TP
+.B $PWT_PORT
+Allocated port number
+.TP
+.B $PWT_WORKTREE
+Worktree name
+.TP
+.B $PWT_WORKTREE_PATH
+Full path to worktree
+.TP
+.B $PWT_BRANCH
+Git branch name
+.TP
+.B $PWT_PROJECT
+Project name
+.TP
+.B $PWT_ARGS
+Arguments passed to command
+
+.SH CONFIGURATION
+Configuration is stored in \fB~/.pwt/\fR:
+
+.TP
+.B ~/.pwt/projects/\fINAME\fR/config.json
+Project configuration (path, worktrees_dir, branch_prefix, base_port)
+.TP
+.B ~/.pwt/projects/\fINAME\fR/metadata.json
+Worktree metadata (ports, branches, descriptions)
+.TP
+.B ~/.pwt/plugins/
+Custom plugins
+
+.SH EXAMPLES
+.TP
+Initialize a project:
+.B pwt init
+.TP
+Clone and initialize:
+.B pwt init git@github.com:user/repo.git
+.TP
+Create worktree from current branch:
+.B pwt create feature-auth --from-current
+.TP
+Create worktree with description:
+.B pwt create PROJ-123 main "Add user authentication"
+.TP
+Start server:
+.B pwt server my-feature
+.TP
+Run command in all worktrees:
+.B pwt for-each npm test
+.TP
+Remove merged worktrees:
+.B pwt auto-remove main
+.TP
+Use project prefix from anywhere:
+.B pwt myproject list
+
+.SH SHELL INTEGRATION
+Add to your shell config:
+
+.SS Zsh (~/.zshrc)
+.nf
+eval "$(pwt shell-init zsh)"
+.fi
+
+.SS Bash (~/.bashrc)
+.nf
+eval "$(pwt shell-init bash)"
+.fi
+
+This enables \fBpcd\fR function for actual directory change.
+
+.SH ENVIRONMENT
+.TP
+.B PWT_DEBUG
+Enable debug output when set to 1
+.TP
+.B PWT_THEME
+Theme for status TUI (default, matrix, etc.)
+.TP
+.B EDITOR
+Editor for \fBpwt editor\fR command
+
+.SH FILES
+.TP
+.I ~/.pwt/
+Main configuration directory
+.TP
+.I ~/.pwt/projects/
+Project configurations
+.TP
+.I ~/.pwt/plugins/
+Custom plugins
+.TP
+.I ~/.pwt/trash/
+Backup of removed worktrees
+.TP
+.I Pwtfile
+Project-level command definitions
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+General error
+.TP
+.B 2
+Not found (worktree, project, etc.)
+.TP
+.B 3
+Conflict (worktree exists, port in use)
+
+.SH SEE ALSO
+.BR git-worktree (1),
+.BR git (1)
+
+.SH BUGS
+Report bugs at: https://github.com/jonasporto/pwt/issues
+
+.SH AUTHOR
+Jonas Porto <jonas@porto.dev>
+
+.SH COPYRIGHT
+Copyright (c) 2025 Jonas Porto. MIT License.

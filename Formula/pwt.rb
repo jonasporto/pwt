@@ -20,8 +20,13 @@ class Pwt < Formula
     # Install library modules
     (lib/"pwt").install Dir["lib/pwt/*.sh"]
 
+    # Install man page
+    man1.install "man/pwt.1"
+
     # Install completions
     zsh_completion.install "completions/_pwt"
+    bash_completion.install "completions/pwt.bash" => "pwt"
+    fish_completion.install "completions/pwt.fish"
 
     # Install plugins (optional)
     (share/"pwt/plugins").install Dir["plugins/*"]
@@ -29,11 +34,18 @@ class Pwt < Formula
 
   def caveats
     <<~EOS
-      To enable zsh completions, add to ~/.zshrc:
-        fpath=(#{HOMEBREW_PREFIX}/share/zsh/site-functions $fpath)
+      Shell completions have been installed.
+
+      For zsh, ensure your ~/.zshrc includes:
         autoload -Uz compinit && compinit
 
-      To use plugins, copy from #{HOMEBREW_PREFIX}/share/pwt/plugins/ to ~/.pwt/plugins/
+      For bash, ensure bash-completion is installed:
+        brew install bash-completion@2
+
+      For fish, completions should work automatically.
+
+      View the manual:
+        man pwt
 
       Quick start:
         cd your-project

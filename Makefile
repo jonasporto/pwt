@@ -4,8 +4,11 @@
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 LIBDIR ?= $(PREFIX)/lib/pwt
-COMPLETIONS_DIR ?= $(PREFIX)/share/zsh/site-functions
+MANDIR ?= $(PREFIX)/share/man/man1
 SHARE_DIR ?= $(PREFIX)/share/pwt
+ZSH_COMPLETIONS ?= $(PREFIX)/share/zsh/site-functions
+BASH_COMPLETIONS ?= $(PREFIX)/share/bash-completion/completions
+FISH_COMPLETIONS ?= $(PREFIX)/share/fish/vendor_completions.d
 
 .PHONY: install uninstall test lint clean help
 
@@ -32,25 +35,56 @@ install:
 	@echo "Installing pwt to $(PREFIX)..."
 	@mkdir -p $(BINDIR)
 	@mkdir -p $(LIBDIR)
-	@mkdir -p $(COMPLETIONS_DIR)
+	@mkdir -p $(MANDIR)
+	@mkdir -p $(ZSH_COMPLETIONS)
+	@mkdir -p $(BASH_COMPLETIONS)
+	@mkdir -p $(FISH_COMPLETIONS)
 	@mkdir -p $(SHARE_DIR)/plugins
+	@# Main script
 	@install -m 755 bin/pwt $(BINDIR)/pwt
+	@echo "  ✓ Installed bin/pwt"
+	@# Library modules
 	@install -m 644 lib/pwt/*.sh $(LIBDIR)/
-	@install -m 644 completions/_pwt $(COMPLETIONS_DIR)/_pwt
+	@echo "  ✓ Installed lib/pwt modules"
+	@# Man page
+	@install -m 644 man/pwt.1 $(MANDIR)/pwt.1
+	@echo "  ✓ Installed man page"
+	@# Completions
+	@install -m 644 completions/_pwt $(ZSH_COMPLETIONS)/_pwt
+	@echo "  ✓ Installed zsh completions"
+	@install -m 644 completions/pwt.bash $(BASH_COMPLETIONS)/pwt
+	@echo "  ✓ Installed bash completions"
+	@install -m 644 completions/pwt.fish $(FISH_COMPLETIONS)/pwt.fish
+	@echo "  ✓ Installed fish completions"
+	@# Plugins (optional)
 	@if [ -d plugins ]; then cp -r plugins/* $(SHARE_DIR)/plugins/ 2>/dev/null || true; fi
 	@echo ""
 	@echo "Installed successfully!"
 	@echo ""
-	@echo "Add to your ~/.zshrc:"
-	@echo "  export PATH=\"$(BINDIR):\$$PATH\""
-	@echo "  fpath=($(COMPLETIONS_DIR) \$$fpath)"
-	@echo "  autoload -Uz compinit && compinit"
+	@echo "Shell setup:"
+	@echo ""
+	@echo "  Zsh (~/.zshrc):"
+	@echo "    export PATH=\"$(BINDIR):\$$PATH\""
+	@echo "    fpath=($(ZSH_COMPLETIONS) \$$fpath)"
+	@echo "    autoload -Uz compinit && compinit"
+	@echo ""
+	@echo "  Bash (~/.bashrc):"
+	@echo "    export PATH=\"$(BINDIR):\$$PATH\""
+	@echo "    source $(BASH_COMPLETIONS)/pwt"
+	@echo ""
+	@echo "  Fish (~/.config/fish/config.fish):"
+	@echo "    fish_add_path $(BINDIR)"
+	@echo ""
+	@echo "View manual: man pwt"
 
 uninstall:
 	@echo "Uninstalling pwt from $(PREFIX)..."
 	@rm -f $(BINDIR)/pwt
 	@rm -rf $(LIBDIR)
-	@rm -f $(COMPLETIONS_DIR)/_pwt
+	@rm -f $(MANDIR)/pwt.1
+	@rm -f $(ZSH_COMPLETIONS)/_pwt
+	@rm -f $(BASH_COMPLETIONS)/pwt
+	@rm -f $(FISH_COMPLETIONS)/pwt.fish
 	@rm -rf $(SHARE_DIR)
 	@echo "Uninstalled successfully!"
 
@@ -66,6 +100,7 @@ lint:
 	@echo "Checking bash syntax..."
 	@bash -n bin/pwt
 	@for f in lib/pwt/*.sh; do bash -n "$$f" && echo "  ✓ $$f"; done
+	@bash -n completions/pwt.bash && echo "  ✓ completions/pwt.bash"
 	@echo "All files OK"
 
 clean:

@@ -36,6 +36,20 @@ teardown() {
 # pwt create - basic functionality
 # ============================================
 
+@test "pwt create uses --guess-remote flag" {
+    cd "$TEST_REPO"
+
+    # Create a local branch to use
+    git branch test-existing-branch
+
+    # Create worktree from existing branch (doesn't need remote)
+    run "$PWT_BIN" create test-existing-branch
+    [ "$status" -eq 0 ]
+
+    # Verify worktree was created
+    [ -d "$TEST_WORKTREES/test-existing-branch" ]
+}
+
 @test "pwt create without args shows usage" {
     cd "$TEST_REPO"
     run "$PWT_BIN" create

@@ -1,5 +1,9 @@
 # pwt - Power Worktrees
 
+[![Tests](https://github.com/jonasporto/pwt/actions/workflows/ci.yml/badge.svg)](https://github.com/jonasporto/pwt/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](CHANGELOG.md)
+
 **Stop opening 6 editors. One stable path. Multiple worktrees.**
 
 pwt lets you work with multiple git worktrees using a single editor and a single stable path.
@@ -116,25 +120,55 @@ pwt create feature master --clone      # Creates clone instead
 
 ## Install
 
+### Homebrew (macOS/Linux)
+
 ```bash
-# Clone to your preferred location
-git clone https://github.com/jonasporto/dotfiles.git ~/dotfiles
-# pwt lives in ~/dotfiles/pwt/bin/pwt
+brew tap jonasporto/pwt
+brew install pwt
+```
 
-# Add to PATH (add to ~/.zshrc or ~/.bashrc)
-export PATH="$HOME/dotfiles/pwt/bin:$PATH"
+### npm (cross-platform)
 
-# Enable shell integration (add to ~/.zshrc)
-eval "$(pwt shell-init)"
+```bash
+npm install -g @jonasporto/pwt
+```
 
-# Verify installation
+### Manual Install
+
+```bash
+git clone https://github.com/jonasporto/pwt.git ~/.pwt-src
+cd ~/.pwt-src
+make install PREFIX=~/.local
+```
+
+### Shell Setup
+
+Add to your shell config:
+
+**Zsh (~/.zshrc):**
+```bash
+eval "$(pwt shell-init zsh)"
+```
+
+**Bash (~/.bashrc):**
+```bash
+eval "$(pwt shell-init bash)"
+```
+
+**Fish (~/.config/fish/config.fish):**
+```fish
+pwt shell-init fish | source
+```
+
+### Verify Installation
+
+```bash
+pwt --version
 pwt doctor
+man pwt  # View manual
 ```
 
-**Update:**
-```bash
-cd ~/dotfiles && git pull
-```
+See [INSTALL.md](INSTALL.md) for detailed instructions.
 
 ## 30-Second Demo
 
@@ -183,6 +217,7 @@ pwt remove feature-branch
 | `init [url]` | Initialize project (clone from URL or configure current repo) |
 | `create <branch> [base] [desc]` | Create new worktree (see flags below) |
 | `list [flags]` | List worktrees and status (see flags below) |
+| `status [flags]` | Interactive TUI dashboard (like htop) |
 | `select [flags]` | Interactive worktree selector with preview (requires fzf) |
 | `pick [--dirty]` | Interactive selector + auto-use (sets current symlink) |
 | `info [worktree]` | Show worktree details |
@@ -559,18 +594,25 @@ Plugins receive context from pwt:
 
 ## Shell Integration
 
-Enable `pwt cd` navigation by adding to your `~/.zshrc`:
+Enable `pwt cd` navigation and tab completion:
 
+**Zsh (~/.zshrc):**
 ```bash
-# pwt shell integration (enables pwt cd)
-eval "$(pwt shell-init)"
-
-# Tab completion
-fpath=(~/dotfiles/pwt/completions $fpath)
+eval "$(pwt shell-init zsh)"
 autoload -Uz compinit && compinit
 ```
 
-Then restart your terminal or run `source ~/.zshrc`.
+**Bash (~/.bashrc):**
+```bash
+eval "$(pwt shell-init bash)"
+```
+
+**Fish (~/.config/fish/config.fish):**
+```fish
+pwt shell-init fish | source
+```
+
+Then restart your terminal or source your config file.
 
 ### Navigation
 
@@ -774,6 +816,31 @@ pwt server              # Start server for current context
 
 ## Visual Commands
 
+### `pwt status` — Interactive Dashboard
+
+Full-screen TUI dashboard (like htop) for monitoring worktrees:
+
+```bash
+pwt status         # Current project
+pwt status --all   # All projects
+```
+
+**Features:**
+- Real-time git status, server status, port usage
+- Navigate with arrow keys, Tab between panes
+- Quick actions: start server, open editor, git operations
+- Customizable themes via `PWT_THEME` environment variable
+
+**Keyboard shortcuts:**
+| Key | Action |
+|-----|--------|
+| `↑↓` / `jk` | Navigate |
+| `Tab` | Switch pane |
+| `Enter` | Select/drill down |
+| `s` | Toggle server |
+| `e` | Open editor |
+| `q` / `Esc` | Quit |
+
 ### `pwt tree` — Factual Structure
 
 See your worktrees at a glance:
@@ -933,6 +1000,26 @@ When using the `current` symlink (`~/.pwt/projects/<project>/current`), editors 
 - Accept that file content is correct, status bar is stale
 
 **This affects:** Sublime Text, VS Code, and most editors. It's not a pwt bug - it's how editors handle symlinks to git repositories.
+
+## Documentation
+
+- **Man page:** `man pwt` (full command reference)
+- **FAQ:** [FAQ.md](FAQ.md) - common questions
+- **Changelog:** [CHANGELOG.md](CHANGELOG.md) - version history
+- **Install guide:** [INSTALL.md](INSTALL.md) - detailed setup
+
+## Contributing
+
+```bash
+# Run tests
+make test
+
+# Check syntax
+make lint
+
+# Install locally for development
+make install PREFIX=~/.local
+```
 
 ## FAQ
 

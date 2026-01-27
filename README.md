@@ -6,6 +6,8 @@
 
 **Stop opening 6 editors. One stable path. Multiple worktrees.**
 
+![pwt demo](demo.gif)
+
 pwt lets you work with multiple git worktrees using a single editor and a single stable path.
 
 ```bash

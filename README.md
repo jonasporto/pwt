@@ -122,55 +122,27 @@ pwt create feature master --clone      # Creates clone instead
 
 ## Install
 
-### Homebrew (macOS/Linux)
-
 ```bash
-brew tap jonasporto/pwt
-brew install pwt
-```
-
-### npm (cross-platform)
-
-```bash
-npm install -g @jonasporto/pwt
-```
-
-### Manual Install
-
-```bash
+# Clone and install
 git clone https://github.com/jonasporto/pwt.git ~/.pwt-src
 cd ~/.pwt-src
 make install PREFIX=~/.local
-```
 
-### Shell Setup
-
-Add to your shell config:
-
-**Zsh (~/.zshrc):**
-```bash
+# Add to ~/.zshrc (or ~/.bashrc)
+export PATH="$HOME/.local/bin:$PATH"
 eval "$(pwt shell-init zsh)"
-```
 
-**Bash (~/.bashrc):**
-```bash
-eval "$(pwt shell-init bash)"
-```
-
-**Fish (~/.config/fish/config.fish):**
-```fish
-pwt shell-init fish | source
-```
-
-### Verify Installation
-
-```bash
+# Verify
 pwt --version
 pwt doctor
-man pwt  # View manual
 ```
 
-See [INSTALL.md](INSTALL.md) for detailed instructions.
+**Dependencies:** `jq` (required), `fzf` (optional)
+```bash
+brew install jq fzf  # macOS
+```
+
+See [INSTALL.md](INSTALL.md) for bash/fish setup and troubleshooting.
 
 ## 30-Second Demo
 

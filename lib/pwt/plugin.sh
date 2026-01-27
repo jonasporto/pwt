@@ -85,13 +85,13 @@ cmd_plugin() {
                 elif command -v wget &>/dev/null; then
                     wget -q "$source" -O "$dest"
                 else
-                    echo -e "${RED}Error: curl or wget required for URL install${NC}"
+                    pwt_error "Error: curl or wget required for URL install"
                     exit 1
                 fi
             else
                 # Copy local file
                 if [ ! -f "$source" ]; then
-                    echo -e "${RED}Error: File not found: $source${NC}"
+                    pwt_error "Error: File not found: $source"
                     exit 1
                 fi
 
@@ -120,7 +120,7 @@ cmd_plugin() {
             local plugin="$plugins_dir/$name"
 
             if [ ! -f "$plugin" ]; then
-                echo -e "${RED}Error: Plugin not found: ${name#pwt-}${NC}"
+                pwt_error "Error: Plugin not found: ${name#pwt-}"
                 exit 1
             fi
 
@@ -145,7 +145,7 @@ cmd_plugin() {
             local cmd_name="${name#pwt-}"
 
             if [ -f "$plugin" ]; then
-                echo -e "${RED}Error: Plugin already exists: $cmd_name${NC}"
+                pwt_error "Error: Plugin already exists: $cmd_name"
                 exit 1
             fi
 

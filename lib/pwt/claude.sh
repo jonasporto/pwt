@@ -120,7 +120,7 @@ cmd_claude_setup() {
             if [ "$scope" = "--project" ]; then
                 # Project-specific format
                 if [ -z "$CURRENT_PROJECT" ]; then
-                    echo -e "${RED}Error: No project detected. Run from inside a project.${NC}"
+                    pwt_error "Error: No project detected. Run from inside a project."
                     return 1
                 fi
 

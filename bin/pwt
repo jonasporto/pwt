@@ -43,7 +43,7 @@ load_module() {
     if [[ -f "$module_path" ]]; then
         source "$module_path"
     else
-        echo -e "${RED}Error: Module not found: $module_path${NC}" >&2
+        pwt_error "Error: Module not found: $module_path"
         exit 1
     fi
 }
@@ -105,21 +105,11 @@ sed_inplace() {
 }
 
 # Output helpers for --quiet/--verbose control
-# Usage: pwt_info "message"     - Normal output (suppressed with --quiet)
 # Usage: pwt_debug "message"    - Debug output (only with --verbose)
-# Usage: pwt_warn "message"     - Warning (always shown unless --quiet)
 # Usage: pwt_error "message"    - Error (always shown)
-pwt_info() {
-    [ "$PWT_QUIET" = true ] || echo -e "$@"
-}
-
 pwt_debug() {
     [ "$PWT_VERBOSE" = true ] && echo -e "${DIM}[debug] $*${NC}" >&2
     return 0
-}
-
-pwt_warn() {
-    [ "$PWT_QUIET" = true ] || echo -e "${YELLOW}$*${NC}" >&2
 }
 
 pwt_error() {
@@ -364,19 +354,6 @@ is_list_cache_valid() {
 
     local age=$((now - cache_mtime))
     [ "$age" -lt "$LIST_CACHE_TTL" ]
-}
-
-# Read cached list output
-read_list_cache() {
-    local cache_file=$(get_list_cache_file)
-    [ -f "$cache_file" ] && cat "$cache_file"
-}
-
-# Write list output to cache
-write_list_cache() {
-    init_cache_dir
-    local cache_file=$(get_list_cache_file)
-    cat > "$cache_file"
 }
 
 # Clear list cache for current project
@@ -626,7 +603,7 @@ require_project() {
     fi
 
     if [ -z "$MAIN_APP" ] || [ -z "$WORKTREES_DIR" ]; then
-        echo -e "${RED}Error: Could not determine project paths${NC}"
+        pwt_error "Error: Could not determine project paths"
         echo ""
         echo "Run from inside a git repository, or initialize a project:"
         echo "  cd /path/to/repo && pwt init"
@@ -651,18 +628,18 @@ require_project() {
                 if git clone "$PROJECT_REMOTE" "$MAIN_APP"; then
                     echo -e "${GREEN}✓ Cloned successfully${NC}"
                 else
-                    echo -e "${RED}Error: Failed to clone from $PROJECT_REMOTE${NC}"
+                    pwt_error "Error: Failed to clone from $PROJECT_REMOTE"
                     exit 1
                 fi
             else
-                echo -e "${RED}Error: Project not cloned${NC}"
+                pwt_error "Error: Project not cloned"
                 echo ""
                 echo "Run: pwt clone $CURRENT_PROJECT"
                 echo "Or:  pwt $CURRENT_PROJECT create <branch> <base> <desc>"
                 exit 1
             fi
         else
-            echo -e "${RED}Error: Main app directory not found: $MAIN_APP${NC}"
+            pwt_error "Error: Main app directory not found: $MAIN_APP"
             exit 1
         fi
     fi
@@ -695,7 +672,7 @@ cmd_init() {
 
         echo -e "${BLUE}Cloning: $url${NC}"
         if ! git clone "$url" "$target_dir"; then
-            echo -e "${RED}Error: Failed to clone${NC}"
+            pwt_error "Error: Failed to clone"
             exit 1
         fi
 
@@ -788,7 +765,7 @@ cmd_init_named() {
 
         echo -e "${BLUE}Cloning: $url${NC}"
         if ! git clone "$url" "$target_dir"; then
-            echo -e "${RED}Error: Failed to clone${NC}"
+            pwt_error "Error: Failed to clone"
             exit 1
         fi
 
@@ -913,7 +890,7 @@ atomic_metadata_write() {
 
         waited=$((waited + 1))
         if [ $waited -ge $max_wait ]; then
-            echo -e "${RED}Error: Could not acquire lock on metadata file${NC}" >&2
+            pwt_error "Error: Could not acquire lock on metadata file"
             return 1
         fi
         sleep 0.1
@@ -970,7 +947,7 @@ acquire_metadata_lock() {
 
         waited=$((waited + 1))
         if [ $waited -ge $max_wait ]; then
-            echo -e "${RED}Error: Could not acquire metadata lock${NC}" >&2
+            pwt_error "Error: Could not acquire metadata lock"
             return 1
         fi
         sleep 0.1
@@ -1089,20 +1066,6 @@ update_metadata_json() {
     atomic_metadata_write \
        'if .[$project][$name] then .[$project][$name][$field] = $value else . end' \
        --arg project "$project" --arg name "$name" --arg field "$field" --argjson value "$json_value"
-}
-
-# List all metadata for current project
-list_metadata() {
-    local project="${CURRENT_PROJECT:-unknown}"
-    init_metadata
-    jq --arg project "$project" '.[$project] // {}' "$METADATA_FILE"
-}
-
-# Get project config directory
-# Usage: get_project_dir <project_name>
-get_project_dir() {
-    local project="$1"
-    echo "$PROJECTS_DIR/$project"
 }
 
 # Get project config value
@@ -1702,14 +1665,6 @@ run_hook() {
     fi
 }
 
-# Legacy wrapper
-run_project_hook() {
-    local project="$1"
-    local hook="$2"
-    shift 2
-    CURRENT_PROJECT="$project" run_hook "$hook"
-}
-
 # Initialize project config directory
 # Usage: init_project <project_name>
 init_project() {
@@ -1888,7 +1843,7 @@ cmd_server() {
             fi
         fi
         if [ ! -d "$worktree_path" ]; then
-            echo -e "${RED}Error: Worktree not found: $arg${NC}"
+            pwt_error "Error: Worktree not found: $arg"
             exit 1
         fi
         worktree_name=$(basename "$worktree_path")
@@ -1901,14 +1856,14 @@ cmd_server() {
     elif worktree_name=$(get_current_from_symlink 2>/dev/null); then
         # @ = main (can't run server from main)
         if [ "$worktree_name" = "@" ]; then
-            echo -e "${RED}Error: current points to main (@)${NC}"
+            pwt_error "Error: current points to main (@)"
             echo "Use: pwt use <worktree>  # switch to a worktree first"
             exit 1
         fi
         worktree_path="$WORKTREES_DIR/$worktree_name"
         via_symlink=true
     else
-        echo -e "${RED}Error: Not inside a worktree and no current set${NC}"
+        pwt_error "Error: Not inside a worktree and no current set"
         echo ""
         echo "Options:"
         echo "  pwt server <worktree>  # specify worktree"
@@ -2312,7 +2267,7 @@ cmd_info() {
         elif [[ "$current_dir" == "$MAIN_APP" || "$current_dir" == "$MAIN_APP"/* ]]; then
             name="@"
         else
-            echo -e "${RED}Error: Worktree not specified${NC}"
+            pwt_error "Error: Worktree not specified"
             echo "Usage: pwt info <worktree>"
             echo "Or run from inside a worktree or main app"
             exit 1
@@ -2328,7 +2283,7 @@ cmd_info() {
     fi
 
     if [ ! -d "$worktree_dir" ]; then
-        echo -e "${RED}Error: Worktree not found: $name${NC}"
+        pwt_error "Error: Worktree not found: $name"
         exit 1
     fi
 
@@ -2407,7 +2362,7 @@ cmd_fix_port() {
         if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
             name=$(basename "$current_dir")
         else
-            echo -e "${RED}Error: Worktree name not specified${NC}"
+            pwt_error "Error: Worktree name not specified"
             echo "Usage: pwt fix-port <worktree>"
             echo "Or run from inside a worktree"
             exit 1
@@ -2417,7 +2372,7 @@ cmd_fix_port() {
     local worktree_dir="$WORKTREES_DIR/$name"
 
     if [ ! -d "$worktree_dir" ]; then
-        echo -e "${RED}Error: Worktree not found: $name${NC}"
+        pwt_error "Error: Worktree not found: $name"
         exit 1
     fi
 
@@ -2431,7 +2386,7 @@ cmd_fix_port() {
     fi
 
     if [ -z "$old_port" ] || ! [[ "$old_port" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}Error: Could not find port for worktree: $name${NC}"
+        pwt_error "Error: Could not find port for worktree: $name"
         echo "Check metadata with: pwt meta show $name"
         exit 1
     fi
@@ -2565,7 +2520,7 @@ cmd_meta() {
             ;;
         show)
             if [ -z "$name" ]; then
-                echo -e "${RED}Error: Worktree name required${NC}"
+                pwt_error "Error: Worktree name required"
                 echo "Usage: pwt meta show <worktree>"
                 exit 1
             fi
@@ -2579,7 +2534,7 @@ cmd_meta() {
             ;;
         set)
             if [ -z "$name" ] || [ -z "$field" ] || [ -z "$value" ]; then
-                echo -e "${RED}Error: Missing arguments${NC}"
+                pwt_error "Error: Missing arguments"
                 echo "Usage: pwt meta set <worktree> <field> <value>"
                 echo ""
                 echo "Fields: base, description, branch"
@@ -2682,13 +2637,13 @@ cmd_alias() {
         local reserved_commands="list create remove cd server test meta port project help version config init show set path alias"
         for cmd in $reserved_commands; do
             if [ "$new_alias" = "$cmd" ]; then
-                echo -e "${RED}Error: '$new_alias' is a reserved command name${NC}"
+                pwt_error "Error: '$new_alias' is a reserved command name"
                 exit 1
             fi
         done
         # Check if alias conflicts with existing project name
         if [ -f "$PROJECTS_DIR/$new_alias/config.json" ]; then
-            echo -e "${RED}Error: '$new_alias' is already a project name${NC}"
+            pwt_error "Error: '$new_alias' is already a project name"
             exit 1
         fi
         # Check if alias already used by another project
@@ -2699,7 +2654,7 @@ cmd_alias() {
             [ "$proj_name" = "$CURRENT_PROJECT" ] && continue
             local other_alias=$(jq -r '.alias // empty' "$cfg")
             if [ "$other_alias" = "$new_alias" ]; then
-                echo -e "${RED}Error: Alias '$new_alias' already used by project '$proj_name'${NC}"
+                pwt_error "Error: Alias '$new_alias' already used by project '$proj_name'"
                 exit 1
             fi
         done
@@ -3445,7 +3400,7 @@ cmd_diff() {
     local commit2=$(git -C "$path2" rev-parse HEAD 2>/dev/null)
 
     if [ -z "$commit1" ] || [ -z "$commit2" ]; then
-        echo -e "${RED}Error: Could not get commit hashes${NC}"
+        pwt_error "Error: Could not get commit hashes"
         exit 1
     fi
 
@@ -3678,7 +3633,7 @@ cmd_select() {
 
     # Check if fzf is installed
     if ! command -v fzf &>/dev/null; then
-        echo -e "${RED}Error: fzf is required for pwt select${NC}"
+        pwt_error "Error: fzf is required for pwt select"
         echo "Install with: brew install fzf"
         exit 1
     fi
@@ -3806,7 +3761,7 @@ cmd_pick() {
 
     # Check if fzf is installed
     if ! command -v fzf &>/dev/null; then
-        echo -e "${RED}Error: fzf is required for pwt pick${NC}"
+        pwt_error "Error: fzf is required for pwt pick"
         echo "Install with: brew install fzf"
         exit 1
     fi
@@ -3908,7 +3863,7 @@ cmd_for_each() {
     fi
 
     if [ $# -eq 0 ]; then
-        echo -e "${RED}Error: No command specified${NC}"
+        pwt_error "Error: No command specified"
         echo "Usage: pwt for-each <command...>"
         exit 1
     fi
@@ -4761,7 +4716,7 @@ case "${1:-}" in
             # If project was explicitly specified (pwt <project> <cmd>), require worktree
             # e.g., "pwt acme clean" should error, use "pwt acme @ clean" instead
             if [ "$PROJECT_EXPLICIT" = true ]; then
-                echo -e "${RED}Error: Pwtfile command '$_pwtfile_cmd' requires worktree context${NC}"
+                pwt_error "Error: Pwtfile command '$_pwtfile_cmd' requires worktree context"
                 echo ""
                 echo "Usage:"
                 echo "  pwt $CURRENT_PROJECT @ $_pwtfile_cmd              # Run in main app"

@@ -153,7 +153,7 @@ cmd_project() {
             ;;
         init)
             if [ -z "$project" ]; then
-                echo -e "${RED}Error: Project name required${NC}"
+                pwt_error "Error: Project name required"
                 echo "Usage: pwt project init <name>"
                 exit 1
             fi
@@ -164,7 +164,7 @@ cmd_project() {
             ;;
         show)
             if [ -z "$project" ]; then
-                echo -e "${RED}Error: Project name required${NC}"
+                pwt_error "Error: Project name required"
                 echo "Usage: pwt project show <name>"
                 exit 1
             fi
@@ -183,7 +183,7 @@ cmd_project() {
             ;;
         set)
             if [ -z "$project" ] || [ -z "$arg3" ] || [ -z "$arg4" ]; then
-                echo -e "${RED}Error: Missing arguments${NC}"
+                pwt_error "Error: Missing arguments"
                 echo "Usage: pwt project set <name> <key> <value>"
                 exit 1
             fi
@@ -201,7 +201,7 @@ cmd_project() {
             ;;
         path)
             if [ -z "$project" ]; then
-                echo -e "${RED}Error: Project name required${NC}"
+                pwt_error "Error: Project name required"
                 exit 1
             fi
             echo "$PROJECTS_DIR/$project"
@@ -211,7 +211,7 @@ cmd_project() {
             local new_alias="$arg3"
 
             if [ -z "$project" ]; then
-                echo -e "${RED}Error: Project name required${NC}"
+                pwt_error "Error: Project name required"
                 echo "Usage: pwt project alias <project> [<alias>|--clear]"
                 exit 1
             fi
@@ -241,13 +241,13 @@ cmd_project() {
                 local reserved_commands="list create remove cd server test meta port project help version config init show set path alias"
                 for cmd in $reserved_commands; do
                     if [ "$new_alias" = "$cmd" ]; then
-                        echo -e "${RED}Error: '$new_alias' is a reserved command name${NC}"
+                        pwt_error "Error: '$new_alias' is a reserved command name"
                         exit 1
                     fi
                 done
                 # Check if alias conflicts with existing project name
                 if [ -f "$PROJECTS_DIR/$new_alias/config.json" ]; then
-                    echo -e "${RED}Error: '$new_alias' is already a project name${NC}"
+                    pwt_error "Error: '$new_alias' is already a project name"
                     exit 1
                 fi
                 # Check if alias already used by another project
@@ -258,7 +258,7 @@ cmd_project() {
                     [ "$proj_name" = "$project" ] && continue
                     local other_alias=$(jq -r '.alias // empty' "$cfg")
                     if [ "$other_alias" = "$new_alias" ]; then
-                        echo -e "${RED}Error: Alias '$new_alias' already used by project '$proj_name'${NC}"
+                        pwt_error "Error: Alias '$new_alias' already used by project '$proj_name'"
                         exit 1
                     fi
                 done
@@ -390,7 +390,7 @@ cmd_port() {
         if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
             name=$(basename "$current_dir")
         else
-            echo -e "${RED}Error: Not in a worktree directory${NC}" >&2
+            pwt_error "Error: Not in a worktree directory"
             exit 1
         fi
     fi
@@ -399,7 +399,7 @@ cmd_port() {
     local port=$(get_metadata "$name" "port")
 
     if [ -z "$port" ]; then
-        echo -e "${RED}Error: No port found for worktree: $name${NC}" >&2
+        pwt_error "Error: No port found for worktree: $name"
         exit 1
     fi
 

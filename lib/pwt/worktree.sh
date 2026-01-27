@@ -107,7 +107,7 @@ cmd_create() {
         cd "$MAIN_APP"
         base_ref=$(git branch --show-current 2>/dev/null)
         if [ -z "$base_ref" ]; then
-            echo -e "${RED}Error: Could not detect current branch${NC}"
+            pwt_error "Error: Could not detect current branch"
             exit 1
         fi
     fi
@@ -148,7 +148,7 @@ cmd_create() {
 
     # Check if worktree already exists
     if [ -d "$worktree_dir" ]; then
-        echo -e "${RED}Error: Worktree already exists: $worktree_name${NC}"
+        pwt_error "Error: Worktree already exists: $worktree_name"
         echo ""
         echo "Options:"
         echo "  1. Remove existing: pwt remove $worktree_name"
@@ -162,7 +162,7 @@ cmd_create() {
     # Acquire lock to prevent port allocation race condition
     # Lock is held until metadata is saved
     if ! acquire_metadata_lock; then
-        echo -e "${RED}Error: Could not acquire lock for port allocation${NC}"
+        pwt_error "Error: Could not acquire lock for port allocation"
         exit 1
     fi
     # Ensure lock is released on exit
@@ -346,7 +346,7 @@ cmd_repair() {
         # Repair specific worktree
         local worktree_dir="$WORKTREES_DIR/$name"
         if [ ! -d "$worktree_dir" ]; then
-            echo -e "${RED}Error: Worktree not found: $name${NC}"
+            pwt_error "Error: Worktree not found: $name"
             exit $EXIT_NOT_FOUND
         fi
         echo -e "${BLUE}Repairing: $name${NC}"
@@ -441,7 +441,7 @@ cmd_auto_remove() {
         cd "$MAIN_APP"
         target_branch=$(git branch --show-current 2>/dev/null)
         if [ -z "$target_branch" ]; then
-            echo -e "${RED}Error: Could not detect current branch${NC}"
+            pwt_error "Error: Could not detect current branch"
             echo "Usage: pwt auto-remove [target]"
             exit 1
         fi
@@ -453,7 +453,7 @@ cmd_auto_remove() {
     # Fetch to ensure updated branches
     cd "$MAIN_APP"
     git fetch origin "$target_branch" --quiet 2>/dev/null || {
-        echo -e "${RED}Error: Branch '$target_branch' not found on remote${NC}"
+        pwt_error "Error: Branch '$target_branch' not found on remote"
         exit 1
     }
 
@@ -647,7 +647,7 @@ cmd_remove() {
         elif [[ "$PWD" == *"-worktrees/"* ]]; then
             name=$(basename "$PWD")
         else
-            echo -e "${RED}Error: Not in a worktree. Specify target.${NC}"
+            pwt_error "Error: Not in a worktree. Specify target."
             echo "Usage: pwt remove [worktree] [--with-branch] [--force-branch]"
             exit 1
         fi
@@ -656,7 +656,7 @@ cmd_remove() {
 
     # Protect main app from removal
     if [ "$name" = "@" ]; then
-        echo -e "${RED}Error: Cannot remove the main application.${NC}"
+        pwt_error "Error: Cannot remove the main application."
         echo "Use 'git' commands directly if you need to modify the main repository."
         exit 1
     fi
@@ -664,7 +664,7 @@ cmd_remove() {
     local worktree_dir="$WORKTREES_DIR/$name"
 
     if [ ! -d "$worktree_dir" ]; then
-        echo -e "${RED}Error: Worktree not found: $name${NC}"
+        pwt_error "Error: Worktree not found: $name"
         exit 1
     fi
 
@@ -704,7 +704,7 @@ cmd_remove() {
                 exit 1
             fi
         else
-            echo -e "${RED}Error: Processes detected on port $port:${NC}"
+            pwt_error "Error: Processes detected on port $port:"
             echo -e "$port_info"
             echo ""
             echo "Options:"

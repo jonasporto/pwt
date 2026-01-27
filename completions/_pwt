@@ -7,10 +7,14 @@ _pwt_commands() {
     local commands=(
         'init:Initialize project (from current repo or URL)'
         'create:Create new worktree'
+        'add:Create new worktree (alias for create)'
         'list:List worktrees and status'
         'ls:List worktrees and status'
+        'tree:Visual tree view of worktrees'
+        'status:Interactive TUI dashboard (like htop)'
         'cd:Navigate to worktree'
         'use:Set worktree as current'
+        'current:Show current worktree path'
         '-:Go to previous worktree'
         'info:Show worktree details'
         'show:Show worktree details'
@@ -18,20 +22,32 @@ _pwt_commands() {
         'rm:Remove worktree'
         'server:Start development server'
         's:Start development server'
+        'run:Run command in worktree'
+        'for-each:Run command in all worktrees'
+        'shell:Interactive shell in worktree context'
+        'editor:Open worktree in editor'
+        'e:Open worktree in editor'
+        'ai:Start AI tool in worktree'
+        'open:Open worktree in Finder'
+        'diff:Show diff between worktrees'
+        'copy:Copy files between worktrees'
         'repair:Repair broken worktree'
         'fix:Repair broken worktree'
         'auto-remove:Remove merged worktrees'
         'cleanup:Remove merged worktrees'
         'restore:Recover backed up changes from trash'
         'fix-port:Resolve port conflict'
+        'pick:Interactive select + auto-use (fzf)'
+        'select:Interactive worktree selector (fzf)'
+        'doctor:Check system health and configuration'
         'meta:Manage worktree metadata'
         'project:Manage project configs'
         'config:Configure current project'
         'port:Get port for worktree'
-        'migrate:Migrate from old system'
+        'plugin:Manage pwt plugins'
+        'claude-setup:Configure Claude Code integration'
         'setup-shell:Install shell integration'
         'shell-init:Output shell integration code'
-        'shell:Interactive shell in worktree context'
         'help:Show help'
     )
     _describe 'command' commands
@@ -218,8 +234,26 @@ _pwt() {
                             "worktrees:worktree:_pwt_worktrees $_project" \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|port|shell)
+                    cd|use|server|s|info|show|fix-port|port|shell|editor|e|ai|open|current|repair|fix)
                         _pwt_worktrees "$_project"
+                        ;;
+                    run|for-each)
+                        case $CURRENT in
+                            4) _pwt_worktrees "$_project" ;;
+                            *) _message 'command' ;;
+                        esac
+                        ;;
+                    diff)
+                        _pwt_worktrees "$_project"
+                        ;;
+                    copy|cp)
+                        case $CURRENT in
+                            4|5) _pwt_worktrees "$_project" ;;
+                            *) _message 'file patterns' ;;
+                        esac
+                        ;;
+                    tree|status|doctor|pick|select|list|ls)
+                        # These commands have optional flags, no required args
                         ;;
                     meta)
                         case $CURRENT in
@@ -279,8 +313,49 @@ _pwt() {
                             'worktrees:worktree:_pwt_worktrees' \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|repair|fix|port|shell)
+                    cd|use|server|s|info|show|fix-port|repair|fix|port|shell|editor|e|ai|open|current)
                         _pwt_worktrees
+                        ;;
+                    run|for-each)
+                        case $CURRENT in
+                            3) _pwt_worktrees ;;
+                            *) _message 'command' ;;
+                        esac
+                        ;;
+                    diff)
+                        _pwt_worktrees
+                        ;;
+                    copy|cp)
+                        case $CURRENT in
+                            3|4) _pwt_worktrees ;;
+                            *) _message 'file patterns' ;;
+                        esac
+                        ;;
+                    tree|status|doctor|pick|select)
+                        # These commands have optional flags, no required args
+                        ;;
+                    plugin)
+                        local plugin_actions=(
+                            'list:List installed plugins'
+                            'install:Install a plugin'
+                            'remove:Remove a plugin'
+                            'create:Create a new plugin'
+                            'path:Show plugins directory'
+                            'help:Show plugin help'
+                        )
+                        _describe 'action' plugin_actions
+                        ;;
+                    claude-setup)
+                        local claude_actions=(
+                            'install:Install status line script'
+                            'vars:Show available variables'
+                            'format:Show or set format'
+                            'preview:Preview status line'
+                            'test:Run tests'
+                            'toggle:Toggle on/off'
+                            'help:Show help'
+                        )
+                        _describe 'action' claude_actions
                         ;;
                     auto-remove|cleanup)
                         _pwt_branches

@@ -579,39 +579,39 @@ require_project() {
         # Check if we're in a git repo (potential new project)
         if git rev-parse --git-dir &>/dev/null; then
             local repo_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
-            echo -e "${YELLOW}Git repository detected: $repo_name${NC}"
-            echo ""
-            echo "This repo is not configured with pwt yet."
-            echo ""
-            echo "To set it up:"
-            echo "  pwt init                    # configure this repo"
-            echo ""
-            echo "Or specify a configured project:"
-            echo "  pwt <project> <command>     # e.g., pwt acme list"
-            echo "  pwt project list            # see configured projects"
+            echo -e "${YELLOW}Git repository detected: $repo_name${NC}" >&2
+            echo "" >&2
+            echo "This repo is not configured with pwt yet." >&2
+            echo "" >&2
+            echo "To set it up:" >&2
+            echo "  pwt init                    # configure this repo" >&2
+            echo "" >&2
+            echo "Or specify a configured project:" >&2
+            echo "  pwt <project> <command>     # e.g., pwt acme list" >&2
+            echo "  pwt project list            # see configured projects" >&2
         else
             pwt_error "Error: No project detected"
-            echo ""
-            echo "You're not inside a git repository."
-            echo ""
-            echo "Options:"
-            echo "  pwt <project> <command>     # specify project explicitly"
-            echo "  pwt project list            # see configured projects"
-            echo "  cd /path/to/repo && pwt init"
+            echo "" >&2
+            echo "You're not inside a git repository." >&2
+            echo "" >&2
+            echo "Options:" >&2
+            echo "  pwt <project> <command>     # specify project explicitly" >&2
+            echo "  pwt project list            # see configured projects" >&2
+            echo "  cd /path/to/repo && pwt init" >&2
         fi
         exit 1
     fi
 
     if [ -z "$MAIN_APP" ] || [ -z "$WORKTREES_DIR" ]; then
         pwt_error "Error: Could not determine project paths"
-        echo ""
-        echo "Run from inside a git repository, or initialize a project:"
-        echo "  cd /path/to/repo && pwt init"
-        echo "  pwt init git@github.com:user/repo.git"
-        echo ""
-        echo "Or configure manually:"
-        echo "  pwt project set myproject path /path/to/main/app"
-        echo "  pwt project set myproject worktrees_dir /path/to/worktrees"
+        echo "" >&2
+        echo "Run from inside a git repository, or initialize a project:" >&2
+        echo "  cd /path/to/repo && pwt init" >&2
+        echo "  pwt init git@github.com:user/repo.git" >&2
+        echo "" >&2
+        echo "Or configure manually:" >&2
+        echo "  pwt project set myproject path /path/to/main/app" >&2
+        echo "  pwt project set myproject worktrees_dir /path/to/worktrees" >&2
         exit 1
     fi
 
@@ -835,6 +835,164 @@ EOF
     echo "Usage:"
     echo -e "  ${GREEN}pwt $project_name list${NC}"
     echo -e "  ${GREEN}pwt $project_name create TICKET base \"description\"${NC}"
+}
+
+# Discover unconfigured git repositories in a directory
+# Usage: cmd_discover <path> [--init] [--depth N] [--include-submodules]
+cmd_discover() {
+    local search_path="${1:-.}"
+    local do_init=false
+    local max_depth=5
+    local include_submodules=false
+
+    # Resolve to absolute path
+    search_path=$(cd "$search_path" 2>/dev/null && pwd) || {
+        pwt_error "Error: Directory not found: $1"
+        exit 1
+    }
+
+    # Parse flags
+    shift || true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --init)
+                do_init=true
+                shift
+                ;;
+            --depth)
+                max_depth="$2"
+                shift 2
+                ;;
+            --include-submodules)
+                include_submodules=true
+                shift
+                ;;
+            *)
+                pwt_error "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    echo -e "${BLUE}Scanning $search_path...${NC}"
+    echo ""
+
+    local found_repos=()
+    local skipped_configured=()
+    local skipped_worktrees=()
+    local skipped_submodules=()
+
+    # Get list of already configured project paths
+    local configured_paths=()
+    if [ -d "$PWT_PROJECTS_DIR" ]; then
+        for project_config in "$PWT_PROJECTS_DIR"/*/config.json; do
+            [ -f "$project_config" ] || continue
+            local path=$(jq -r '.path // empty' "$project_config" 2>/dev/null)
+            [ -n "$path" ] && configured_paths+=("$path")
+        done
+    fi
+
+    # Find all .git directories/files
+    while IFS= read -r git_path; do
+        local repo_path=$(dirname "$git_path")
+        local repo_name=$(basename "$repo_path")
+        local relative_path="${repo_path#$search_path/}"
+
+        # Skip *-worktrees directories (pwt convention)
+        if [[ "$repo_path" == *-worktrees/* ]] || [[ "$repo_path" == *-worktrees ]]; then
+            skipped_worktrees+=("$relative_path")
+            continue
+        fi
+
+        # Check if .git is a file (worktree or submodule)
+        if [ -f "$git_path" ]; then
+            # It's a git worktree or submodule
+            if grep -q "gitdir:" "$git_path" 2>/dev/null; then
+                # Check if it's a submodule (parent has .gitmodules referencing it)
+                local parent_dir=$(dirname "$repo_path")
+                if [ -f "$parent_dir/.gitmodules" ] && grep -q "path = $repo_name" "$parent_dir/.gitmodules" 2>/dev/null; then
+                    if [ "$include_submodules" = false ]; then
+                        skipped_submodules+=("$relative_path (submodule)")
+                        continue
+                    fi
+                else
+                    # It's a worktree, skip
+                    skipped_worktrees+=("$relative_path (worktree)")
+                    continue
+                fi
+            fi
+        fi
+
+        # Check if already configured
+        local is_configured=false
+        if [ ${#configured_paths[@]} -gt 0 ]; then
+            for configured_path in "${configured_paths[@]}"; do
+                if [ "$repo_path" = "$configured_path" ]; then
+                    is_configured=true
+                    skipped_configured+=("$relative_path")
+                    break
+                fi
+            done
+        fi
+
+        if [ "$is_configured" = false ]; then
+            found_repos+=("$repo_path")
+        fi
+
+    done < <(find "$search_path" -maxdepth "$max_depth" -name ".git" -type d -o -name ".git" -type f 2>/dev/null | sort)
+
+    # Display results
+    if [ ${#found_repos[@]} -eq 0 ]; then
+        echo "No unconfigured repositories found."
+        echo ""
+        if [ ${#skipped_configured[@]} -gt 0 ]; then
+            echo -e "${GREEN}Already configured:${NC} ${skipped_configured[*]}"
+        fi
+        return 0
+    fi
+
+    echo -e "${GREEN}Found ${#found_repos[@]} unconfigured $([ ${#found_repos[@]} -eq 1 ] && echo "repository" || echo "repositories"):${NC}"
+    echo ""
+
+    for repo_path in "${found_repos[@]}"; do
+        local relative_path="${repo_path#$search_path/}"
+        local remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null || echo "(no remote)")
+        local branch=$(git -C "$repo_path" branch --show-current 2>/dev/null || echo "?")
+
+        echo -e "  ${YELLOW}$relative_path${NC}"
+        echo -e "  └─ $remote_url ($branch)"
+        echo ""
+    done
+
+    # Show skipped
+    if [ ${#skipped_configured[@]} -gt 0 ]; then
+        echo -e "${BLUE}Skipped (configured):${NC} ${skipped_configured[*]}"
+    fi
+    if [ ${#skipped_worktrees[@]} -gt 0 ]; then
+        echo -e "${BLUE}Skipped (worktrees):${NC} ${skipped_worktrees[*]}"
+    fi
+    if [ ${#skipped_submodules[@]} -gt 0 ]; then
+        echo -e "${BLUE}Skipped (submodules):${NC} ${skipped_submodules[*]}"
+    fi
+    echo ""
+
+    # If --init, configure all found repos
+    if [ "$do_init" = true ]; then
+        echo -e "${BLUE}Configuring...${NC}"
+        echo ""
+        for repo_path in "${found_repos[@]}"; do
+            (cd "$repo_path" && cmd_init)
+            echo ""
+        done
+    else
+        echo "To configure:"
+        for repo_path in "${found_repos[@]}"; do
+            local project_name=$(basename "$repo_path")
+            echo -e "  pwt init $repo_path"
+        done
+        echo ""
+        echo -e "Or run: ${GREEN}pwt discover $search_path --init${NC}"
+    fi
 }
 
 # Atomic write to metadata file with file locking
@@ -2160,6 +2318,9 @@ cmd_use() {
         exit 1
     fi
 
+    # Normalize: strip trailing slash (from shell completion)
+    target="${target%/}"
+
     # @ = main worktree (special case)
     if [ "$target" = "@" ]; then
         # Point symlink to main app (always have a current)
@@ -2274,6 +2435,9 @@ cmd_info() {
         fi
     fi
 
+    # Normalize: strip trailing slash (from shell completion)
+    name="${name%/}"
+
     # Handle @ as main app
     local worktree_dir
     if [ "$name" = "@" ]; then
@@ -2355,6 +2519,9 @@ cmd_info() {
 # Reallocate a worktree to a new free port
 cmd_fix_port() {
     local name="$1"
+
+    # Normalize: strip trailing slash (from shell completion)
+    name="${name%/}"
 
     # If no name specified, try to detect from current directory
     if [ -z "$name" ]; then
@@ -2794,6 +2961,9 @@ cmd_cd() {
 # Returns: path on stdout, or empty string on failure
 resolve_worktree_path() {
     local target="$1"
+
+    # Normalize: strip trailing slash (from shell completion)
+    target="${target%/}"
 
     # @ = main worktree
     if [ "$target" = "@" ]; then
@@ -4373,7 +4543,17 @@ check_dependencies
 # Main command dispatch
 case "${1:-}" in
     init)
-        cmd_init "${2:-}"
+        # Check for --discover flag
+        if [ "${2:-}" = "--discover" ]; then
+            shift 2  # remove "init" and "--discover"
+            cmd_discover "${1:-.}" --init "${@:2}"
+        else
+            cmd_init "${2:-}"
+        fi
+        ;;
+    discover)
+        shift  # remove "discover"
+        cmd_discover "$@"
         ;;
     create|add)
         require_project --clone

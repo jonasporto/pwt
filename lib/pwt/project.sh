@@ -126,7 +126,7 @@ cmd_project() {
                     local proj_name=$(basename "$dir")
                     local config_file="$dir/config.json"
                     if [ -f "$config_file" ]; then
-                        local main_app=$(jq -r '.main_app // "(not set)"' "$config_file")
+                        local main_app=$(jq -r '.main_app // .path // "(not set)"' "$config_file")
                         local prefix=$(jq -r '.branch_prefix // "(not set)"' "$config_file")
                         # Get alias if set
                         local proj_alias=$(jq -r '.alias // empty' "$config_file")
@@ -383,6 +383,9 @@ cmd_project() {
 # Get port for a worktree
 cmd_port() {
     local name="$1"
+
+    # Normalize: strip trailing slash (from shell completion)
+    name="${name%/}"
 
     # If no name, try to detect from current directory
     if [ -z "$name" ]; then

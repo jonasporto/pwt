@@ -2,6 +2,7 @@
 # Tests for pwt run command
 # Verifies command execution in worktree context
 
+bats_require_minimum_version 1.5.0
 load test_helper
 
 setup() {
@@ -55,7 +56,7 @@ teardown() {
 
 @test "pwt run fails for nonexistent worktree" {
     cd "$TEST_REPO"
-    run "$PWT_BIN" run NONEXISTENT pwd
+    run -127 "$PWT_BIN" run NONEXISTENT pwd
     [ "$status" -ne 0 ]
     [[ "$output" == *"not found"* ]]
 }

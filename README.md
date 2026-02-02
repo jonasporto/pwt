@@ -31,7 +31,7 @@
 brew install jonasporto/pwt/pwt
 ```
 
-ou:
+or:
 
 ```bash
 brew tap jonasporto/pwt
@@ -47,7 +47,7 @@ brew install pwt
 npm i -g @jonasporto/pwt
 ```
 
-### npx (sem instalar)
+### npx (without installing)
 
 ```bash
 npx @jonasporto/pwt --help
@@ -59,7 +59,7 @@ npx @jonasporto/pwt --help
 bun add -g @jonasporto/pwt
 ```
 
-### bunx (sem instalar)
+### bunx (without installing)
 
 ```bash
 bunx @jonasporto/pwt --help

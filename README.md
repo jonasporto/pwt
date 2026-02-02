@@ -25,17 +25,22 @@
 
 ## Install
 
+### Homebrew
 ```bash
-# Homebrew (recommended)
 brew tap jonasporto/pwt
 brew install pwt
+```
 
-# npm/bun
+### npm / bun
+```bash
 npm i -g @jonasporto/pwt
+# or
+bun add -g @jonasporto/pwt
+```
 
-# From source
-git clone https://github.com/jonasporto/pwt.git ~/.pwt-src
-cd ~/.pwt-src && make install PREFIX=~/.local
+### curl
+```bash
+curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh | bash
 ```
 
 **Dependencies:** `git`, `jq` (required). `fzf`, `lsof` (optional).

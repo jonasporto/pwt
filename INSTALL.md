@@ -19,6 +19,16 @@
 brew install jonasporto/pwt/pwt
 ```
 
+ou:
+
+```bash
+brew tap jonasporto/pwt
+```
+
+```bash
+brew install pwt
+```
+
 ### npm
 
 ```bash

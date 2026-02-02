@@ -303,7 +303,12 @@ eval "$(pwt shell-init zsh)"
 eval "$(pwt shell-init bash)"
 .fi
 
-This enables \fBpcd\fR function for actual directory change.
+.SS Fish (~/.config/fish/config.fish)
+.nf
+pwt shell-init fish | source
+.fi
+
+This enables \fBpwt cd\fR integration for actual directory change.
 
 .SH ENVIRONMENT
 .TP

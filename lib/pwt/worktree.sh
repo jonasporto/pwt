@@ -342,6 +342,9 @@ cmd_create() {
 cmd_repair() {
     local name="$1"
 
+    # Normalize: strip trailing slash (from shell completion)
+    name="${name%/}"
+
     if [ -n "$name" ]; then
         # Repair specific worktree
         local worktree_dir="$WORKTREES_DIR/$name"
@@ -653,6 +656,9 @@ cmd_remove() {
         fi
         echo -e "${BLUE}Removing current worktree: $name${NC}"
     fi
+
+    # Normalize name: strip trailing slash (from shell completion)
+    name="${name%/}"
 
     # Protect main app from removal
     if [ "$name" = "@" ]; then

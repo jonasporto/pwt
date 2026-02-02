@@ -4191,26 +4191,543 @@ cmd_step() {
     run_single_pwtfile "$pwtfile" "$func_name" "Step"
 }
 
+# =============================================================================
+# Help System
+# =============================================================================
+
+# Show concepts section
+show_help_concepts() {
+    cat << 'EOF'
+CONCEPTS
+--------
+pwt manages git worktrees with automatic port allocation. Each worktree is an
+isolated copy of your repo where you can work on a different branch without
+switching branches in your main checkout.
+
+Key concept: "pwt use" swaps a symlink. Your editor stays open pointing to
+$(pwt current), and when you switch worktrees, it sees different code.
+
+Worktree vs Clone:
+  Worktree (default)     Faster, shares git objects, saves disk space
+  Clone (--clone)        Full isolation, no branch locks, better for submodules
+
+When to use worktrees:
+  - Working on multiple features/tickets simultaneously
+  - Testing changes without affecting main development
+  - Code review while keeping your work intact
+  - Comparing behavior between branches
+
+EOF
+}
+
+# Show commands section
+show_help_commands() {
+    cat << 'EOF'
+COMMANDS
+--------
+Worktree Management:
+  create|add <name> [base] [desc] Create new worktree (-e -a --from --clone)
+  remove [worktree] [flags]      Remove worktree (--with-branch, --force-branch)
+  list [flags]                   List worktrees (-v, --dirty, --porcelain)
+  tree [--all|--dirty|--ports]   Visual tree view of worktrees
+  info [worktree]                Show worktree details
+  status                         Interactive TUI dashboard (like htop)
+  select [--preview]             Interactive worktree selector (fzf)
+  auto-remove [target] [--execute] Remove worktrees merged into target
+
+Navigation:
+  cd [worktree|@|-]              Navigate to worktree (@ main, - previous)
+  use <worktree>                 Set worktree as current (atomic symlink swap)
+  pick                           Interactive select + auto-use (fzf)
+  current [--name|--resolved]    Show current worktree path
+
+Development:
+  server [worktree]              Start dev server (from Pwtfile)
+  run <worktree> <cmd>           Run command in worktree
+  for-each <cmd>                 Run command in all worktrees
+  shell [worktree]               Open subshell in worktree
+  editor [worktree]              Open worktree in editor
+  ai [worktree] [-- args]        Start AI tool in worktree
+
+Files & Comparison:
+  diff <wt1> [wt2]               Show diff between worktrees
+  copy <src> <dest> <patterns>   Copy files between worktrees
+
+Project Setup:
+  init [url]                     Initialize project (clone URL or configure repo)
+  discover [path]                Find unconfigured git repos
+  project [action] [args]        Manage project configs
+  doctor                         Check system health and configuration
+
+Other:
+  port                           Show current port
+  port --find <port>             Find who uses a port
+  fix-port [worktree]            Fix port conflict
+  restore [backup] [worktree]    Recover backed up changes from trash
+  meta [action] [args]           Manage worktree metadata
+  plugin [action]                Manage plugins (list, install, create)
+  shell-init [shell]             Output shell integration code
+
+EOF
+}
+
+# Show navigation section
+show_help_navigation() {
+    cat << 'EOF'
+NAVIGATION
+----------
+pwt cd <worktree>        Go to worktree directory
+pwt cd @                 Go to main app (original checkout)
+pwt cd -                 Go to previous worktree
+pwt use <worktree>       Switch symlink (editor stays open at $(pwt current))
+
+Shell Integration (add to ~/.zshrc):
+  eval "$(pwt shell-init)"
+
+After shell-init:
+  $PWT_WORKTREE          Current worktree name (when in worktree)
+  $PWT_PREVIOUS_PATH     Previous path (enables 'pwt cd -')
+
+Multi-Project Navigation:
+  pwt auto-detects project from current directory. From anywhere:
+    pwt myproject list
+    pwt myproject create TICKET-123 main
+    pwt --project myproject list
+
+  Project as first arg or use --project flag.
+
+EOF
+}
+
+# Show Pwtfile section
+show_help_pwtfile() {
+    cat << 'EOF'
+PWTFILE
+-------
+Pwtfile is a bash file in your project root defining lifecycle hooks and
+custom commands:
+
+Lifecycle Hooks:
+  setup()       Runs after worktree created
+  server()      Runs when "pwt server" called (use exec for stdin)
+  teardown()    Runs when worktree removed
+
+Custom Commands:
+  run_xxx()     Callable with "pwt xxx"
+  xxx()         Also works! Any function becomes "pwt xxx"
+
+Steps (for guided workflows):
+  step_xxx()    Define with step_, list with "pwt steps", run with "pwt step xxx"
+
+Configuration:
+  PORT_BASE=4001         First port for worktrees (main app typically uses 4000)
+
+Environment Variables (available in Pwtfile):
+  $PWT_PORT              Allocated port for this worktree (e.g., 5001)
+  $PWT_WORKTREE          Worktree name
+  $PWT_WORKTREE_PATH     Full path to worktree
+  $PWT_BRANCH            Git branch name
+  $PWT_TICKET            Extracted ticket number (from branch name)
+  $PWT_PROJECT           Project name
+  $PWT_ARGS              Arguments passed to custom commands
+  $MAIN_APP              Path to main app (useful for copying files)
+
+Helper Functions:
+  pwtfile_symlink "path"      Symlink from main (e.g., node_modules)
+  pwtfile_copy "path"         Copy from main (e.g., .env)
+  pwtfile_replace_literal     Safe string replacement
+  run <cmd>                   Run command (silent on error)
+
+Tips:
+  - Use "exec" in server() to keep stdin open for interactive commands
+  - Copy secrets from $MAIN_APP: cp "$MAIN_APP/config/master.key" config/
+  - For strict Pwtfiles (set -u), all PWT_* vars are pre-defined
+
+Example (Rails):
+  PORT_BASE=4001
+
+  setup() {
+      [ -f "$MAIN_APP/config/master.key" ] && cp "$MAIN_APP/config/master.key" config/
+      bundle install --quiet
+      bin/rails db:prepare
+  }
+  server() { exec env PORT="$PWT_PORT" bin/dev; }
+  console() { bin/rails console; }
+  migrate() { bin/rails db:migrate; }
+
+Example (Elixir/Phoenix):
+  PORT_BASE=4001
+
+  setup() {
+      mix deps.get --quiet
+      mix ecto.create && mix ecto.migrate
+  }
+  server() { exec env PORT="$PWT_PORT" mix phx.server; }
+  iex() { env PORT="$PWT_PORT" iex -S mix phx.server; }
+
+Example (Node):
+  PORT_BASE=3001
+
+  setup() {
+      pwtfile_copy ".env"
+      npm install
+  }
+  server() { PORT="$PWT_PORT" npm run dev; }
+  browse() { open "http://localhost:$PWT_PORT"; }
+
+
+GLOBAL PWTFILE
+--------------
+Location: ~/.pwt/Pwtfile
+
+Commands here work on ALL projects. Project Pwtfile overrides global.
+Useful for shared utilities across projects.
+
+EOF
+}
+
+# Show full help (all sections)
+show_help_all() {
+    cat << 'EOF'
+================================================================================
+                        pwt - Power Worktrees
+================================================================================
+
+EOF
+    show_help_concepts
+    show_help_commands
+    show_help_navigation
+    show_help_pwtfile
+    cat << 'EOF'
+PORT SYSTEM
+-----------
+Each worktree gets a unique port automatically based on PORT_BASE in Pwtfile.
+  pwt port                   Show current worktree's port
+  pwt port --find 3000       Find which worktree uses port 3000
+
+Port allocation: main app uses PORT_BASE (e.g., 4000), worktrees get
+PORT_BASE + 1, +2, etc. (e.g., 4001, 4002, 4003).
+
+
+QUICK START
+-----------
+1. Initialize a project:
+   pwt init git@github.com:user/app.git   # Clone and configure
+   # or in existing repo:
+   pwt init                               # Configure current repo
+
+2. Create a worktree:
+   pwt create TICKET-123 main "fix bug"   # Create from main branch
+   pwt create feature --from v1.2.3       # Create from tag
+   pwt create hotfix -e -a                # Create + open editor + start AI
+
+3. Work in worktree:
+   pwt cd TICKET-123                      # Navigate to worktree
+   pwt server                             # Start dev server
+   pwt console                            # Run custom command from Pwtfile
+
+4. Clean up:
+   pwt remove TICKET-123                  # Remove when done
+   pwt auto-remove main --execute         # Remove all merged worktrees
+
+
+EXAMPLES
+--------
+pwt list --dirty                 Only show worktrees with uncommitted changes
+pwt run TICKET-123 npm test      Run command in specific worktree
+pwt diff TICKET-123              Diff worktree vs main
+pwt for-each git status          Run command in all worktrees
+pwt restore list                 List available backups
+================================================================================
+EOF
+}
+
+# Show brief help (default)
+show_help_brief() {
+    echo "pwt - Power Worktrees"
+    echo "A tool for managing git worktrees across multiple projects"
+    echo ""
+    if [ -n "${CURRENT_PROJECT:-}" ]; then
+        echo -e "Current project: ${GREEN}$CURRENT_PROJECT${NC}"
+        echo ""
+    fi
+    echo "Commands:"
+    echo "  init [url]                     Initialize project (clone URL or configure current repo)"
+    echo "  <name> init [url]              Initialize with specific name (pwt pc init <url>)"
+    echo "  create|add <name> [base] [desc] Create new worktree (-e -a --from --from-current --dry-run)"
+    echo "  list [flags]                   List worktrees (-v/--verbose, --dirty, --porcelain)"
+    echo "  list statusline                Output for shell prompts"
+    echo "  tree [--all|--dirty|--ports]   Visual tree view of worktrees"
+    echo "  status                         Interactive TUI dashboard (like htop)"
+    echo "  select [--preview]             Interactive worktree selector (fzf)"
+    echo "  info [worktree]                Show worktree details"
+    echo "  current [--name|--resolved]    Show current (symlink path, --resolved for actual)"
+    echo "  use <worktree>                 Set worktree as current (atomic symlink swap)"
+    echo "  pick                           Interactive select + auto-use (fzf)"
+    echo "  ps1                            Fast prompt helper (O(1), no git)"
+    echo "  remove [worktree] [flags]      Remove worktree (--with-branch, --force-branch)"
+    echo "  cd [worktree|@|-]              Navigate to worktree (@ main, - previous)"
+    echo "  run <worktree> <cmd>           Run command in worktree"
+    echo "  for-each <cmd>                 Run command in all worktrees"
+    echo "  editor [worktree]              Open worktree in editor"
+    echo "  ai [worktree] [-- args]        Start AI tool in worktree"
+    echo "  open [worktree]                Open worktree in Finder"
+    echo "  diff <wt1> [wt2]               Show diff between worktrees"
+    echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
+    echo "  server [worktree]              Start dev server (from Pwtfile)"
+    echo "  fix-port [worktree]            Fix port conflict"
+    echo "  auto-remove [target] [--execute] Remove worktrees merged into target"
+    echo "  restore [backup] [worktree]    Recover backed up changes from trash"
+    echo "  doctor                         Check system health and configuration"
+    echo "  shell-init                     Output shell function for cd integration"
+    echo "  meta [action] [args]           Manage worktree metadata"
+    echo "  project [action] [args]        Manage project configs"
+    echo "  plugin [action]                Manage plugins (list, install, create)"
+    echo ""
+    echo "Project selection (in order of priority):"
+    echo "  1. pwt <project> <command>     Project as first argument"
+    echo "  2. pwt --project <name> ...    Explicit flag"
+    echo "  3. Auto-detect from pwd        Inside project or worktree dir"
+    echo ""
+    echo "First time setup:"
+    echo "  pwt project init myproject"
+    echo "  pwt project set myproject main_app ~/path/to/app"
+    echo "  pwt project set myproject worktrees_dir ~/path/to/worktrees"
+    echo "  pwt project set myproject branch_prefix \"user/\""
+    echo ""
+    echo "Examples:"
+    echo "  pwt init git@github.com:user/app.git       # Clone and configure"
+    echo "  pwt create TICKET-123 master \"fix\" -e -a  # Create + open editor + start AI"
+    echo "  pwt create hotfix --from v1.2.3            # Create from tag"
+    echo "  pwt list --dirty                           # Only show dirty worktrees"
+    echo "  pwt run TICKET-123 npm test                # Run command in worktree"
+    echo "  pwt diff TICKET-123                        # Diff worktree vs main"
+    echo "  pwt auto-remove master                     # Preview cleanup (dry-run by default)"
+    echo "  pwt restore list                           # List available backups"
+    echo "  pwt doctor                                 # Check configuration"
+    echo ""
+    echo "Help topics (pwt help <topic>):"
+    echo "  concepts    What is pwt, worktree vs clone"
+    echo "  commands    Full command reference"
+    echo "  navigation  cd, use, multi-project"
+    echo "  pwtfile     Syntax, hooks, helpers, examples"
+    echo "  all         Everything (good for LLMs)"
+    echo ""
+    echo "Shell integration (add to ~/.zshrc):"
+    echo "  eval \"\$(pwt shell-init)\""
+    echo ""
+    echo "After shell-init:"
+    echo "  \$PWT_WORKTREE      Current worktree name (when in worktree)"
+    echo "  \$PWT_PREVIOUS_PATH Previous path (enables 'pwt cd -')"
+    echo ""
+    echo "Plugins:"
+    echo "  Extend pwt with custom commands. Run 'pwt plugin help' for details."
+    echo "  Available via plugins: topology, context, benchmark, marker, conflicts, prompt"
+}
+
+# Command: help
+# Show help with optional topic
+cmd_help() {
+    local topic="${1:-}"
+
+    case "$topic" in
+        ""|brief)
+            show_help_brief
+            ;;
+        concepts)
+            show_help_concepts
+            ;;
+        commands)
+            show_help_commands
+            ;;
+        navigation|nav)
+            show_help_navigation
+            ;;
+        pwtfile|Pwtfile)
+            show_help_pwtfile
+            ;;
+        all|full)
+            show_help_all
+            ;;
+        *)
+            echo "Unknown help topic: $topic"
+            echo ""
+            echo "Available topics:"
+            echo "  concepts    What is pwt, worktree vs clone"
+            echo "  commands    Full command reference"
+            echo "  navigation  cd, use, multi-project"
+            echo "  pwtfile     Syntax, hooks, helpers, examples"
+            echo "  all         Everything (good for LLMs)"
+            exit $EXIT_USAGE
+            ;;
+    esac
+}
+
 # Command: shell-init
 # Output shell function for cd integration
 # Usage: eval "$(pwt shell-init)"
 cmd_shell_init() {
+    local shell="${1:-}"
     local pwt_path
     pwt_path=$(which pwt 2>/dev/null || echo "$0")
 
-    cat << EOF
+    if [ -z "$shell" ]; then
+        shell=$(basename "${SHELL:-}")
+    fi
+
+    case "$shell" in
+        fish)
+            cat << 'EOF'
+# pwt shell integration (fish)
+# Add to ~/.config/fish/config.fish:
+#   pwt shell-init fish | source
+
+function _pwt_is_project
+    set -l name $argv[1]
+    test -z "$name"; and return 1
+    test -d ~/.pwt/projects/$name; and return 0
+    for config in ~/.pwt/projects/*/config.json
+        test -f "$config"; or continue
+        set -l alias_val (jq -r '.alias // empty' "$config" 2>/dev/null)
+        if test "$alias_val" = "$name"
+            return 0
+        end
+        jq -e --arg a "$name" '.aliases // [] | index($a) != null' "$config" >/dev/null 2>&1; and return 0
+    end
+    return 1
+end
+
+function pwt
+    set -l is_cd 0
+    if test (count $argv) -ge 1
+        if test "$argv[1]" = "cd"
+            set is_cd 1
+        else if test (count $argv) -ge 2; and test "$argv[2]" = "cd"
+            set is_cd 1
+        else if _pwt_is_project "$argv[1]"
+            if test (count $argv) -eq 1
+                set is_cd 1
+            else if test "$argv[2]" = "-h"; or test "$argv[2]" = "--help"
+                command pwt $argv
+                return $status
+            else if string match -qr "^@" -- "$argv[2]"
+                set is_cd 1
+            end
+        end
+    end
+
+    if test $is_cd -eq 1
+        set -l input ""
+        set -l project ""
+        if test "$argv[1]" = "cd"
+            set input "$argv[2]"
+        else if test (count $argv) -ge 2; and test "$argv[2]" = "cd"
+            set project "$argv[1]"
+            set input "$argv[3]"
+        else
+            set project "$argv[1]"
+            if test (count $argv) -ge 2
+                set input "$argv[2]"
+            else
+                set input "@"
+            end
+        end
+
+        if test "$input" = "-"
+            if test -z "$PWT_PREVIOUS_PATH"
+                echo "No previous worktree" >&2
+                return 1
+            end
+            set target "$PWT_PREVIOUS_PATH"
+        else
+            if test -n "$project"
+                set target (command pwt $project _cd $input 2>&1)
+            else
+                set target (command pwt _cd $input 2>&1)
+            end
+            if test $status -ne 0; or test ! -d "$target"
+                echo "$target"
+                return 1
+            end
+        end
+
+        if test "$PWD" != "$target"
+            set -gx PWT_PREVIOUS_PATH "$PWD"
+        end
+
+        cd "$target"
+
+        if string match -q "*-worktrees/*" -- "$target"
+            set -gx PWT_WORKTREE (basename "$target")
+        else
+            set -e PWT_WORKTREE
+        end
+        return 0
+    end
+
+    if test "$argv[1]" = "select"; or test "$argv[2]" = "select"
+        set -l target ""
+        if test "$argv[1]" = "select"
+            set target (command pwt _select $argv[2..-1] 2>&1)
+        else
+            set -l project "$argv[1]"
+            set target (command pwt $project _select $argv[3..-1] 2>&1)
+        end
+
+        if test $status -ne 0; or test -z "$target"
+            test -n "$target"; and echo "$target"
+            return 0
+        end
+        if test ! -d "$target"
+            echo "$target"
+            return 1
+        end
+        if test "$PWD" != "$target"
+            set -gx PWT_PREVIOUS_PATH "$PWD"
+        end
+        cd "$target"
+        if string match -q "*-worktrees/*" -- "$target"
+            set -gx PWT_WORKTREE (basename "$target")
+        else
+            set -e PWT_WORKTREE
+        end
+        return 0
+    end
+
+    if test "$argv[1]" = "use"; or test "$argv[2]" = "use"
+        command pwt $argv
+        set -l exit_code $status
+
+        if string match -q "*/current" -- "$PWD"
+            set -l current_path (string replace -r "/current.*" "/current" -- "$PWD")
+            if test -L "$current_path"
+                cd "$current_path"
+                set -gx PWT_WORKTREE (basename (readlink "$current_path"))
+            end
+        end
+
+        return $exit_code
+    end
+
+    command pwt $argv
+end
+EOF
+            ;;
+        *)
+            cat << EOF
 # pwt shell integration
-# Add to ~/.zshrc: eval "\$(pwt shell-init)"
+# Add to ~/.zshrc: eval "\$(pwt shell-init zsh)"
 
 # Helper: check if arg is a pwt project
 _pwt_is_project() {
     [[ -d ~/.pwt/projects/\$1 ]] && return 0
     # Check aliases
-    for config in ~/.pwt/projects/*/config.json(N); do
+    while IFS= read -r config; do
+        [ -f "\$config" ] || continue
         local alias_val=\$(jq -r '.alias // empty' "\$config" 2>/dev/null)
         [[ "\$alias_val" == "\$1" ]] && return 0
         jq -e --arg a "\$1" '.aliases // [] | index(\$a) != null' "\$config" >/dev/null 2>&1 && return 0
-    done
+    done < <(find ~/.pwt/projects -maxdepth 2 -name config.json 2>/dev/null)
     return 1
 }
 
@@ -4316,7 +4833,7 @@ pwt() {
         "$pwt_path" "\$@"
         local exit_code=\$?
 
-        # If we're inside a 'current' symlink, cd to follow it
+        # If we're inside a 'current' symlink, cd to follow the new target
         if [[ "\$PWD" == *"/current" ]] || [[ "\$PWD" == *"/current/"* ]]; then
             # Re-enter the symlink to follow the new target
             local current_path="\${PWD%%/current*}/current"
@@ -4331,7 +4848,10 @@ pwt() {
     fi
 }
 EOF
+            ;;
+    esac
 }
+
 
 # Command: setup-shell
 # Install shell integration into user's shell config
@@ -4774,79 +5294,8 @@ case "${1:-}" in
         echo "Run 'pwt help' for full usage"
         ;;
     -h|--help|help)
-        # Show help
-        echo "pwt - Power Worktrees"
-        echo "A tool for managing git worktrees across multiple projects"
-        echo ""
-        if [ -n "$CURRENT_PROJECT" ]; then
-            echo -e "Current project: ${GREEN}$CURRENT_PROJECT${NC}"
-            echo ""
-        fi
-        echo "Commands:"
-        echo "  init [url]                     Initialize project (clone URL or configure current repo)"
-        echo "  <name> init [url]              Initialize with specific name (pwt pc init <url>)"
-        echo "  create|add <name> [base] [desc] Create new worktree (-e -a --from --from-current --dry-run)"
-        echo "  list [flags]                   List worktrees (-v/--verbose, --dirty, --porcelain)"
-        echo "  list statusline                Output for shell prompts"
-        echo "  tree [--all|--dirty|--ports]   Visual tree view of worktrees"
-        echo "  status                         Interactive TUI dashboard (like htop)"
-        echo "  select [--preview]             Interactive worktree selector (fzf)"
-        echo "  info [worktree]                Show worktree details"
-        echo "  current [--name|--resolved]    Show current (symlink path, --resolved for actual)"
-        echo "  use <worktree>                 Set worktree as current (atomic symlink swap)"
-        echo "  pick                           Interactive select + auto-use (fzf)"
-        echo "  ps1                            Fast prompt helper (O(1), no git)"
-        echo "  remove [worktree] [flags]      Remove worktree (--with-branch, --force-branch)"
-        echo "  cd [worktree|@|-]              Navigate to worktree (@ main, - previous)"
-        echo "  run <worktree> <cmd>           Run command in worktree"
-        echo "  for-each <cmd>                 Run command in all worktrees"
-        echo "  editor [worktree]              Open worktree in editor"
-        echo "  ai [worktree] [-- args]        Start AI tool in worktree"
-        echo "  open [worktree]                Open worktree in Finder"
-        echo "  diff <wt1> [wt2]               Show diff between worktrees"
-        echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
-        echo "  server [worktree]              Start dev server (from Pwtfile)"
-        echo "  fix-port [worktree]            Fix port conflict"
-        echo "  auto-remove [target] [--execute] Remove worktrees merged into target"
-        echo "  restore [backup] [worktree]    Recover backed up changes from trash"
-        echo "  doctor                         Check system health and configuration"
-        echo "  shell-init                     Output shell function for cd integration"
-        echo "  meta [action] [args]           Manage worktree metadata"
-        echo "  project [action] [args]        Manage project configs"
-        echo "  plugin [action]                Manage plugins (list, install, create)"
-        echo ""
-        echo "Project selection (in order of priority):"
-        echo "  1. pwt <project> <command>     Project as first argument"
-        echo "  2. pwt --project <name> ...    Explicit flag"
-        echo "  3. Auto-detect from pwd        Inside project or worktree dir"
-        echo ""
-        echo "First time setup:"
-        echo "  pwt project init myproject"
-        echo "  pwt project set myproject main_app ~/path/to/app"
-        echo "  pwt project set myproject worktrees_dir ~/path/to/worktrees"
-        echo "  pwt project set myproject branch_prefix \"user/\""
-        echo ""
-        echo "Examples:"
-        echo "  pwt init git@github.com:user/app.git       # Clone and configure"
-        echo "  pwt create TICKET-123 master \"fix\" -e -a  # Create + open editor + start AI"
-        echo "  pwt create hotfix --from v1.2.3            # Create from tag"
-        echo "  pwt list --dirty                           # Only show dirty worktrees"
-        echo "  pwt run TICKET-123 npm test                # Run command in worktree"
-        echo "  pwt diff TICKET-123                        # Diff worktree vs main"
-        echo "  pwt auto-remove master                     # Preview cleanup (dry-run by default)"
-        echo "  pwt restore list                           # List available backups"
-        echo "  pwt doctor                                 # Check configuration"
-        echo ""
-        echo "Shell integration (add to ~/.zshrc):"
-        echo "  eval \"\$(pwt shell-init)\""
-        echo ""
-        echo "After shell-init:"
-        echo "  \$PWT_WORKTREE      Current worktree name (when in worktree)"
-        echo "  \$PWT_PREVIOUS_PATH Previous path (enables 'pwt cd -')"
-        echo ""
-        echo "Plugins:"
-        echo "  Extend pwt with custom commands. Run 'pwt plugin help' for details."
-        echo "  Available via plugins: topology, context, benchmark, marker, conflicts, prompt"
+        shift || true
+        cmd_help "${1:-}"
         ;;
     plugin)
         shift

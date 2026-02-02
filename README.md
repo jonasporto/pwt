@@ -68,27 +68,47 @@ pwt create feature master --clone      # Creates clone instead
 
 ## Install
 
+### macOS (Homebrew) - recommended
+
 ```bash
-# Clone and install
+brew tap jonasporto/tap
+brew install pwt
+```
+
+### JavaScript (npm/bun)
+
+```bash
+npm i -g @jonasporto/pwt
+npx @jonasporto/pwt --help
+bunx @jonasporto/pwt --help
+```
+
+### No repo (curl, macOS/Linux/WSL)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh -o /tmp/pwt-install.sh
+less /tmp/pwt-install.sh
+bash /tmp/pwt-install.sh --ref vX.Y.Z --tag --sha256 <sha256>
+# or latest from main (no checksum)
+bash /tmp/pwt-install.sh --ref main --branch
+```
+
+### From source
+
+```bash
 git clone https://github.com/jonasporto/pwt.git ~/.pwt-src
 cd ~/.pwt-src
 make install PREFIX=~/.local
-
-# Add to ~/.zshrc (or ~/.bashrc)
-export PATH="$HOME/.local/bin:$PATH"
-eval "$(pwt shell-init zsh)"
-
-# Verify
-pwt --version
-pwt doctor
 ```
 
-**Dependencies:** `jq` (required), `fzf` (optional for interactive selection)
+**Dependencies:** `git`, `jq` (required). `make` (required for source install). `fzf`, `lsof` (optional).
 ```bash
-brew install jq fzf  # macOS
+brew install git jq make fzf  # macOS
 ```
 
-See [INSTALL.md](INSTALL.md) for bash/fish setup and troubleshooting.
+Windows users: use WSL (native Windows shell is not supported).
+
+See [INSTALL.md](INSTALL.md) for setup details and troubleshooting.
 
 ---
 
@@ -210,6 +230,18 @@ teardown() {
 | `tree [flags]` | Visual tree view |
 | `doctor` | Check system health |
 | `plugin [action]` | Manage plugins |
+| `help [topic]` | Show help (topics: concepts, commands, navigation, pwtfile, all) |
+
+### Help Topics
+
+```bash
+pwt help              # Brief help with command list
+pwt help concepts     # What is pwt, worktree vs clone
+pwt help commands     # Full command reference
+pwt help navigation   # cd, use, multi-project
+pwt help pwtfile      # Syntax, hooks, helpers, examples
+pwt help all          # Everything (good for LLMs)
+```
 
 ### Create Flags
 

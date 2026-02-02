@@ -349,3 +349,35 @@ teardown() {
     [ "$status" -eq 0 ]
     [ ! -d "$TEST_WORKTREES/ACME-12345-long-name" ]
 }
+
+# ============================================
+# Shell completion compatibility (trailing slash)
+# ============================================
+
+@test "pwt remove accepts name with trailing slash (shell completion)" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create TEST-TRAILING HEAD
+    [ -d "$TEST_WORKTREES/TEST-TRAILING" ]
+
+    # Remove with trailing slash (as shell completion would provide)
+    run "$PWT_BIN" remove "TEST-TRAILING/" -y
+    [ "$status" -eq 0 ]
+    [ ! -d "$TEST_WORKTREES/TEST-TRAILING" ]
+}
+
+@test "pwt remove with trailing slash cleans up metadata" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create TEST-SLASH-META HEAD
+
+    local meta_file="$PWT_DIR/meta.json"
+    # Verify worktree exists in metadata
+    local port=$(jq -r '.["test-project"]["TEST-SLASH-META"].port' "$meta_file")
+    [[ "$port" =~ ^[0-9]+$ ]]
+
+    # Remove with trailing slash
+    "$PWT_BIN" remove "TEST-SLASH-META/" -y
+
+    # Verify worktree removed from metadata
+    local removed=$(jq -r '.["test-project"]["TEST-SLASH-META"] // "null"' "$meta_file")
+    [ "$removed" = "null" ]
+}

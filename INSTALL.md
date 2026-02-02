@@ -2,12 +2,43 @@
 
 ## Requirements
 
-- **bash** 3.2+ (default on macOS and Linux)
+- **bash** 3.2+ (default on macOS/Linux/WSL)
 - **git** 2.5+ (for worktree support)
 - **jq** (JSON processing)
+- **make** (required for source install)
 - **fzf** (optional, for interactive selection)
+- **lsof** (optional, for port detection)
 
-## Quick Install
+**Windows:** supported via **WSL** only (native Windows shell is not supported).
+
+## Install
+
+### macOS (Homebrew) - recommended
+
+```bash
+brew tap jonasporto/tap
+brew install pwt
+```
+
+### JavaScript (npm/bun)
+
+```bash
+npm i -g @jonasporto/pwt
+npx @jonasporto/pwt --help
+bunx @jonasporto/pwt --help
+```
+
+### No repo (curl, macOS/Linux/WSL)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh -o /tmp/pwt-install.sh
+less /tmp/pwt-install.sh
+bash /tmp/pwt-install.sh --ref vX.Y.Z --tag --sha256 <sha256>
+# or latest from main (no checksum)
+bash /tmp/pwt-install.sh --ref main --branch
+```
+
+### From source
 
 ```bash
 # Clone the repository
@@ -21,22 +52,14 @@ make install PREFIX=~/.local
 sudo make install
 ```
 
-### Install Dependencies
+### Dependencies
 
 **macOS:**
 ```bash
-brew install jq fzf
+brew install git jq make fzf
 ```
 
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install jq git fzf
-```
-
-**Fedora/RHEL:**
-```bash
-sudo dnf install jq git fzf
-```
+**Linux/WSL:** install `git`, `jq`, `make`, `fzf`, and `lsof` with your package manager.
 
 ## Shell Setup
 
@@ -93,20 +116,16 @@ man pwt            # View manual
 
 ## Upgrading
 
-```bash
-cd ~/.pwt-src
-git pull
-make install PREFIX=~/.local
-```
+- Homebrew: `brew upgrade pwt`
+- npm: `npm i -g @jonasporto/pwt`
+- curl install: re-run `install.sh` with the desired `--ref`
+- source install: `git pull` then `make install PREFIX=~/.local`
 
 ## Uninstalling
 
-```bash
-cd ~/.pwt-src
-make uninstall PREFIX=~/.local
-# Or if installed system-wide:
-sudo make uninstall
-```
+- Homebrew: `brew uninstall pwt`
+- npm: `npm rm -g @jonasporto/pwt`
+- curl/source install: remove `~/.local/bin/pwt` and `~/.local/lib/pwt` (or the prefix you used)
 
 ## Troubleshooting
 
@@ -127,10 +146,7 @@ Add this line to your `~/.zshrc` or `~/.bashrc`.
 
 ### "jq: command not found"
 
-Install jq:
-- macOS: `brew install jq`
-- Ubuntu: `sudo apt-get install jq`
-- Fedora: `sudo dnf install jq`
+Install jq with your package manager (macOS: `brew install jq`).
 
 ## Alternative Installation (Development)
 

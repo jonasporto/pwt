@@ -56,13 +56,29 @@ _pwt_commands() {
 _pwt_worktrees() {
     local project="${1:-}"
     local worktrees
+    # Find the pwt binary (prefer binary over shell function for reliability)
+    local pwt_bin="${commands[pwt]:-$(whence -p pwt)}"
+    [[ -z "$pwt_bin" ]] && pwt_bin="pwt"
+
     # Use pwt list --names for accurate project detection
     # Pass --project if specified (for "pwt <project> cd <tab>" syntax)
+    local raw_output
     if [[ -n "$project" ]]; then
-        worktrees=("${(@f)$(pwt --project "$project" list --names 2>/dev/null)}")
+        raw_output=$("$pwt_bin" --project "$project" list --names 2>/dev/null)
     else
-        worktrees=("${(@f)$(pwt list --names 2>/dev/null)}")
+        raw_output=$("$pwt_bin" list --names 2>/dev/null)
     fi
+
+    # Parse output and strip trailing slashes from each worktree name
+    # The --names output includes trailing / for display, but trailing / in completions
+    # triggers zsh directory completion behavior which breaks worktree completion
+    local line
+    worktrees=()
+    for line in ${(f)raw_output}; do
+        # Strip trailing slash
+        worktrees+=("${line%/}")
+    done
+
     # Fallback to just @ if pwt fails (e.g., not in a project)
     [[ ${#worktrees[@]} -eq 0 ]] && worktrees=("@")
     _describe 'worktree' worktrees
@@ -356,6 +372,16 @@ _pwt() {
                             'help:Show help'
                         )
                         _describe 'action' claude_actions
+                        ;;
+                    help|-h|--help)
+                        local help_topics=(
+                            'concepts:What is pwt, worktree vs clone'
+                            'commands:Full command reference'
+                            'navigation:cd, use, multi-project'
+                            'pwtfile:Syntax, hooks, helpers, examples'
+                            'all:Everything (good for LLMs)'
+                        )
+                        _describe 'topic' help_topics
                         ;;
                     auto-remove|cleanup)
                         _pwt_branches

@@ -104,16 +104,8 @@ teardown() {
     grep -q "PWT_VERBOSE=" "$PWT_BIN"
 }
 
-@test "pwt_info function is defined" {
-    grep -q "^pwt_info()" "$PWT_BIN"
-}
-
 @test "pwt_debug function is defined" {
     grep -q "^pwt_debug()" "$PWT_BIN"
-}
-
-@test "pwt_warn function is defined" {
-    grep -q "^pwt_warn()" "$PWT_BIN"
 }
 
 @test "pwt_error function is defined" {

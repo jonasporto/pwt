@@ -209,3 +209,116 @@ load test_helper
     run grep "^.SH EXAMPLES" "$manpage"
     [ "$status" -eq 0 ]
 }
+
+# ============================================
+# Trailing slash normalization (shell completion)
+# ============================================
+
+# Test that commands accept names with trailing slash (from shell completion)
+# This ensures that tab completion works correctly with all worktree commands
+
+@test "commands handle trailing slash: resolve_worktree_path normalizes name" {
+    # This tests the core function used by multiple commands
+    local completions_file="$PWD_DIR/completions/pwt.bash"
+
+    # Verify that the normalize pattern exists in main pwt file
+    run grep "target.*%/" "$PWD_DIR/bin/pwt"
+    [ "$status" -eq 0 ]
+}
+
+@test "commands handle trailing slash: cmd_cd strips slash" {
+    run grep -A3 "Strip trailing slash" "$PWD_DIR/bin/pwt"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'${target%/}'* ]]
+}
+
+@test "commands handle trailing slash: cmd_remove strips slash" {
+    run grep -A3 "strip trailing slash" "$PWD_DIR/lib/pwt/worktree.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'${name%/}'* ]]
+}
+
+@test "require_project error messages go to stderr not stdout" {
+    # Test that error messages from require_project go to stderr
+    # This is critical for shell completions which capture stdout
+    run grep ">&2" "$PWD_DIR/bin/pwt"
+    [ "$status" -eq 0 ]
+    # Verify the specific error message about initialization goes to stderr
+    run grep "Run from inside a git repository.*>&2" "$PWD_DIR/bin/pwt"
+    [ "$status" -eq 0 ]
+}
+
+# ============================================
+# Shell completion integration tests
+# ============================================
+
+@test "zsh completion _pwt_worktrees function finds binary" {
+    # Verify the completion script has logic to find the pwt binary
+    run grep -E "commands\[pwt\]|whence -p pwt" "$PWD_DIR/completions/_pwt"
+    [ "$status" -eq 0 ]
+}
+
+@test "zsh completion calls list --names with stderr suppressed" {
+    # Critical: completions must suppress stderr to avoid error messages in completion list
+    run grep "list --names 2>/dev/null" "$PWD_DIR/completions/_pwt"
+    [ "$status" -eq 0 ]
+}
+
+@test "list --names returns only worktree names (no errors to stdout)" {
+    setup_test_env
+
+    # Create project config
+    mkdir -p "$PWT_DIR/projects/test-comp"
+    cat > "$PWT_DIR/projects/test-comp/config.json" << EOF
+{
+  "path": "$TEST_REPO",
+  "worktrees_dir": "$TEST_TEMP_DIR/worktrees"
+}
+EOF
+    mkdir -p "$TEST_TEMP_DIR/worktrees"
+
+    cd "$TEST_REPO"
+
+    # Capture stdout and stderr separately
+    local stdout_file="$TEST_TEMP_DIR/stdout"
+    local stderr_file="$TEST_TEMP_DIR/stderr"
+
+    "$PWT_BIN" list --names >"$stdout_file" 2>"$stderr_file"
+
+    # stdout should only contain worktree names (one per line, ending with /)
+    # and nothing else (no error messages)
+    while IFS= read -r line; do
+        # Each line should be either "@/" or a worktree name ending with /
+        [[ "$line" =~ ^[a-zA-Z0-9_@-]+/$ ]] || {
+            echo "Invalid line in stdout: '$line'" >&2
+            return 1
+        }
+    done < "$stdout_file"
+
+    teardown_test_env
+}
+
+@test "list --names errors go to stderr not stdout" {
+    setup_test_env
+
+    # Try to run list --names outside any project (should error)
+    cd "$TEST_TEMP_DIR"
+
+    # Capture stdout and stderr separately
+    local stdout_file="$TEST_TEMP_DIR/stdout"
+    local stderr_file="$TEST_TEMP_DIR/stderr"
+
+    # This should fail (no project)
+    "$PWT_BIN" list --names >"$stdout_file" 2>"$stderr_file" || true
+
+    # stdout should be empty (no error messages)
+    [ ! -s "$stdout_file" ] || {
+        echo "Unexpected stdout: $(cat "$stdout_file")" >&2
+        return 1
+    }
+
+    # stderr should have the error message
+    [ -s "$stderr_file" ]
+
+    teardown_test_env
+}

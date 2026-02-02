@@ -17,16 +17,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install bats-core (Ubuntu)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bats
-
-      - name: Install bats-core (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install bats-core
+      - name: Install bats
+        uses: bats-core/bats-action@3.0.0
 
       - name: Install dependencies
         run: |

@@ -33,10 +33,11 @@ jobs:
         run: |
           sed -i "s/^PWT_VERSION=.*/PWT_VERSION=\"${{ steps.version.outputs.VERSION }}\"/" bin/pwt
 
+      - name: Install bats
+        uses: bats-core/bats-action@3.0.0
+
       - name: Run tests
-        run: |
-          sudo apt-get update && sudo apt-get install -y bats
-          bats tests/
+        run: bats tests/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

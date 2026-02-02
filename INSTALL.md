@@ -17,15 +17,29 @@
 
 ```bash
 brew install jonasporto/pwt/pwt
-# ou
-brew tap jonasporto/pwt && brew install pwt
 ```
 
-### JavaScript (npm/bun)
+### npm
 
 ```bash
 npm i -g @jonasporto/pwt
+```
+
+### npx (without installing)
+
+```bash
 npx @jonasporto/pwt --help
+```
+
+### bun
+
+```bash
+bun add -g @jonasporto/pwt
+```
+
+### bunx (without installing)
+
+```bash
 bunx @jonasporto/pwt --help
 ```
 

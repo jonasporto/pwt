@@ -350,3 +350,31 @@ EOF
     [[ "$output" == *"Worktree Context"* ]]
     [[ "$output" == *"test-project"* ]]
 }
+
+# ============================================
+# Symlink resolution (npm installs)
+# ============================================
+
+@test "pwt works when invoked via symlink" {
+    # Create symlink to pwt in temp dir
+    local symlink_dir="$TEST_TEMP_DIR/symlink_bin"
+    mkdir -p "$symlink_dir"
+    ln -sf "$PWT_BIN" "$symlink_dir/pwt"
+
+    # Run via symlink - should resolve to actual script location
+    run "$symlink_dir/pwt" --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pwt version"* ]]
+}
+
+@test "pwt plugin list works when invoked via symlink" {
+    # Create symlink to pwt in temp dir
+    local symlink_dir="$TEST_TEMP_DIR/symlink_bin"
+    mkdir -p "$symlink_dir"
+    ln -sf "$PWT_BIN" "$symlink_dir/pwt"
+
+    # Run plugin list via symlink - requires lib/pwt modules
+    run "$symlink_dir/pwt" plugin list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Installed plugins"* ]] || [[ "$output" == *"no plugins"* ]]
+}

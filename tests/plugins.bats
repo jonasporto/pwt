@@ -32,10 +32,11 @@ teardown() {
 # Plugin management: pwt plugin
 # ============================================
 
-@test "pwt plugin list shows no plugins when empty" {
+@test "pwt plugin list works when user plugins empty" {
     run "$PWT_BIN" plugin list
     [ "$status" -eq 0 ]
-    [[ "$output" == *"no plugins installed"* ]]
+    # May show "no plugins" or system plugins from homebrew/etc
+    [[ "$output" == *"Installed plugins"* ]] || [[ "$output" == *"no plugins installed"* ]]
 }
 
 @test "pwt plugin list shows installed plugins" {

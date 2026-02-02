@@ -24,7 +24,6 @@ _pwt_commands() {
         's:Start development server'
         'run:Run command in worktree'
         'for-each:Run command in all worktrees'
-        'shell:Interactive shell in worktree context'
         'editor:Open worktree in editor'
         'e:Open worktree in editor'
         'ai:Start AI tool in worktree'
@@ -37,8 +36,6 @@ _pwt_commands() {
         'cleanup:Remove merged worktrees'
         'restore:Recover backed up changes from trash'
         'fix-port:Resolve port conflict'
-        'pick:Interactive select + auto-use (fzf)'
-        'select:Interactive worktree selector (fzf)'
         'doctor:Check system health and configuration'
         'meta:Manage worktree metadata'
         'project:Manage project configs'
@@ -250,7 +247,7 @@ _pwt() {
                             "worktrees:worktree:_pwt_worktrees $_project" \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|port|shell|editor|e|ai|open|current|repair|fix)
+                    cd|use|server|s|info|show|fix-port|port|editor|e|ai|open|current|repair|fix)
                         _pwt_worktrees "$_project"
                         ;;
                     run|for-each)
@@ -268,7 +265,7 @@ _pwt() {
                             *) _message 'file patterns' ;;
                         esac
                         ;;
-                    tree|status|doctor|pick|select|list|ls)
+                    tree|status|doctor|list|ls)
                         # These commands have optional flags, no required args
                         ;;
                     meta)
@@ -329,7 +326,7 @@ _pwt() {
                             'worktrees:worktree:_pwt_worktrees' \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|repair|fix|port|shell|editor|e|ai|open|current)
+                    cd|use|server|s|info|show|fix-port|repair|fix|port|editor|e|ai|open|current)
                         _pwt_worktrees
                         ;;
                     run|for-each)
@@ -347,7 +344,7 @@ _pwt() {
                             *) _message 'file patterns' ;;
                         esac
                         ;;
-                    tree|status|doctor|pick|select)
+                    tree|status|doctor)
                         # These commands have optional flags, no required args
                         ;;
                     plugin)

@@ -702,22 +702,6 @@ EOF
     [[ "$output" == *"RUN-FUZZY"* ]]
 }
 
-@test "pwt shell shows usage when no target" {
-    cd "$TEST_REPO"
-
-    run "$PWT_BIN" shell
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"Usage: pwt shell"* ]]
-}
-
-@test "pwt shell fails for nonexistent worktree" {
-    cd "$TEST_REPO"
-
-    run "$PWT_BIN" shell nonexistent-worktree-xyz
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"Worktree not found"* ]]
-}
-
 # =============================================================================
 # Safety Tests - Dirty Worktree Protection
 # =============================================================================

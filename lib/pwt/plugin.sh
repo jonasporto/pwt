@@ -14,25 +14,110 @@
 [[ -n "${_PWT_PLUGIN_LOADED:-}" ]] && return 0
 _PWT_PLUGIN_LOADED=1
 
+# Get all plugin directories (user first, then system)
+# User plugins override system plugins with the same name
+_get_plugin_dirs() {
+    local dirs=()
+
+    # 1. User plugins (highest priority, always writable)
+    dirs+=("$PWT_DIR/plugins")
+
+    # 2. Check all possible system plugin locations
+    # This is more robust than trying to detect installation method
+
+    # Homebrew (check if installed)
+    if command -v brew &>/dev/null; then
+        local brew_prefix
+        brew_prefix="$(brew --prefix 2>/dev/null)"
+        [ -d "$brew_prefix/share/pwt/plugins" ] && dirs+=("$brew_prefix/share/pwt/plugins")
+    fi
+
+    # Standard Homebrew locations (in case brew command not in PATH)
+    [ -d "/opt/homebrew/share/pwt/plugins" ] && dirs+=("/opt/homebrew/share/pwt/plugins")
+    [ -d "/usr/local/share/pwt/plugins" ] && dirs+=("/usr/local/share/pwt/plugins")
+
+    # ~/.local (common PREFIX for source/curl installs)
+    [ -d "$HOME/.local/share/pwt/plugins" ] && dirs+=("$HOME/.local/share/pwt/plugins")
+
+    # npm global (typical locations)
+    local npm_prefix
+    if npm_prefix="$(npm config get prefix 2>/dev/null)" && [ -d "$npm_prefix/share/pwt/plugins" ]; then
+        dirs+=("$npm_prefix/share/pwt/plugins")
+    fi
+
+    # Print unique directories
+    printf '%s\n' "${dirs[@]}" | awk '!seen[$0]++'
+}
+
+# Find a plugin by name (searches all directories, user first)
+_find_plugin() {
+    local name="$1"
+    [[ "$name" != pwt-* ]] && name="pwt-$name"
+
+    local dir
+    while IFS= read -r dir; do
+        local plugin="$dir/$name"
+        if [ -x "$plugin" ]; then
+            echo "$plugin"
+            return 0
+        fi
+    done < <(_get_plugin_dirs)
+
+    return 1
+}
+
 # Command: plugin
 # Manage pwt plugins
 # Usage: pwt plugin [list|install|remove|path|help]
 cmd_plugin() {
-    local plugins_dir="$PWT_DIR/plugins"
+    local user_plugins_dir="$PWT_DIR/plugins"
     local action="${1:-list}"
 
     case "$action" in
         list|ls)
             echo -e "${BLUE}Installed plugins:${NC}"
             echo ""
-            if [ -d "$plugins_dir" ] && [ "$(ls -A "$plugins_dir" 2>/dev/null)" ]; then
-                for plugin in "$plugins_dir"/pwt-*; do
+            local found_any=false
+            local seen_plugins=""
+
+            # List plugins from all directories (user first for override display)
+            local dir
+            while IFS= read -r dir; do
+                [ -d "$dir" ] || continue
+
+                local dir_has_plugins=false
+                for plugin in "$dir"/pwt-*; do
                     [ -x "$plugin" ] || continue
-                    local name=$(basename "$plugin" | sed 's/^pwt-//')
+
+                    local name
+                    name=$(basename "$plugin" | sed 's/^pwt-//')
+
+                    # Skip if already seen (user plugins override system)
+                    [[ " $seen_plugins " =~ " $name " ]] && continue
+                    seen_plugins+=" $name "
+
+                    dir_has_plugins=true
+                    found_any=true
+
                     local version=""
                     local desc=""
+                    local source_hint=""
 
-                    # Try to get version/description from plugin --version or first comment
+                    # Determine source (check symlinks too)
+                    local real_path="$plugin"
+                    if [ -L "$plugin" ]; then
+                        real_path="$(readlink "$plugin")"
+                    fi
+
+                    if [[ "$real_path" == *"/homebrew/"* ]] || [[ "$real_path" == *"/Cellar/"* ]]; then
+                        source_hint="${DIM}(brew)${NC}"
+                    elif [[ "$real_path" == *"/node_modules/"* ]]; then
+                        source_hint="${DIM}(npm)${NC}"
+                    elif [[ "$dir" != "$user_plugins_dir" ]]; then
+                        source_hint="${DIM}(system)${NC}"
+                    fi
+
+                    # Try to get version/description from plugin header
                     if head -5 "$plugin" | grep -q "^# Description:"; then
                         desc=$(head -10 "$plugin" | grep "^# Description:" | sed 's/^# Description: *//')
                     fi
@@ -42,10 +127,13 @@ cmd_plugin() {
 
                     printf "  ${GREEN}%-15s${NC}" "$name"
                     [ -n "$version" ] && printf " v%s" "$version"
+                    [ -n "$source_hint" ] && printf " %b" "$source_hint"
                     [ -n "$desc" ] && printf "  - %s" "$desc"
                     echo ""
                 done
-            else
+            done < <(_get_plugin_dirs)
+
+            if [ "$found_any" = false ]; then
                 echo "  (no plugins installed)"
                 echo ""
                 echo "Install plugins:"
@@ -53,7 +141,7 @@ cmd_plugin() {
                 echo "  cp my-plugin ~/.pwt/plugins/pwt-mycommand"
             fi
             echo ""
-            echo -e "${DIM}Plugin directory: $plugins_dir${NC}"
+            echo -e "${DIM}User plugins: $user_plugins_dir${NC}"
             ;;
 
         install)
@@ -68,7 +156,7 @@ cmd_plugin() {
                 exit 1
             fi
 
-            mkdir -p "$plugins_dir"
+            mkdir -p "$user_plugins_dir"
 
             local plugin_name=""
             local dest=""
@@ -77,7 +165,7 @@ cmd_plugin() {
                 # Download from URL
                 plugin_name=$(basename "$source")
                 [[ "$plugin_name" != pwt-* ]] && plugin_name="pwt-$plugin_name"
-                dest="$plugins_dir/$plugin_name"
+                dest="$user_plugins_dir/$plugin_name"
 
                 echo -e "${BLUE}Downloading plugin...${NC}"
                 if command -v curl &>/dev/null; then
@@ -97,7 +185,7 @@ cmd_plugin() {
 
                 plugin_name=$(basename "$source")
                 [[ "$plugin_name" != pwt-* ]] && plugin_name="pwt-$plugin_name"
-                dest="$plugins_dir/$plugin_name"
+                dest="$user_plugins_dir/$plugin_name"
 
                 cp "$source" "$dest"
             fi
@@ -117,10 +205,23 @@ cmd_plugin() {
 
             # Normalize name
             [[ "$name" != pwt-* ]] && name="pwt-$name"
-            local plugin="$plugins_dir/$name"
 
-            if [ ! -f "$plugin" ]; then
+            # Find the plugin
+            local plugin
+            plugin=$(_find_plugin "${name#pwt-}") || true
+
+            if [ -z "$plugin" ]; then
                 pwt_error "Error: Plugin not found: ${name#pwt-}"
+                exit 1
+            fi
+
+            # Check if it's a user plugin (can be removed)
+            if [[ "$plugin" != "$user_plugins_dir/"* ]]; then
+                echo -e "${YELLOW}Warning:${NC} This is a system plugin: $plugin"
+                echo "System plugins cannot be removed directly."
+                echo ""
+                echo "To override it, create your own version:"
+                echo "  pwt plugin create ${name#pwt-}"
                 exit 1
             fi
 
@@ -129,7 +230,18 @@ cmd_plugin() {
             ;;
 
         path)
-            echo "$plugins_dir"
+            # Show all plugin directories
+            echo -e "${BLUE}Plugin directories:${NC}"
+            local dir
+            while IFS= read -r dir; do
+                if [ -d "$dir" ]; then
+                    echo "  $dir"
+                else
+                    echo "  $dir ${DIM}(not created)${NC}"
+                fi
+            done < <(_get_plugin_dirs)
+            echo ""
+            echo -e "${DIM}User plugins go in: $user_plugins_dir${NC}"
             ;;
 
         create)
@@ -139,14 +251,24 @@ cmd_plugin() {
                 exit 1
             fi
 
-            mkdir -p "$plugins_dir"
+            mkdir -p "$user_plugins_dir"
             [[ "$name" != pwt-* ]] && name="pwt-$name"
-            local plugin="$plugins_dir/$name"
+            local plugin="$user_plugins_dir/$name"
             local cmd_name="${name#pwt-}"
 
             if [ -f "$plugin" ]; then
                 pwt_error "Error: Plugin already exists: $cmd_name"
                 exit 1
+            fi
+
+            # Check if a system plugin with same name exists
+            local existing
+            existing=$(_find_plugin "$cmd_name" 2>/dev/null) || true
+            if [ -n "$existing" ]; then
+                echo -e "${YELLOW}Note:${NC} A system plugin '$cmd_name' exists at:"
+                echo "  $existing"
+                echo "Your user plugin will override it."
+                echo ""
             fi
 
             cat > "$plugin" << 'TEMPLATE'
@@ -208,13 +330,20 @@ TEMPLATE
             echo "Actions:"
             echo "  list              List installed plugins"
             echo "  install <source>  Install plugin from file or URL"
-            echo "  remove <name>     Remove installed plugin"
+            echo "  remove <name>     Remove user plugin"
             echo "  create <name>     Create new plugin from template"
-            echo "  path              Print plugins directory"
+            echo "  path              Show plugin directories"
+            echo ""
+            echo "Plugin Locations:"
+            echo "  User plugins:   ~/.pwt/plugins/         (writable, highest priority)"
+            echo "  Homebrew:       \$(brew --prefix)/share/pwt/plugins/"
+            echo "  npm:            <prefix>/share/pwt/plugins/"
+            echo ""
+            echo "User plugins override system plugins with the same name."
             echo ""
             echo "Plugin Structure:"
-            echo "  Plugins are executable scripts in ~/.pwt/plugins/"
-            echo "  Named pwt-<command>, invoked as 'pwt <command>'"
+            echo "  Plugins are executable scripts named pwt-<command>"
+            echo "  Invoked as 'pwt <command>'"
             echo ""
             echo "Environment Variables (available to plugins):"
             echo "  PWT_PROJECT        Current project name"

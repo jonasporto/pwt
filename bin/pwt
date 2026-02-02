@@ -1238,6 +1238,80 @@ get_project_config() {
     fi
 }
 
+# ============================================
+# Global AI Tools Config Functions
+# ============================================
+
+# Resolve AI tool command from config or PATH
+# Returns the command to execute for the given tool name
+# Resolution order: config.json > PATH > empty
+resolve_ai_tool() {
+    local name="${1:-}"
+    local config_file="$PWT_DIR/config.json"
+
+    # If empty, use default
+    if [ -z "$name" ]; then
+        if [ -f "$config_file" ]; then
+            name=$(jq -r '.ai.default // empty' "$config_file" 2>/dev/null)
+        fi
+        [ -z "$name" ] && name="claude"
+    fi
+
+    # Look up in config
+    local cmd=""
+    if [ -f "$config_file" ]; then
+        cmd=$(jq -r --arg name "$name" '.ai.tools[$name] // empty' "$config_file" 2>/dev/null)
+    fi
+
+    # Fallback to PATH
+    if [ -z "$cmd" ] && command -v "$name" &>/dev/null; then
+        cmd="$name"
+    fi
+
+    echo "$cmd"
+}
+
+# Add an AI tool to global config
+add_ai_tool() {
+    local name="$1"
+    local cmd="$2"
+    local config_file="$PWT_DIR/config.json"
+
+    [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+
+    local tmp_file
+    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+    jq --arg name "$name" --arg cmd "$cmd" '
+        .ai //= {} |
+        .ai.tools //= {} |
+        .ai.tools[$name] = $cmd
+    ' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+}
+
+# Remove an AI tool from global config
+remove_ai_tool() {
+    local name="$1"
+    local config_file="$PWT_DIR/config.json"
+
+    [ ! -f "$config_file" ] && return 0
+
+    local tmp_file
+    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+    jq --arg name "$name" 'del(.ai.tools[$name])' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+}
+
+# Set default AI tool
+set_default_ai_tool() {
+    local name="$1"
+    local config_file="$PWT_DIR/config.json"
+
+    [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+
+    local tmp_file
+    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+    jq --arg name "$name" '.ai.default = $name' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+}
+
 # Pwtfile helpers (available in Pwtfile)
 # These are sourced when running a Pwtfile
 pwtfile_env() {
@@ -1568,9 +1642,6 @@ read_port_base() {
     fi
 }
 
-# Run Pwtfile if exists
-# Looks for: Pwtfile, Pwtfile.rb, Pwtfile.js
-# Usage: run_pwtfile <phase> (setup|teardown|server)
 # Execute a single Pwtfile
 # Arguments: pwtfile_path phase label
 run_single_pwtfile() {
@@ -1580,50 +1651,31 @@ run_single_pwtfile() {
 
     [ ! -f "$pwtfile" ] && return 0
 
-    case "$pwtfile" in
-        *.rb)
-            echo -e "${BLUE}Running $label ($phase)...${NC}"
-            ruby "$pwtfile" "$phase"
-            echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
-            ;;
-        *.js)
-            echo -e "${BLUE}Running $label ($phase)...${NC}"
-            if command -v bun >/dev/null 2>&1; then
-                bun "$pwtfile" "$phase"
-            else
-                node "$pwtfile" "$phase"
-            fi
-            echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
-            ;;
-        *)
-            # Bash Pwtfile - source and call function
-            # Check if function exists before printing/running
-            if ! grep -qE "^${phase}\s*\(\)|^function\s+${phase}\b" "$pwtfile" 2>/dev/null; then
-                return 0  # Function doesn't exist, skip silently
-            fi
+    # Check if function exists before printing/running
+    if ! grep -qE "^${phase}\s*\(\)|^function\s+${phase}\b" "$pwtfile" 2>/dev/null; then
+        return 0  # Function doesn't exist, skip silently
+    fi
 
-            echo -e "${BLUE}Running $label ($phase)...${NC}"
-            (
-                cd "$PWT_WORKTREE_PATH"
-                # Make helpers available
-                env() { pwtfile_env "$@"; }
-                replace() { pwtfile_replace "$@"; }
-                replace_literal() { pwtfile_replace_literal "$@"; }
-                replace_re() { pwtfile_replace_re "$@"; }
-                database() { pwtfile_database "$@"; }
-                rake() { pwtfile_rake "$@"; }
-                run() { pwtfile_run "$@"; }
+    echo -e "${BLUE}Running $label ($phase)...${NC}"
+    (
+        cd "$PWT_WORKTREE_PATH"
+        # Make helpers available
+        env() { pwtfile_env "$@"; }
+        replace() { pwtfile_replace "$@"; }
+        replace_literal() { pwtfile_replace_literal "$@"; }
+        replace_re() { pwtfile_replace_re "$@"; }
+        database() { pwtfile_database "$@"; }
+        rake() { pwtfile_rake "$@"; }
+        run() { pwtfile_run "$@"; }
 
-                source "$pwtfile"
+        source "$pwtfile"
 
-                # Call the phase function if it exists
-                if type "$phase" &>/dev/null; then
-                    "$phase"
-                fi
-            )
-            echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
-            ;;
-    esac
+        # Call the phase function if it exists
+        if type "$phase" &>/dev/null; then
+            "$phase"
+        fi
+    )
+    echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
 }
 
 # Check if a command exists in a specific file
@@ -1752,14 +1804,8 @@ run_pwtfile() {
         [ -f "$config_pwtfile" ] && project_pwtfile="$config_pwtfile" || true
     fi
 
-    if [ -z "$project_pwtfile" ]; then
-        if [ -f "$MAIN_APP/Pwtfile" ]; then
-            project_pwtfile="$MAIN_APP/Pwtfile"
-        elif [ -f "$MAIN_APP/Pwtfile.rb" ]; then
-            project_pwtfile="$MAIN_APP/Pwtfile.rb"
-        elif [ -f "$MAIN_APP/Pwtfile.js" ]; then
-            project_pwtfile="$MAIN_APP/Pwtfile.js"
-        fi
+    if [ -z "$project_pwtfile" ] && [ -f "$MAIN_APP/Pwtfile" ]; then
+        project_pwtfile="$MAIN_APP/Pwtfile"
     fi
 
     local global_pwtfile="$PWT_DIR/Pwtfile"
@@ -2300,20 +2346,117 @@ cmd_ps1() {
     echo "pwt@${name}${mismatch}"
 }
 
+# Helper for pwt use --select (interactive picker)
+_use_interactive_select() {
+    # Check if fzf is installed
+    if ! command -v fzf &>/dev/null; then
+        pwt_error "Error: fzf is required for pwt use --select"
+        echo "Install with: brew install fzf"
+        exit 1
+    fi
+
+    # Build enriched list of worktrees
+    local items=()
+
+    # Add main app
+    if [ -d "$MAIN_APP" ]; then
+        local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "main")
+        local main_status=$(get_status_symbols "$MAIN_APP")
+        items+=("@|$main_branch|·|${main_status:-·}|·|main app")
+    fi
+
+    # Add worktrees with metadata
+    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
+            local port=$(get_metadata "$name" "port")
+            local marker=$(get_metadata "$name" "marker")
+            local desc=$(get_metadata "$name" "description")
+            local status=$(get_status_symbols "$dir")
+
+            [ -n "$desc" ] && desc="${desc:0:30}"
+            items+=("$name|$branch|:${port:-·}|${status:-·}|${marker:-·}|${desc:-·}")
+        done
+    fi
+
+    if [ ${#items[@]} -eq 0 ]; then
+        echo -e "${YELLOW}No worktrees found${NC}"
+        exit 0
+    fi
+
+    local formatted
+    formatted=$(printf '%s\n' "${items[@]}" | column -t -s'|')
+
+    # Build preview command
+    local preview_cmd="name=\$(echo {} | awk '{print \$1}'); "
+    preview_cmd+="if [ \"\$name\" = \"@\" ]; then "
+    preview_cmd+="  echo '=== Main App ===' && git -C \"$MAIN_APP\" status -sb; "
+    preview_cmd+="else "
+    preview_cmd+="  pwt info \"\$name\" 2>/dev/null || echo \"Worktree: \$name\"; "
+    preview_cmd+="fi"
+
+    # Run fzf
+    local selected
+    selected=$(echo "$formatted" | fzf \
+        --height=60% \
+        --reverse \
+        --ansi \
+        --header=$'Select worktree to set as current\n↵:use  Esc:cancel' \
+        --preview="$preview_cmd" \
+        --preview-window=right:45%:wrap)
+
+    if [ -z "$selected" ]; then
+        exit 0
+    fi
+
+    # Extract worktree name and set as current
+    local target=$(echo "$selected" | awk '{print $1}')
+    cmd_use "$target"
+}
+
 # ============================================
 # Command: use
 # ============================================
 # Switch the current symlink to a different worktree
 # Usage: pwt use <worktree>
+#        pwt use --select    # interactive fzf picker
 #   Atomically swaps the symlink, does NOT:
 #   - Open editor
 #   - Kill processes
 #   - Change shell directory
 cmd_use() {
-    local target="${1:-}"
+    local target=""
+    local use_select=false
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --select|-s)
+                use_select=true
+                shift
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}" >&2
+                exit 1
+                ;;
+            *)
+                target="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # Interactive selection mode
+    if [ "$use_select" = true ]; then
+        _use_interactive_select
+        return $?
+    fi
 
     if [ -z "$target" ]; then
         echo -e "${RED}Usage: pwt use <worktree>${NC}" >&2
+        echo "       pwt use --select    # interactive picker (fzf)" >&2
         echo "Switches the current symlink to point to the specified worktree" >&2
         exit 1
     fi
@@ -2836,6 +2979,7 @@ cmd_alias() {
 # Command: cd (internal)
 # Output path for worktree navigation
 # Usage: pwt _cd [worktree|@|-]
+#        pwt cd --select    # interactive fzf picker
 #   @ or empty = main worktree
 #   - = previous worktree (like cd -)
 #   worktree = specific worktree
@@ -2843,6 +2987,7 @@ cmd_cd() {
     # Handle --help
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
         echo "Usage: pwt cd [worktree|@|-]"
+        echo "       pwt cd --select    # interactive picker (fzf)"
         echo ""
         echo "Navigate to a worktree (outputs path for shell integration)."
         echo ""
@@ -2852,8 +2997,17 @@ cmd_cd() {
         echo "  -         Previous worktree (like cd -)"
         echo "  (none)    Last used worktree, or main"
         echo ""
+        echo "Options:"
+        echo "  --select, -s    Interactive worktree selector (fzf)"
+        echo ""
         echo "Tip: Run 'eval \"\$(pwt shell-init)\"' for real cd integration."
         return 0
+    fi
+
+    # Handle --select flag
+    if [[ "${1:-}" == "--select" || "${1:-}" == "-s" ]]; then
+        cmd_select
+        return $?
     fi
 
     local target="${1:-}"
@@ -3084,77 +3238,6 @@ cmd_run() {
 
     echo -e "${BLUE}Running in $worktree_path:${NC} $*"
     (cd "$worktree_path" && "$@")
-}
-
-# Command: shell
-# Start an interactive subshell in a worktree with PWT context
-# Usage: pwt shell <worktree>
-#   @ = main worktree
-#   - = previous worktree
-cmd_shell() {
-    local target="${1:-}"
-
-    if [ -z "$target" ]; then
-        echo "Usage: pwt shell <worktree>"
-        echo "       pwt shell @              # main app"
-        echo "       pwt shell ACME-17744  # specific worktree"
-        echo "       pwt shell 17744          # fuzzy match"
-        return 1
-    fi
-
-    # Resolve worktree path (use || true to prevent set -e from exiting on not found)
-    local wt_path
-    wt_path=$(resolve_worktree_path "$target") || true
-
-    if [ -z "$wt_path" ] || [ ! -d "$wt_path" ]; then
-        echo -e "${RED}Worktree not found: $target${NC}"
-        return 1
-    fi
-
-    # Set up context
-    export PWT_WORKTREE="$target"
-    export PWT_WORKTREE_PATH="$wt_path"
-    export PWT_PROJECT="$CURRENT_PROJECT"
-
-    # Extract port if worktree
-    if [ "$target" != "@" ] && [[ "$wt_path" == *"$WORKTREES_DIR"* ]]; then
-        local wt_name=$(basename "$wt_path")
-        export PWT_PORT=$(echo "$wt_name" | grep -oE '[0-9]+$' || true)
-        export PWT_BRANCH=$(get_metadata "$wt_name" "branch" 2>/dev/null || git -C "$wt_path" branch --show-current 2>/dev/null || echo "")
-    else
-        export PWT_PORT=""
-        export PWT_BRANCH=$(git -C "$wt_path" branch --show-current 2>/dev/null || echo "master")
-    fi
-
-    # Custom prompt
-    local wt_display="$target"
-    [ "$target" = "@" ] && wt_display="main"
-
-    export PWT_SHELL_PS1="[pwt:${CURRENT_PROJECT}@${wt_display}]\$ "
-
-    # Mark as pwt subshell (user can detect in .zshrc)
-    export PWT_SHELL=1
-
-    # Print banner
-    local banner_text="pwt subshell: ${CURRENT_PROJECT} @ ${wt_display}"
-    local exit_hint="Ctrl+D or 'exit' to return"
-    local banner_len=${#banner_text}
-    local exit_len=${#exit_hint}
-    local content_width=$((banner_len > exit_len ? banner_len : exit_len))
-    local box_width=$((content_width + 4))
-    local border=$(printf '─%.0s' $(seq 1 $((box_width - 2))))
-
-    echo ""
-    echo -e "${BLUE}┌${border}┐${NC}"
-    printf "${BLUE}│${NC}  %-${content_width}s  ${BLUE}│${NC}\n" "$banner_text"
-    printf "${BLUE}│${NC}  ${DIM}%-${content_width}s${NC}  ${BLUE}│${NC}\n" "$exit_hint"
-    echo -e "${BLUE}└${border}┘${NC}"
-    echo ""
-
-    # Start subshell
-    (cd "$wt_path" && PWT_SHELL=1 exec "${SHELL:-/bin/bash}")
-
-    echo -e "${GREEN}Exited pwt shell${NC}"
 }
 
 # Command: restore
@@ -3443,44 +3526,223 @@ cmd_editor() {
     "$editor_cmd" "$worktree_path"
 }
 
+# ============================================
+# AI Tool Commands
+# ============================================
+
+# Command: ai add
+# Add an AI tool to global config
+cmd_ai_add() {
+    local name="${1:-}"
+    local cmd="${2:-}"
+
+    if [ -z "$name" ] || [ -z "$cmd" ]; then
+        echo "Usage: pwt ai add <name> \"<command>\""
+        echo "Example: pwt ai add gemini \"gemini --model gemini-2.0-flash\""
+        return 1
+    fi
+
+    add_ai_tool "$name" "$cmd"
+    echo -e "${GREEN}Added '$name' → \"$cmd\"${NC}"
+}
+
+# Command: ai remove
+# Remove an AI tool from global config
+cmd_ai_remove() {
+    local name="${1:-}"
+
+    if [ -z "$name" ]; then
+        echo "Usage: pwt ai remove <name>"
+        return 1
+    fi
+
+    remove_ai_tool "$name"
+    echo -e "${GREEN}Removed '$name'${NC}"
+}
+
+# Command: ai list
+# List configured AI tools
+cmd_ai_list() {
+    local config_file="$PWT_DIR/config.json"
+    local default_tool=""
+    local tools=""
+
+    if [ -f "$config_file" ]; then
+        default_tool=$(jq -r '.ai.default // "claude"' "$config_file" 2>/dev/null)
+        tools=$(jq -r '.ai.tools // {} | to_entries[] | "\(.key)\t\(.value)"' "$config_file" 2>/dev/null)
+    else
+        default_tool="claude"
+    fi
+
+    if [ -z "$tools" ]; then
+        echo "No tools configured."
+        echo ""
+        echo "Commands in PATH can be used directly: pwt ai:claude, pwt ai:gemini"
+        echo "To add with custom options: pwt ai add <name> \"<command>\""
+        return
+    fi
+
+    echo "Configured tools:"
+    while IFS=$'\t' read -r name cmd; do
+        if [ "$name" = "$default_tool" ]; then
+            echo -e "  ${GREEN}$name${NC} (default) → $cmd"
+        else
+            echo -e "  $name → $cmd"
+        fi
+    done <<< "$tools"
+}
+
+# Command: ai:tool --default
+# Set default AI tool
+cmd_ai_set_default() {
+    local name="${1:-}"
+
+    if [ -z "$name" ]; then
+        echo "Usage: pwt ai:<name> --default"
+        return 1
+    fi
+
+    set_default_ai_tool "$name"
+    echo -e "${GREEN}Default set to '$name'${NC}"
+}
+
+# Command: ai help
+# Show AI command help
+cmd_ai_help() {
+    echo "Usage: pwt ai [tool] [worktree] [-- args...]"
+    echo ""
+    echo "Start AI coding tool in worktree."
+    echo ""
+    echo "Commands:"
+    echo "  pwt ai add <name> \"<cmd>\"   Add a tool"
+    echo "  pwt ai remove <name>         Remove a tool"
+    echo "  pwt ai list                  List configured tools"
+    echo "  pwt ai:<name> --default      Set default tool"
+    echo ""
+    echo "Usage:"
+    echo "  pwt ai                       Run default tool in main"
+    echo "  pwt ai TICKET                Run default in worktree"
+    echo "  pwt ai:gemini                Run gemini in main"
+    echo "  pwt ai:gemini TICKET         Run gemini in worktree"
+    echo "  pwt ai:codex -- --full-auto  Run with extra args"
+    echo "  pwt ai:gemini --add          Add to config + run"
+    echo ""
+    echo "Resolution: config → PATH → error"
+}
+
 # Command: ai
 # Start AI coding tool in worktree
-# Usage: pwt ai [worktree] [-- args...]
+# Usage: pwt ai [tool] [worktree] [-- args...]
 cmd_ai() {
-    local target="${1:-}"
-    local worktree_path
-    local ai_args=()
+    local tool="${1:-}"
+    shift || true
 
-    # Shift past target if provided and not --
-    if [ -n "$target" ] && [ "$target" != "--" ]; then
-        shift
-    else
-        target=""
+    # Handle subcommands (management)
+    # When called as "pwt ai add" (no ai:tool), tool will be empty
+    # and "add" will be in $1. When called as "pwt ai:tool", tool
+    # will have the tool name.
+    local subcmd="$tool"
+    [ -z "$subcmd" ] && subcmd="${1:-}"
+
+    case "$subcmd" in
+        add)
+            [ -z "$tool" ] && shift  # skip "add" if it was in args
+            cmd_ai_add "$@"
+            return
+            ;;
+        remove)
+            [ -z "$tool" ] && shift
+            cmd_ai_remove "$@"
+            return
+            ;;
+        list)
+            [ -z "$tool" ] && shift
+            cmd_ai_list "$@"
+            return
+            ;;
+        -h|--help|help)
+            cmd_ai_help
+            return
+            ;;
+    esac
+
+    # Parse flags and arguments
+    local worktree=""
+    local set_default=false
+    local add_tool=false
+    local extra_args=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --default)
+                set_default=true
+                shift
+                ;;
+            --add)
+                add_tool=true
+                shift
+                ;;
+            --)
+                shift
+                extra_args=("$@")
+                break
+                ;;
+            *)
+                [ -z "$worktree" ] && worktree="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # --default: set tool as default and exit
+    if [ "$set_default" = true ]; then
+        cmd_ai_set_default "$tool"
+        return
     fi
 
-    # Collect args after --
-    if [ "${1:-}" = "--" ]; then
-        shift
-        ai_args=("$@")
+    # --add: check tool exists in PATH before proceeding
+    if [ "$add_tool" = true ]; then
+        if [ -z "$tool" ]; then
+            echo -e "${RED}Cannot use --add without specifying a tool${NC}"
+            echo "Use: pwt ai:<tool> --add"
+            return 1
+        fi
+        if ! command -v "$tool" &>/dev/null; then
+            echo -e "${RED}'$tool' not found in PATH${NC}"
+            return 1
+        fi
+        add_ai_tool "$tool" "$tool"
+        echo -e "${GREEN}Added '$tool' → \"$tool\"${NC}"
     fi
 
-    # Get AI tool from config or default to claude
+    # Resolve tool (config > PATH)
     local ai_cmd
-    ai_cmd=$(get_project_config "$CURRENT_PROJECT" "ai" 2>/dev/null)
-    [ -z "$ai_cmd" ] && ai_cmd="claude"
+    ai_cmd=$(resolve_ai_tool "$tool")
 
-    if [ -z "$target" ] || [ "$target" = "@" ]; then
+    if [ -z "$ai_cmd" ]; then
+        echo -e "${RED}No '$tool' configured and no '$tool' command found${NC}"
+        echo "Use: pwt ai add $tool \"<command>\""
+        return 1
+    fi
+
+    # Resolve worktree path
+    local worktree_path
+    if [ -z "$worktree" ] || [ "$worktree" = "@" ]; then
         worktree_path="$MAIN_APP"
     else
-        worktree_path=$(cmd_cd "$target" 2>/dev/null)
+        worktree_path=$(cmd_cd "$worktree" 2>/dev/null) || true
         if [ -z "$worktree_path" ] || [ ! -d "$worktree_path" ]; then
-            echo -e "${RED}Worktree not found: $target${NC}"
-            exit 1
+            echo -e "${RED}Worktree not found: $worktree${NC}"
+            return 1
         fi
     fi
 
-    echo -e "${BLUE}Starting $ai_cmd in:${NC} $worktree_path"
-    (cd "$worktree_path" && "$ai_cmd" "${ai_args[@]}")
+    # Get display name for the tool
+    local tool_name="${tool:-default}"
+    [ "$tool_name" = "default" ] && tool_name=$(jq -r '.ai.default // "claude"' "$PWT_DIR/config.json" 2>/dev/null || echo "claude")
+
+    echo -e "${BLUE}Starting $tool_name in:${NC} $worktree_path"
+    (cd "$worktree_path" && eval "$ai_cmd" ${extra_args[@]+"${extra_args[@]}"})
 }
 
 # Command: open
@@ -3707,7 +3969,7 @@ cmd_doctor() {
         local fzf_version=$(fzf --version 2>/dev/null | head -1 || echo "?")
         echo -e "${GREEN}✓${NC} fzf: $fzf_version"
     else
-        echo -e "${YELLOW}⚠${NC} fzf: not installed (needed for pwt select)"
+        echo -e "${YELLOW}⚠${NC} fzf: not installed (needed for --select option)"
     fi
 
     echo ""
@@ -3907,104 +4169,6 @@ cmd__select() {
     local result
     result=$(cmd_select "$@")
     echo "$result"
-}
-
-# Command: pick
-# Interactive selector + auto-use (sets current symlink)
-# Usage: pwt pick [--dirty]
-#   Like select, but automatically runs 'pwt use' on selection
-cmd_pick() {
-    local show_dirty_only=false
-
-    # Parse arguments
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --dirty)
-                show_dirty_only=true
-                shift
-                ;;
-            *)
-                shift
-                ;;
-        esac
-    done
-
-    # Check if fzf is installed
-    if ! command -v fzf &>/dev/null; then
-        pwt_error "Error: fzf is required for pwt pick"
-        echo "Install with: brew install fzf"
-        exit 1
-    fi
-
-    # Build enriched list of worktrees (same as select)
-    local items=()
-
-    # Add main app
-    if [ -d "$MAIN_APP" ]; then
-        local main_branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "main")
-        local main_status=$(get_status_symbols "$MAIN_APP")
-        if [ "$show_dirty_only" = false ] || [ -n "$main_status" ]; then
-            items+=("@|$main_branch|·|${main_status:-·}|·|main app")
-        fi
-    fi
-
-    # Add worktrees with metadata
-    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
-        for dir in "$WORKTREES_DIR"/*/; do
-            [ -d "$dir" ] || continue
-            local name=$(basename "$dir")
-            local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "?")
-            local port=$(get_metadata "$name" "port")
-            local marker=$(get_metadata "$name" "marker")
-            local desc=$(get_metadata "$name" "description")
-            local status=$(get_status_symbols "$dir")
-
-            if [ "$show_dirty_only" = true ] && [ -z "$status" ]; then
-                continue
-            fi
-
-            [ -n "$desc" ] && desc="${desc:0:30}"
-            items+=("$name|$branch|:${port:-·}|${status:-·}|${marker:-·}|${desc:-·}")
-        done
-    fi
-
-    if [ ${#items[@]} -eq 0 ]; then
-        if [ "$show_dirty_only" = true ]; then
-            echo -e "${YELLOW}No dirty worktrees found${NC}"
-        else
-            echo -e "${YELLOW}No worktrees found${NC}"
-        fi
-        exit 0
-    fi
-
-    local formatted
-    formatted=$(printf '%s\n' "${items[@]}" | column -t -s'|')
-
-    # Build preview command
-    local preview_cmd="name=\$(echo {} | awk '{print \$1}'); "
-    preview_cmd+="if [ \"\$name\" = \"@\" ]; then "
-    preview_cmd+="  echo '=== Main App ===' && git -C \"$MAIN_APP\" status -sb; "
-    preview_cmd+="else "
-    preview_cmd+="  pwt info \"\$name\" 2>/dev/null || echo \"Worktree: \$name\"; "
-    preview_cmd+="fi"
-
-    # Run fzf
-    local selected
-    selected=$(echo "$formatted" | fzf \
-        --height=60% \
-        --reverse \
-        --ansi \
-        --header=$'Pick worktree to set as current\n↵:use  Esc:cancel' \
-        --preview="$preview_cmd" \
-        --preview-window=right:45%:wrap)
-
-    if [ -z "$selected" ]; then
-        exit 0
-    fi
-
-    # Extract worktree name and call use
-    local target=$(echo "$selected" | awk '{print $1}')
-    cmd_use "$target"
 }
 
 # Command: for-each
@@ -4459,14 +4623,12 @@ show_help_brief() {
     echo "  list statusline                Output for shell prompts"
     echo "  tree [--all|--dirty|--ports]   Visual tree view of worktrees"
     echo "  status                         Interactive TUI dashboard (like htop)"
-    echo "  select [--preview]             Interactive worktree selector (fzf)"
     echo "  info [worktree]                Show worktree details"
     echo "  current [--name|--resolved]    Show current (symlink path, --resolved for actual)"
-    echo "  use <worktree>                 Set worktree as current (atomic symlink swap)"
-    echo "  pick                           Interactive select + auto-use (fzf)"
+    echo "  use <worktree> [--select]      Set worktree as current (--select for fzf picker)"
     echo "  ps1                            Fast prompt helper (O(1), no git)"
     echo "  remove [worktree] [flags]      Remove worktree (--with-branch, --force-branch)"
-    echo "  cd [worktree|@|-]              Navigate to worktree (@ main, - previous)"
+    echo "  cd [worktree|@|-] [--select]   Navigate to worktree (--select for fzf picker)"
     echo "  run <worktree> <cmd>           Run command in worktree"
     echo "  for-each <cmd>                 Run command in all worktrees"
     echo "  editor [worktree]              Open worktree in editor"
@@ -4596,6 +4758,100 @@ function _pwt_is_project
     end
     return 1
 end
+
+# Helper: detect project name from current path
+function _pwt_detect_project
+    set -l path (pwd)
+
+    # Check if in a worktree directory
+    if string match -q "*-worktrees/*" -- "$path"
+        set -l worktrees_dir (string replace -r '-worktrees/.*' '-worktrees' -- "$path")
+        for config in ~/.pwt/projects/*/config.json
+            test -f "$config"; or continue
+            set -l wt_dir (jq -r '.worktrees_dir // empty' "$config" 2>/dev/null)
+            if test "$wt_dir" = "$worktrees_dir"
+                basename (dirname "$config")
+                return 0
+            end
+        end
+        # Fallback
+        basename (dirname "$worktrees_dir")
+        return 0
+    end
+
+    # Check if in a project's main app directory
+    for config in ~/.pwt/projects/*/config.json
+        test -f "$config"; or continue
+        set -l main_path (jq -r '.path // .main_app // empty' "$config" 2>/dev/null)
+        if test -n "$main_path"; and string match -q "$main_path*" -- "$path"
+            basename (dirname "$config")
+            return 0
+        end
+    end
+
+    return 1
+end
+
+# Helper: update terminal title
+function _pwt_update_title --on-variable PWD
+    # Check if enabled
+    if test "$PWT_TITLE_ENABLED" = "0"
+        return 0
+    end
+
+    # Get format
+    set -l format "$PWT_TITLE_FORMAT"
+    if test -z "$format"; and test -f ~/.pwt/config.json
+        set format (jq -r '.title.format // empty' ~/.pwt/config.json 2>/dev/null)
+        set -l enabled (jq -r '.title.enabled // true' ~/.pwt/config.json 2>/dev/null)
+        if test "$enabled" = "false"
+            return 0
+        end
+    end
+    test -z "$format"; and set format "{project}:{worktree}"
+
+    # Detect project
+    set -l project (_pwt_detect_project)
+    if test -z "$project"
+        set -e PWT_PROJECT
+        set -e PWT_WORKTREE
+        return 0
+    end
+
+    # Detect worktree
+    set -l worktree "@"
+    if string match -q "*-worktrees/*" -- (pwd)
+        set worktree (basename (pwd))
+    end
+
+    # Export vars
+    set -gx PWT_PROJECT "$project"
+    if test "$worktree" != "@"
+        set -gx PWT_WORKTREE "$worktree"
+    else
+        set -e PWT_WORKTREE
+    end
+
+    # Get branch if needed
+    set -l branch ""
+    if string match -q "*{branch}*" -- "$format"
+        set branch (git rev-parse --abbrev-ref HEAD 2>/dev/null; or echo "")
+    end
+
+    # Build title
+    set -l title "$format"
+    set title (string replace -a "{project}" "$project" -- "$title")
+    set title (string replace -a "{worktree}" "$worktree" -- "$title")
+    set title (string replace -a "{branch}" "$branch" -- "$title")
+    set title (string replace -a "{path}" (pwd) -- "$title")
+    set title (string replace -a "{dir}" (basename (pwd)) -- "$title")
+
+    # Set terminal title
+    printf '\033]0;%s\007' "$title"
+end
+
+# Update title on init
+_pwt_update_title
 
 function pwt
     set -l is_cd 0
@@ -4730,6 +4986,119 @@ _pwt_is_project() {
     done < <(find ~/.pwt/projects -maxdepth 2 -name config.json 2>/dev/null)
     return 1
 }
+
+# Helper: detect project name from current path
+_pwt_detect_project() {
+    local path="\${1:-\$PWD}"
+
+    # Check if in a worktree directory (path contains -worktrees/)
+    if [[ "\$path" == *"-worktrees/"* ]]; then
+        # Extract project from worktrees parent dir name: /path/to/project-worktrees/TICKET
+        local worktrees_dir="\${path%%-worktrees/*}-worktrees"
+        local parent_name=\$(basename "\$(dirname "\$worktrees_dir")")
+        # Try to find matching project by worktrees_dir
+        for config in ~/.pwt/projects/*/config.json; do
+            [ -f "\$config" ] || continue
+            local wt_dir=\$(jq -r '.worktrees_dir // empty' "\$config" 2>/dev/null)
+            if [[ "\$wt_dir" == "\$worktrees_dir" ]]; then
+                basename "\$(dirname "\$config")"
+                return 0
+            fi
+        done
+        # Fallback: project name from directory
+        echo "\$parent_name"
+        return 0
+    fi
+
+    # Check if in a project's main app directory
+    for config in ~/.pwt/projects/*/config.json; do
+        [ -f "\$config" ] || continue
+        local main_path=\$(jq -r '.path // .main_app // empty' "\$config" 2>/dev/null)
+        if [[ -n "\$main_path" && "\$path" == "\$main_path"* ]]; then
+            basename "\$(dirname "\$config")"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Helper: update terminal title based on current directory
+_pwt_update_title() {
+    # Check if enabled (default: true)
+    if [[ "\${PWT_TITLE_ENABLED:-1}" == "0" ]]; then
+        return 0
+    fi
+
+    # Get format from env var or config (default: {project}:{worktree})
+    local format="\${PWT_TITLE_FORMAT:-}"
+    if [[ -z "\$format" && -f ~/.pwt/config.json ]]; then
+        format=\$(jq -r '.title.format // empty' ~/.pwt/config.json 2>/dev/null)
+        # Check if disabled in config
+        local enabled=\$(jq -r '.title.enabled // true' ~/.pwt/config.json 2>/dev/null)
+        if [[ "\$enabled" == "false" ]]; then
+            return 0
+        fi
+    fi
+    format="\${format:-{project}:{worktree}}"
+
+    # Detect project
+    local project=\$(_pwt_detect_project)
+    if [[ -z "\$project" ]]; then
+        # Not in a pwt project, clear PWT vars
+        unset PWT_PROJECT PWT_WORKTREE
+        return 0
+    fi
+
+    # Detect worktree
+    local worktree="@"
+    if [[ "\$PWD" == *"-worktrees/"* ]]; then
+        worktree=\$(basename "\$PWD")
+    fi
+
+    # Export for other tools
+    export PWT_PROJECT="\$project"
+    if [[ "\$worktree" != "@" ]]; then
+        export PWT_WORKTREE="\$worktree"
+    else
+        unset PWT_WORKTREE
+    fi
+
+    # Get git branch if needed
+    local branch=""
+    if [[ "\$format" == *"{branch}"* ]]; then
+        branch=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    fi
+
+    # Build title with placeholder replacement
+    local title="\$format"
+    title="\${title//\{project\}/\$project}"
+    title="\${title//\{worktree\}/\$worktree}"
+    title="\${title//\{branch\}/\$branch}"
+    title="\${title//\{path\}/\$PWD}"
+    title="\${title//\{dir\}/\$(basename "\$PWD")}"
+
+    # Set terminal title
+    printf '\\033]0;%s\\007' "\$title"
+}
+
+# Auto-update title on directory change
+if [[ -n "\$ZSH_VERSION" ]]; then
+    # zsh: use chpwd hook
+    autoload -Uz add-zsh-hook 2>/dev/null
+    add-zsh-hook chpwd _pwt_update_title 2>/dev/null || {
+        # Fallback if add-zsh-hook not available
+        chpwd() { _pwt_update_title; }
+    }
+elif [[ -n "\$BASH_VERSION" ]]; then
+    # bash: use PROMPT_COMMAND
+    if [[ "\$PROMPT_COMMAND" != *"_pwt_update_title"* ]]; then
+        PROMPT_COMMAND="_pwt_update_title\${PROMPT_COMMAND:+; \$PROMPT_COMMAND}"
+    fi
+fi
+
+# Update title on shell init
+_pwt_update_title
 
 pwt() {
     # Check if first arg is project and no command (pwt <project>) or cd command
@@ -5193,19 +5562,18 @@ case "${1:-}" in
         shift  # remove "run" from args
         cmd_run "$@"
         ;;
-    shell)
-        require_project
-        shift  # remove "shell" from args
-        cmd_shell "$@"
-        ;;
     editor|e)
         require_project
         cmd_editor "${2:-}"
         ;;
-    ai)
+    ai|ai:*)
         require_project
-        shift  # remove "ai" from args
-        cmd_ai "$@"
+        _ai_tool=""
+        if [[ "$1" == ai:* ]]; then
+            _ai_tool="${1#ai:}"
+        fi
+        shift  # remove "ai" or "ai:tool" from args
+        cmd_ai "$_ai_tool" "$@"
         ;;
     open)
         require_project
@@ -5238,20 +5606,10 @@ case "${1:-}" in
         shift  # remove "doctor" from args
         cmd_doctor "$@"
         ;;
-    select)
-        require_project --info-only
-        shift  # remove "select" from args
-        cmd_select "$@"
-        ;;
     _select)
         require_project --info-only
         shift
         cmd__select "$@"
-        ;;
-    pick)
-        require_project
-        shift  # remove "pick" from args
-        cmd_pick "$@"
         ;;
     shell-init)
         cmd_shell_init "${2:-}"
@@ -5308,9 +5666,43 @@ case "${1:-}" in
         shift
 
         # 1. Check for plugin first (global extension)
-        _plugin_dir="$PWT_DIR/plugins"
-        _plugin="$_plugin_dir/pwt-$_pwtfile_cmd"
-        if [ -x "$_plugin" ]; then
+        # Search plugin directories: user first, then system
+        _plugin=""
+        _find_plugin_in_dirs() {
+            local name="$1"
+            local dirs=("$PWT_DIR/plugins")
+
+            # Check all possible system plugin locations
+            # Homebrew (check if installed)
+            if command -v brew &>/dev/null; then
+                local brew_prefix
+                brew_prefix="$(brew --prefix 2>/dev/null)"
+                [ -d "$brew_prefix/share/pwt/plugins" ] && dirs+=("$brew_prefix/share/pwt/plugins")
+            fi
+
+            # Standard Homebrew locations
+            [ -d "/opt/homebrew/share/pwt/plugins" ] && dirs+=("/opt/homebrew/share/pwt/plugins")
+            [ -d "/usr/local/share/pwt/plugins" ] && dirs+=("/usr/local/share/pwt/plugins")
+
+            # ~/.local (common PREFIX for source/curl installs)
+            [ -d "$HOME/.local/share/pwt/plugins" ] && dirs+=("$HOME/.local/share/pwt/plugins")
+
+            # Search all directories (unique)
+            local seen=""
+            for dir in "${dirs[@]}"; do
+                [[ " $seen " =~ " $dir " ]] && continue
+                seen+=" $dir "
+                local plugin="$dir/pwt-$name"
+                if [ -x "$plugin" ]; then
+                    echo "$plugin"
+                    return 0
+                fi
+            done
+            return 1
+        }
+
+        _plugin=$(_find_plugin_in_dirs "$_pwtfile_cmd") || true
+        if [ -n "$_plugin" ] && [ -x "$_plugin" ]; then
             # Export context for plugin
             export PWT_PLUGIN_NAME="$_pwtfile_cmd"
             export PWT_VERSION="$PWT_VERSION"
@@ -5360,12 +5752,21 @@ case "${1:-}" in
             echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
             # Try to suggest similar commands (include installed plugins)
             _known_commands="create list tree info current use pick select remove cd run shell editor ai open diff copy server fix-port auto-remove restore doctor meta project plugin port help version for-each"
-            # Add installed plugins to suggestions
-            if [ -d "$_plugin_dir" ]; then
-                for _p in "$_plugin_dir"/pwt-*; do
+            # Add installed plugins from all directories to suggestions
+            _get_all_plugin_dirs() {
+                echo "$PWT_DIR/plugins"
+                # Homebrew locations
+                [ -d "/opt/homebrew/share/pwt/plugins" ] && echo "/opt/homebrew/share/pwt/plugins"
+                [ -d "/usr/local/share/pwt/plugins" ] && echo "/usr/local/share/pwt/plugins"
+                # ~/.local
+                [ -d "$HOME/.local/share/pwt/plugins" ] && echo "$HOME/.local/share/pwt/plugins"
+            }
+            while IFS= read -r _pdir; do
+                [ -d "$_pdir" ] || continue
+                for _p in "$_pdir"/pwt-*; do
                     [ -x "$_p" ] && _known_commands+=" $(basename "$_p" | sed 's/^pwt-//')"
                 done
-            fi
+            done < <(_get_all_plugin_dirs | sort -u)
             _suggestion=$(find_similar "$_pwtfile_cmd" "$_known_commands")
             if [ -n "$_suggestion" ]; then
                 echo -e "Did you mean: ${GREEN}pwt $_suggestion${NC}?"

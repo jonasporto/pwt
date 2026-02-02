@@ -6,8 +6,8 @@
 - **git** 2.5+ (for worktree support)
 - **jq** (JSON processing)
 - **make** (required for source install)
-- **fzf** (optional, for interactive selection)
-- **lsof** (optional, for port detection)
+- **fzf** (optional but highly recommended, for interactive selection)
+- **lsof** (optional but highly recommended, for port detection)
 
 **Windows:** supported via **WSL** only (native Windows shell is not supported).
 

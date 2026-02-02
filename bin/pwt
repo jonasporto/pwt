@@ -71,7 +71,7 @@ DEFAULT_BRANCH=""  # Detected from remote (master or main)
 BASE_PORT=5000
 
 # Version
-PWT_VERSION="0.1.2"
+PWT_VERSION="0.1.3"
 
 # Exit codes (for scripting)
 EXIT_SUCCESS=0

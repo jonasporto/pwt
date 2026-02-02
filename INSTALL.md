@@ -19,7 +19,7 @@
 brew install jonasporto/pwt/pwt
 ```
 
-ou:
+or:
 
 ```bash
 brew tap jonasporto/pwt

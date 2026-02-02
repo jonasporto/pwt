@@ -1,7 +1,7 @@
-# pwt Demo - Quick Start
-# Run: vhs examples/tapes/01-quickstart.tape
+# pwt Demo - Status TUI
+# Run: vhs examples/tapes/03-status-tui.tape
 
-Output examples/gifs/01-quickstart.gif
+Output examples/gifs/03-status-tui.gif
 Set Shell "bash"
 Set FontSize 14
 Set Width 900
@@ -37,32 +37,15 @@ Type "source <(pwt shell-init bash)"
 Enter
 Type "pwt init"
 Enter
+Type "pwt create alpha main 'status demo'"
+Enter
+Type "pwt create beta main 'status demo'"
+Enter
 Show
 
-Type "pwt create quickstart main 'quick start'"
+Type "pwt status"
 Enter
-Sleep 1s
+Sleep 2s
 
-Type "pwt cd quickstart"
-Enter
+Type "q"
 Sleep 500ms
-
-Type "pwd"
-Enter
-Sleep 600ms
-
-Type "pwt cd @"
-Enter
-Sleep 400ms
-
-Type "pwt remove quickstart -y"
-Enter
-Sleep 900ms
-
-Type "pwt list"
-Enter
-Sleep 700ms
-
-Type "# github.com/jonasporto/pwt"
-Enter
-Sleep 1s

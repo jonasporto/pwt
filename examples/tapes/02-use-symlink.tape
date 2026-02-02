@@ -1,7 +1,7 @@
-# pwt Demo - Quick Start
-# Run: vhs examples/tapes/01-quickstart.tape
+# pwt Demo - Use Symlink
+# Run: vhs examples/tapes/02-use-symlink.tape
 
-Output examples/gifs/01-quickstart.gif
+Output examples/gifs/02-use-symlink.gif
 Set Shell "bash"
 Set FontSize 14
 Set Width 900
@@ -37,32 +37,36 @@ Type "source <(pwt shell-init bash)"
 Enter
 Type "pwt init"
 Enter
+Type "pwt create feature-a main 'use demo'"
+Enter
+Type "pwt create feature-b main 'use demo'"
+Enter
 Show
 
-Type "pwt create quickstart main 'quick start'"
-Enter
-Sleep 1s
-
-Type "pwt cd quickstart"
-Enter
-Sleep 500ms
-
-Type "pwd"
-Enter
-Sleep 600ms
-
-Type "pwt cd @"
-Enter
-Sleep 400ms
-
-Type "pwt remove quickstart -y"
-Enter
-Sleep 900ms
-
-Type "pwt list"
+Type "pwt use feature-a"
 Enter
 Sleep 700ms
 
-Type "# github.com/jonasporto/pwt"
+Type "pwt current --path"
 Enter
-Sleep 1s
+Sleep 500ms
+
+Type "pwt current --path --resolved"
+Enter
+Sleep 500ms
+
+Type "pwt use feature-b"
+Enter
+Sleep 700ms
+
+Type "pwt current --path"
+Enter
+Sleep 500ms
+
+Type "pwt current --path --resolved"
+Enter
+Sleep 500ms
+
+Type "ls -l ~/.pwt/projects/acme-shop/current"
+Enter
+Sleep 800ms

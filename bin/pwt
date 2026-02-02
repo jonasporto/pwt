@@ -1312,6 +1312,98 @@ set_default_ai_tool() {
     jq --arg name "$name" '.ai.default = $name' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
 }
 
+# Add an editor to global config
+add_editor_tool() {
+    local name="$1"
+    local cmd="$2"
+    local config_file="$PWT_DIR/config.json"
+
+    [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+
+    local tmp_file
+    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+    jq --arg name "$name" --arg cmd "$cmd" '
+        .editor //= {} |
+        .editor.tools //= {} |
+        .editor.tools[$name] = $cmd
+    ' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+}
+
+# Remove an editor from global config
+remove_editor_tool() {
+    local name="$1"
+    local config_file="$PWT_DIR/config.json"
+
+    [ ! -f "$config_file" ] && return 0
+
+    local tmp_file
+    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+    jq --arg name "$name" 'del(.editor.tools[$name])' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+}
+
+# Set default editor
+set_default_editor_tool() {
+    local name="$1"
+    local config_file="$PWT_DIR/config.json"
+
+    [ ! -f "$config_file" ] && echo '{}' > "$config_file"
+
+    local tmp_file
+    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+    jq --arg name "$name" '.editor.default = $name' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+}
+
+# Get editor command (from config, then $EDITOR)
+get_editor_cmd() {
+    local name="${1:-}"
+    local config_file="$PWT_DIR/config.json"
+
+    # If name specified, look it up
+    if [ -n "$name" ]; then
+        if [ -f "$config_file" ]; then
+            local cmd
+            cmd=$(jq -r --arg name "$name" '.editor.tools[$name] // empty' "$config_file" 2>/dev/null)
+            if [ -n "$cmd" ]; then
+                echo "$cmd"
+                return 0
+            fi
+        fi
+        # Check if it's in PATH
+        if command -v "$name" &>/dev/null; then
+            echo "$name"
+            return 0
+        fi
+        return 1
+    fi
+
+    # No name: use default from config, then $EDITOR
+    if [ -f "$config_file" ]; then
+        local default_name
+        default_name=$(jq -r '.editor.default // empty' "$config_file" 2>/dev/null)
+        if [ -n "$default_name" ]; then
+            local cmd
+            cmd=$(jq -r --arg name "$default_name" '.editor.tools[$name] // empty' "$config_file" 2>/dev/null)
+            if [ -n "$cmd" ]; then
+                echo "$cmd"
+                return 0
+            fi
+            # Default name might be a PATH command
+            if command -v "$default_name" &>/dev/null; then
+                echo "$default_name"
+                return 0
+            fi
+        fi
+    fi
+
+    # Fall back to $EDITOR
+    if [ -n "$EDITOR" ]; then
+        echo "$EDITOR"
+        return 0
+    fi
+
+    return 1
+}
+
 # Pwtfile helpers (available in Pwtfile)
 # These are sourced when running a Pwtfile
 pwtfile_env() {
@@ -3499,21 +3591,170 @@ _restore_backup() {
     fi
 }
 
+# ============================================
+# Editor Commands
+# ============================================
+
+# Command: editor add
+cmd_editor_add() {
+    local name="${1:-}"
+    local cmd="${2:-}"
+
+    if [ -z "$name" ] || [ -z "$cmd" ]; then
+        echo "Usage: pwt editor add <name> \"<command>\""
+        echo "Example: pwt editor add sublime \"subl\""
+        echo "Example: pwt editor add cursor \"/Applications/Cursor.app/Contents/Resources/app/bin/cursor\""
+        return 1
+    fi
+
+    add_editor_tool "$name" "$cmd"
+    echo -e "${GREEN}Added '$name' → \"$cmd\"${NC}"
+}
+
+# Command: editor remove
+cmd_editor_remove() {
+    local name="${1:-}"
+
+    if [ -z "$name" ]; then
+        echo "Usage: pwt editor remove <name>"
+        return 1
+    fi
+
+    remove_editor_tool "$name"
+    echo -e "${GREEN}Removed '$name'${NC}"
+}
+
+# Command: editor list
+cmd_editor_list() {
+    local config_file="$PWT_DIR/config.json"
+    local default_tool=""
+    local tools=""
+
+    if [ -f "$config_file" ]; then
+        default_tool=$(jq -r '.editor.default // empty' "$config_file" 2>/dev/null)
+        tools=$(jq -r '.editor.tools // {} | to_entries[] | "\(.key)\t\(.value)"' "$config_file" 2>/dev/null)
+    fi
+
+    if [ -z "$tools" ]; then
+        echo "No editors configured."
+        echo ""
+        echo "Add an editor:  pwt editor add <name> \"<command>\""
+        echo "Example:        pwt editor add sublime \"subl\""
+        echo ""
+        echo "Or set \$EDITOR environment variable."
+        [ -n "$EDITOR" ] && echo -e "Current \$EDITOR: ${GREEN}$EDITOR${NC}"
+        return
+    fi
+
+    echo "Configured editors:"
+    while IFS=$'\t' read -r name cmd; do
+        if [ "$name" = "$default_tool" ]; then
+            echo -e "  ${GREEN}$name${NC} (default) → $cmd"
+        else
+            echo -e "  $name → $cmd"
+        fi
+    done <<< "$tools"
+
+    [ -n "$EDITOR" ] && echo -e "\n\$EDITOR fallback: $EDITOR"
+}
+
+# Command: editor help
+cmd_editor_help() {
+    echo "Usage: pwt editor [name] [worktree]"
+    echo "       pwt editor:<name> [worktree]"
+    echo ""
+    echo "Open worktree in editor."
+    echo ""
+    echo "Commands:"
+    echo "  pwt editor add <name> \"<cmd>\"  Add an editor"
+    echo "  pwt editor remove <name>        Remove an editor"
+    echo "  pwt editor list                 List configured editors"
+    echo "  pwt editor:<name> --default     Set default editor"
+    echo ""
+    echo "Usage:"
+    echo "  pwt editor                      Open current in default editor"
+    echo "  pwt editor TICKET               Open worktree in default editor"
+    echo "  pwt editor:sublime              Open current in sublime"
+    echo "  pwt editor:sublime TICKET       Open worktree in sublime"
+    echo "  pwt editor @                    Open main app"
+    echo ""
+    echo "Resolution: config → \$EDITOR → error"
+}
+
 # Command: editor
 # Open worktree in configured editor
-# Usage: pwt editor [worktree]
-#   If no worktree specified, uses current directory or main app
+# Usage: pwt editor [name] [worktree]
+#        pwt editor:<name> [worktree]
 cmd_editor() {
+    local tool="${1:-}"
+    shift || true
+
+    # Handle subcommands
+    case "$tool" in
+        add)
+            cmd_editor_add "$@"
+            return
+            ;;
+        remove)
+            cmd_editor_remove "$@"
+            return
+            ;;
+        list)
+            cmd_editor_list
+            return
+            ;;
+        -h|--help|help)
+            cmd_editor_help
+            return
+            ;;
+        --default)
+            # pwt editor:<name> --default was called, name is in $tool from dispatch
+            echo "Usage: pwt editor:<name> --default"
+            return 1
+            ;;
+    esac
+
+    # Check for --default flag (pwt editor:<name> --default)
+    if [ "${1:-}" = "--default" ]; then
+        if [ -z "$tool" ]; then
+            echo "Usage: pwt editor:<name> --default"
+            return 1
+        fi
+        set_default_editor_tool "$tool"
+        echo -e "${GREEN}Default editor set to '$tool'${NC}"
+        return
+    fi
+
+    # Resolve editor command
+    local editor_cmd
+    editor_cmd=$(get_editor_cmd "$tool")
+
+    if [ -z "$editor_cmd" ]; then
+        echo -e "${RED}No editor configured${NC}"
+        echo ""
+        echo "Configure an editor:"
+        echo "  pwt editor add sublime \"subl\""
+        echo "  pwt editor add cursor \"/Applications/Cursor.app/Contents/Resources/app/bin/cursor\""
+        echo ""
+        echo "Or set \$EDITOR environment variable:"
+        echo "  export EDITOR=\"subl\""
+        return 1
+    fi
+
+    # Determine worktree path
     local target="${1:-}"
     local worktree_path
 
-    # Get editor from config or default to cursor
-    local editor_cmd
-    editor_cmd=$(get_project_config "$CURRENT_PROJECT" "editor" 2>/dev/null)
-    [ -z "$editor_cmd" ] && editor_cmd="${EDITOR:-cursor}"
-
-    if [ -z "$target" ] || [ "$target" = "@" ]; then
+    if [ "$target" = "@" ]; then
         worktree_path="$MAIN_APP"
+    elif [ -z "$target" ]; then
+        # No target: use current symlink if exists, else main app
+        local symlink_path=$(get_current_symlink_path)
+        if [ -L "$symlink_path" ]; then
+            worktree_path="$symlink_path"
+        else
+            worktree_path="$MAIN_APP"
+        fi
     else
         worktree_path=$(cmd_cd "$target" 2>/dev/null)
         if [ -z "$worktree_path" ] || [ ! -d "$worktree_path" ]; then
@@ -5562,9 +5803,14 @@ case "${1:-}" in
         shift  # remove "run" from args
         cmd_run "$@"
         ;;
-    editor|e)
+    editor|e|editor:*)
         require_project
-        cmd_editor "${2:-}"
+        _editor_tool=""
+        if [[ "$1" == editor:* ]]; then
+            _editor_tool="${1#editor:}"
+        fi
+        shift  # remove "editor" or "editor:tool" from args
+        cmd_editor "$_editor_tool" "$@"
         ;;
     ai|ai:*)
         require_project

@@ -65,7 +65,7 @@ cmd_create() {
                 echo "Usage: pwt create <branch> [base] [-- description]"
                 echo ""
                 echo "Arguments:"
-                echo "  branch          Branch name or ticket (e.g., ACME-1234)"
+                echo "  branch          Branch name or ticket (e.g., TICKET-1234)"
                 echo "  base            Base branch (default: master)"
                 echo "  -- description  Optional description after --"
                 echo ""

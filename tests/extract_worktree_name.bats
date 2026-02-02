@@ -51,9 +51,9 @@ setup() {
 }
 
 @test "preserves ticket format with dashes" {
-    run extract_worktree_name "feature/ACME-12345-some-description"
+    run extract_worktree_name "feature/TICKET-12345-some-description"
     [ "$status" -eq 0 ]
-    [ "$output" = "ACME-12345-some-description" ]
+    [ "$output" = "TICKET-12345-some-description" ]
 }
 
 @test "handles empty input" {

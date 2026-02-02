@@ -71,7 +71,7 @@ pwt create feature master --clone      # Creates clone instead
 ### macOS (Homebrew) - recommended
 
 ```bash
-brew tap jonasporto/tap
+brew tap jonasporto/pwt
 brew install pwt
 ```
 

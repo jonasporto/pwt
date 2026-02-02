@@ -1,0 +1,9 @@
+# Local development
+homebrew-pwt/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Test artifacts
+.bats-run-*

@@ -97,7 +97,7 @@ _pwt_is_project() {
     local input="$1"
     # Exact match
     [[ -d ~/.pwt/projects/$input ]] && return 0
-    # Partial match (e.g., "acme" matches "acme-app")
+    # Partial match (e.g., "ticket" matches "ticket-app")
     local matches=(~/.pwt/projects/${input}*(N))
     [[ ${#matches[@]} -eq 1 ]] && return 0
     # Check aliases in all project configs

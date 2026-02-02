@@ -342,12 +342,12 @@ teardown() {
 
 @test "pwt remove with exact name works" {
     cd "$TEST_REPO"
-    "$PWT_BIN" create ACME-12345-long-name HEAD
+    "$PWT_BIN" create TICKET-12345-long-name HEAD
 
     # Remove with exact name
-    run "$PWT_BIN" remove ACME-12345-long-name -y
+    run "$PWT_BIN" remove TICKET-12345-long-name -y
     [ "$status" -eq 0 ]
-    [ ! -d "$TEST_WORKTREES/ACME-12345-long-name" ]
+    [ ! -d "$TEST_WORKTREES/TICKET-12345-long-name" ]
 }
 
 # ============================================

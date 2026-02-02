@@ -10,11 +10,12 @@ Set Padding 15
 Set TypingSpeed 50ms
 
 # Use local pwt directly
-Env PATH "/Users/jonasporto/llm-tools/pwt/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-Env PWT_LIB "/Users/jonasporto/llm-tools/pwt/lib/pwt"
+Env PATH "./bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+Env PWT_LIB "./lib/pwt"
+Env HOME "/Users/demo"
 
 Hide
-Type "cd /Users/jonasporto/llm-tools/pwt"
+Type "cd ~/projects/pwt"
 Enter
 Sleep 500ms
 Show

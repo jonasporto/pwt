@@ -257,12 +257,12 @@ server() {
 }
 EOF
 
-    "$PWT_BIN" create ACME-12345 HEAD
+    "$PWT_BIN" create TICKET-12345 HEAD
 
     # Run with partial name
     run "$PWT_BIN" server 12345
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PARTIAL: ACME-12345"* ]]
+    [[ "$output" == *"PARTIAL: TICKET-12345"* ]]
 }
 
 @test "pwt server <worktree> fails for nonexistent worktree" {

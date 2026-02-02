@@ -71,7 +71,7 @@ bunx @jonasporto/pwt --help
 curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh | bash
 ```
 
-**Dependencies:** `git`, `jq` (required). `fzf`, `lsof` (optional).
+**Dependencies:** `git`, `jq` (required). `fzf`, `lsof` (optional but highly recommended).
 
 See [INSTALL.md](INSTALL.md) for shell setup and troubleshooting.
 

@@ -60,8 +60,10 @@ jobs:
           echo "Tarball SHA256: $SHA256"
 
       - name: Update Homebrew Tap
+        # Requires HOMEBREW_TAP_TOKEN secret with repo scope to push to homebrew-pwt
+        if: env.GH_TOKEN != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           # Clone homebrew-pwt
           git clone https://x-access-token:${GH_TOKEN}@github.com/jonasporto/homebrew-pwt.git /tmp/homebrew-pwt

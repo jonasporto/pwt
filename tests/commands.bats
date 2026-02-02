@@ -74,7 +74,7 @@ teardown() {
 @test "pwt doctor runs without error" {
     run "$PWT_BIN" doctor
     [ "$status" -eq 0 ]
-    [[ "$output" == *"git"* ]]
+    [[ "$output" == *"Git"* ]]
     [[ "$output" == *"jq"* ]]
 }
 

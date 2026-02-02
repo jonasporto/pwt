@@ -59,11 +59,11 @@ teardown() {
     [[ "$output" == *"$current_branch"* ]]
 }
 
-@test "pwt info shows Path for main app" {
+@test "pwt info shows Directory for main app" {
     cd "$TEST_REPO"
     run "$PWT_BIN" info @
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Path"* ]]
+    [[ "$output" == *"Directory"* ]]
     [[ "$output" == *"$TEST_REPO"* ]]
 }
 
@@ -272,7 +272,7 @@ teardown() {
     # Just verify our @ handling doesn't break
     run "$PWT_BIN" info @
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Path"* ]]
+    [[ "$output" == *"Directory"* ]]
     [[ "$output" == *"$TEST_REPO"* ]]
 }
 

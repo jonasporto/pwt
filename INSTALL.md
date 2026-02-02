@@ -16,8 +16,9 @@
 ### macOS (Homebrew) - recommended
 
 ```bash
-brew tap jonasporto/pwt
-brew install pwt
+brew install jonasporto/pwt/pwt
+# ou
+brew tap jonasporto/pwt && brew install pwt
 ```
 
 ### JavaScript (npm/bun)

@@ -8,7 +8,7 @@ setup() {
     setup_test_env
 
     # Create worktrees directory
-    export TEST_WORKTREES="$TEST_TEMP_DIR/worktrees"
+    export TEST_WORKTREES="$TEST_TEMP_DIR/test-project-worktrees"
     mkdir -p "$TEST_WORKTREES"
 
     # Create project config

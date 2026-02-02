@@ -32,7 +32,14 @@ PWT_META_FILE="$PWT_DIR/meta.json"
 PWT_PROJECTS_DIR="$PWT_DIR/projects"
 
 # Module library path (relative to this script)
-PWT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks to find actual script location (needed for npm installs)
+_pwt_source="${BASH_SOURCE[0]}"
+while [[ -L "$_pwt_source" ]]; do
+    _pwt_dir="$(cd -P "$(dirname "$_pwt_source")" && pwd)"
+    _pwt_source="$(readlink "$_pwt_source")"
+    [[ "$_pwt_source" != /* ]] && _pwt_source="$_pwt_dir/$_pwt_source"
+done
+PWT_SCRIPT_DIR="$(cd -P "$(dirname "$_pwt_source")" && pwd)"
 PWT_LIB="${PWT_LIB:-$PWT_SCRIPT_DIR/../lib/pwt}"
 
 # Load a module from lib/pwt/

@@ -4,7 +4,7 @@
 
 [![Tests](https://github.com/jonasporto/pwt/actions/workflows/test.yml/badge.svg)](https://github.com/jonasporto/pwt/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.1-green.svg)](CHANGELOG.md)
 
 ✅ Work in parallel
 — multiple projects, or parallel changes within the same project
@@ -26,19 +26,37 @@
 ## Install
 
 ### Homebrew
+
 ```bash
-brew tap jonasporto/pwt
-brew install pwt
+brew install jonasporto/pwt/pwt
 ```
 
-### npm / bun
+### npm
+
 ```bash
 npm i -g @jonasporto/pwt
-# or
+```
+
+### npx (sem instalar)
+
+```bash
+npx @jonasporto/pwt --help
+```
+
+### bun
+
+```bash
 bun add -g @jonasporto/pwt
 ```
 
+### bunx (sem instalar)
+
+```bash
+bunx @jonasporto/pwt --help
+```
+
 ### curl
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh | bash
 ```

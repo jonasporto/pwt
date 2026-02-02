@@ -1,6 +1,6 @@
 {
   "name": "@jonasporto/pwt",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Power Worktrees - Git worktree manager for multiple projects",
   "main": "bin/pwt",
   "bin": {

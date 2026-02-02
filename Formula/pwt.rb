@@ -4,7 +4,7 @@
 class Pwt < Formula
   desc "Power Worktrees - Git worktree manager for multiple projects"
   homepage "https://github.com/jonasporto/pwt"
-  url "https://github.com/jonasporto/pwt/archive/refs/tags/v0.1.2"
+  url "https://github.com/jonasporto/pwt/archive/refs/tags/v0.1.3"
   sha256 "PLACEHOLDER"  # Auto-updated by release workflow
   license "MIT"
   head "https://github.com/jonasporto/pwt.git", branch: "main"

@@ -6,7 +6,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](CHANGELOG.md)
 
-![pwt demo](demo.gif)
+## Demos
+
+![Quick Start](examples/gifs/01-quickstart.gif)
+![Use Symlink](examples/gifs/02-use-symlink.gif)
+![Status TUI](examples/gifs/03-status-tui.gif)
+
+More demos in `examples/` (tapes in `examples/tapes`, gifs in `examples/gifs`, how to record in `examples/README.md`).
 
 ---
 
@@ -41,6 +47,28 @@ editor ──> current ──> TICKET-123
 - Project logic lives in `Pwtfile` (setup/server/teardown)
 
 pwt manages git worktrees with port allocation and project isolation. It's framework-agnostic: Rails, Node, Go, Python — pwt doesn't care. Your project-specific setup lives in `Pwtfile`, not in pwt's core.
+
+---
+
+## The pain it removes
+
+When you have multiple projects in flight, the mental model collapses. pwt brings back one-project-at-a-time clarity without shutting anything down.
+It does not fix every app or tab, but it makes the local project story boring again: one current path, explicit worktree state, predictable ports.
+
+- **"Which terminal tab am I in?"** → `pwt ps1`, `pwt current`, and `pwt status` make the active worktree explicit.
+- **"What is using :3000?"** → per-worktree ports + `pwt tree --ports` and `pwt fix-port` to resolve conflicts.
+- **"Where is the dev server for this branch?"** → `pwt server` runs the right command from your `Pwtfile`.
+- **"Too many editor windows"** → `pwt use` swaps a stable `current` symlink; keep one editor open.
+- **"Setup is tribal knowledge"** → `Pwtfile` codifies setup/teardown in the repo.
+- **"Old branches everywhere"** → `pwt auto-remove` cleans merged worktrees safely.
+
+## LLM-friendly by default
+
+pwt is designed to be easy for humans *and* agents:
+
+- **Scriptable output:** `pwt list --porcelain` and `pwt current --json`
+- **One-shot docs:** `pwt help all` (full concepts + commands)
+- **Scoped execution:** `pwt run` / `pwt ai` run tools in the correct worktree
 
 ---
 
@@ -208,28 +236,32 @@ teardown() {
 | `init [url]` | Initialize project (clone from URL or configure current repo) |
 | `create <branch> [base] [desc]` | Create new worktree |
 | `list [flags]` | List worktrees and status |
+| `tree [flags]` | Visual tree view |
 | `status [flags]` | Interactive TUI dashboard (like htop) |
-| `select [flags]` | Interactive worktree selector with preview (requires fzf) |
-| `pick [--dirty]` | Interactive selector + auto-use |
 | `info [worktree]` | Show worktree details |
-| `remove [worktree] [flags]` | Remove worktree |
-| `cd [worktree\|@\|-]` | Navigate to worktree (@ main, - previous) |
-| `use <worktree>` | Switch current symlink |
+| `cd [worktree\|@\|-] [--select]` | Navigate to worktree (--select for fzf picker) |
+| `use <worktree> [--select]` | Switch current symlink (--select for fzf picker) |
 | `current [flags]` | Show current worktree |
-| `ps1` | Fast prompt helper |
+| `ps1` | Fast prompt helper (for shell prompts) |
+| `remove [worktree] [flags]` | Remove worktree |
 | `run [worktree] <cmd>` | Run command in worktree |
 | `for-each <cmd>` | Run command in all worktrees |
+| `server [worktree]` | Start development server |
 | `editor [worktree]` | Open worktree in editor |
 | `ai [worktree] [-- args]` | Start AI tool in worktree |
 | `open [worktree]` | Open worktree in Finder |
 | `diff <wt1> [wt2]` | Show diff between worktrees |
 | `copy <src> <dest> <patterns...>` | Copy files between worktrees |
-| `server` | Start development server |
 | `fix-port [worktree]` | Resolve port conflict |
 | `auto-remove [target] [flags]` | Remove merged worktrees |
-| `tree [flags]` | Visual tree view |
+| `restore [backup] [worktree]` | Recover backed up changes from trash |
 | `doctor` | Check system health |
+| `meta [action] [args]` | Manage worktree metadata |
+| `project [action] [args]` | Manage project configs |
+| `config <key> [value]` | Configure current project |
 | `plugin [action]` | Manage plugins |
+| `shell-init [shell]` | Output shell integration code |
+| `setup-shell` | Install shell integration automatically |
 | `help [topic]` | Show help (topics: concepts, commands, navigation, pwtfile, all) |
 
 ### Help Topics
@@ -518,8 +550,6 @@ pwt --project myproject ...    # Explicit flag
 | jq | ✅ | JSON metadata storage |
 | lsof | Recommended | Port conflict detection |
 | fzf | Recommended | Interactive selection |
-| bun/node | Optional | Pwtfile.js support |
-| ruby | Optional | Pwtfile.rb support |
 
 ---
 
@@ -531,13 +561,13 @@ pwt gives you the rvm experience without the dangerous hacks.
 
 **What pwt does instead:**
 - **Real directories** — each worktree is a full working copy
-- **Smart switcher** — `pwt select` with fzf, preview, keybindings
+- **Smart switcher** — `pwt cd --select` with fzf, preview, keybindings
 - **Hidden paths** — worktrees live in `project-worktrees/`, out of your way
 - **Visible context** — `$PWT_WORKTREE`, statusline, prompt integration
 - **Session-aware** — `pwt server`, `pwt editor` know where you are
 
 ```bash
-pwt select              # Pick interactively
+pwt cd --select         # Pick interactively
 pwt cd                  # Return to last-used
 pwt current --name      # Which worktree am I in?
 ```
@@ -565,7 +595,7 @@ pwt cd -              # Go back
 
 # Switch symlink (no new windows)
 pwt use TICKET-456
-pwt pick              # Interactive + auto-use
+pwt use --select      # Interactive picker
 
 # Run commands
 pwt run TICKET-123 npm test
@@ -609,6 +639,193 @@ The symlink is a convenience for editing, not a safety mechanism.
 - **FAQ:** [FAQ.md](FAQ.md)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 - **Install guide:** [INSTALL.md](INSTALL.md)
+
+---
+
+## Command Reference
+
+### Project Commands
+
+Commands that operate at project level (multi-project management).
+
+| Command | Options | Description |
+|---------|---------|-------------|
+| `init [url]` | | Initialize project from current repo or clone from URL |
+| `project list` | | List all configured projects |
+| `project init <name>` | | Initialize new project config |
+| `project show [name]` | | Show project configuration |
+| `project set <key> <value>` | | Update project config |
+| `project path [name]` | | Print project config directory |
+| `project alias [alias]` | `--clear` | Set or show project alias |
+| `config <key> [value]` | | Configure current project (main_app, worktrees_dir, branch_prefix, base_port) |
+| `doctor` | | Check system health and configuration |
+| `shell-init [shell]` | | Output shell integration code (zsh, bash, fish) |
+| `setup-shell` | | Install shell integration automatically |
+| `help [topic]` | | Show help (concepts, commands, navigation, pwtfile, all) |
+
+### Worktree Commands
+
+Commands that operate on worktrees within a project.
+
+#### `create <name> [base] [desc]` — Create new worktree
+
+| Option | Description |
+|--------|-------------|
+| `-e`, `--editor` | Open editor after creation |
+| `-a`, `--ai` | Start AI tool after creation |
+| `--from <ref>` | Create from specific ref (tag, commit, branch) |
+| `--from-current` | Create from current branch |
+| `--dry-run`, `-n` | Show what would be created without doing it |
+| `--clone` | Use git clone instead of worktree (for submodules) |
+
+#### `list` — List worktrees
+
+| Option | Description |
+|--------|-------------|
+| `-v`, `--verbose` | Show detailed info (branch, port, status) |
+| `--dirty` | Only show worktrees with uncommitted changes |
+| `--porcelain` | Machine-readable output |
+| `--names` | Output only worktree names (for scripts) |
+| `statusline` | Compact output for shell prompts |
+
+#### `tree` — Visual tree view
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Include all projects |
+| `--dirty` | Highlight dirty worktrees |
+| `--ports`, `-p` | Show allocated ports |
+
+#### `status` — Interactive TUI dashboard
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Show all projects (global view) |
+
+#### `cd [worktree|@|-]` — Navigate to worktree
+
+| Option | Description |
+|--------|-------------|
+| `--select`, `-s` | Interactive fzf picker |
+| `@` | Navigate to main app |
+| `-` | Navigate to previous worktree (like `cd -`) |
+
+#### `use <worktree>` — Set current symlink
+
+| Option | Description |
+|--------|-------------|
+| `--select`, `-s` | Interactive fzf picker |
+
+#### `current` — Show current worktree
+
+| Option | Description |
+|--------|-------------|
+| `--name` | Output only the worktree name |
+| `--resolved` | Show actual path (not symlink) |
+| `--json` | JSON output with full metadata |
+
+#### `remove [worktree]` — Remove worktree
+
+| Option | Description |
+|--------|-------------|
+| `--with-branch` | Also delete the branch (if merged) |
+| `--force-branch` | Force delete branch (even if not merged) |
+| `--kill-port` | Kill processes using the allocated port |
+| `--kill-sidekiq` | Kill Sidekiq processes |
+| `--kill-all` | Kill both port and Sidekiq processes |
+| `-y`, `--yes` | Skip confirmation prompts |
+
+#### `auto-remove [target]` — Remove merged worktrees
+
+| Option | Description |
+|--------|-------------|
+| `--execute` | Actually remove (default is dry-run) |
+| `--dry-run` | Show what would be removed |
+
+#### Other worktree commands
+
+| Command | Description |
+|---------|-------------|
+| `info [worktree]` | Show worktree details |
+| `ps1` | Fast prompt helper (no git ops, O(1)) |
+| `run [worktree] <cmd>` | Run command in worktree context |
+| `for-each <cmd>` | Run command in all worktrees |
+| `server [worktree]` | Start dev server (from Pwtfile) |
+| `editor [worktree]` | Open worktree in editor |
+| `ai [worktree] [-- args]` | Start AI tool in worktree |
+| `open [worktree]` | Open worktree in Finder |
+| `diff <wt1> [wt2]` | Show diff between worktrees |
+| `copy <src> <dest> <patterns...>` | Copy files between worktrees |
+| `fix-port [worktree]` | Resolve port conflict |
+| `restore [backup] [worktree]` | Recover backed up changes from trash |
+| `port [worktree]` | Get allocated port |
+
+#### `meta` — Manage worktree metadata
+
+| Subcommand | Description |
+|------------|-------------|
+| `meta list` | List all metadata |
+| `meta show <worktree>` | Show metadata for worktree |
+| `meta set <worktree> <key> <value>` | Update metadata field |
+| `meta import` | Import existing worktrees |
+
+#### `ai` — AI coding tools
+
+Start AI tools in worktree context. Supports multiple tools with custom configurations.
+
+| Command | Description |
+|---------|-------------|
+| `ai [worktree]` | Run default AI tool in worktree |
+| `ai:<tool> [worktree]` | Run specific tool (e.g., `ai:gemini`) |
+| `ai add <name> "<cmd>"` | Add a tool with custom command |
+| `ai remove <name>` | Remove a tool |
+| `ai list` | List configured tools |
+| `ai:<name> --default` | Set as default tool |
+| `ai help` | Show AI command help |
+
+**Examples:**
+```bash
+pwt ai                        # Run default tool in main
+pwt ai TICKET-123             # Run default in worktree
+pwt ai:gemini                 # Run gemini in main
+pwt ai:gemini TICKET-123      # Run gemini in worktree
+pwt ai:codex -- --full-auto   # Run with extra args
+pwt ai add mcp "claude --mcp" # Add custom tool
+```
+
+**Resolution order:** config → PATH → error
+
+#### `plugin` — Manage plugins
+
+| Subcommand | Description |
+|------------|-------------|
+| `plugin list` | List installed plugins |
+| `plugin install <name>` | Install a plugin |
+| `plugin remove <name>` | Remove a plugin |
+| `plugin create <name>` | Create new plugin from template |
+| `plugin path` | Show plugins directory |
+
+### Special Targets
+
+| Target | Description |
+|--------|-------------|
+| `@` | Main app directory (e.g., `pwt cd @`) |
+| `-` | Previous worktree (e.g., `pwt cd -`) |
+| `current` | Stable symlink path (e.g., `pwt cd current`) |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `PWT_WORKTREE` | Current worktree name |
+| `PWT_WORKTREE_PATH` | Full path to worktree |
+| `PWT_PORT` | Allocated port number |
+| `PWT_BRANCH` | Git branch name |
+| `PWT_PROJECT` | Project name |
+| `PWT_TICKET` | Extracted ticket number |
+| `PWT_ARGS` | Arguments passed to Pwtfile commands |
+
+---
 
 ## Contributing
 

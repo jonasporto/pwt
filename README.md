@@ -6,6 +6,14 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.1-green.svg)](CHANGELOG.md)
 
+## Quick demo
+
+![pwt demo](demo.gif)
+
+[Watch in higher quality (mp4)](demo.mp4)
+
+---
+
 ✅ Work in parallel
 — multiple projects, or parallel changes within the same project
 

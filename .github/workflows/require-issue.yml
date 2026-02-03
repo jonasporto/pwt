@@ -16,6 +16,20 @@ jobs:
         with:
           script: |
             const pr = context.payload.pull_request;
+            const author = pr.user.login;
+
+            // Skip check for repo owner and collaborators
+            const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: author
+            });
+
+            if (['admin', 'write'].includes(permissionLevel.permission)) {
+              console.log(`Skipping check for ${author} (${permissionLevel.permission} access)`);
+              return;
+            }
+
             const body = pr.body || '';
 
             // Look for issue references: #123, fixes #123, closes #123, etc.

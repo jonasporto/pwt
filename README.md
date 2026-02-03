@@ -212,7 +212,6 @@ Create your own: `pwt plugin create mycommand`
 
 ## Contributing
 
-```bash
-make test     # Run tests
-make lint     # Check syntax
-```
+Contributions welcome! Please [open an issue](https://github.com/jonasporto/pwt/issues/new) first to discuss changes.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.

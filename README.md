@@ -39,16 +39,6 @@
 brew install jonasporto/pwt/pwt
 ```
 
-or:
-
-```bash
-brew tap jonasporto/pwt
-```
-
-```bash
-brew install pwt
-```
-
 ### npm
 
 ```bash
@@ -88,44 +78,39 @@ See [INSTALL.md](INSTALL.md) for shell setup and troubleshooting.
 ## Quick Start
 
 ```bash
-cd ~/Projects/myapp
-pwt init                              # Initialize project
-
-pwt create TICKET-123 main "fix bug"  # Create worktree
-pwt use TICKET-123                    # Switch context
-pwt use --select                      # Interactive picker
-pwt ps1                               # → pwt@TICKET-123
+cd ~/projects/myapp
+pwt init                        # Initialize project
+pwt add feat/user-auth          # Create worktree from branch
+pwt cd --select                 # Interactive worktree picker
+pwt list                        # List worktrees with git status
 ```
 
-### How it feels
+### Custom commands (Pwtfile)
 
 ```bash
-# Open your editor once
-pwt editor
-
-# Switch context
-pwt use TICKET-456
-pwt use TICKET-789
+pwt editor                      # Open editor in current worktree
+pwt build                       # Run build command
+pwt server                      # Start dev server (auto port allocation)
+pwt ai                          # Start AI coding assistant
 ```
-
-Your editor never closes. The code underneath it changes.
-
-That's the whole idea.
 
 ---
 
 ## Multi-Project
 
 ```bash
-# Operate on any project from anywhere
-pwt myapp list
-pwt myapp create TICKET-123 main
-pwt myapp use TICKET-123
+# See all configured projects
+pwt project
 
-# Run commands in a specific worktree
-pwt myapp TICKET-123 migrate          # Pwtfile command
-pwt myapp TICKET-123 -- npm test      # Shell command
-pwt myapp @ console                   # @ = main app
+# Jump to a worktree in another project
+pwt backend cd security-patch
+
+# Quick switch to another project's main
+pwt backend
+
+# Run commands in any project
+pwt backend build
+pwt backend server
 ```
 
 ---
@@ -171,15 +156,16 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 
 | Command | Description |
 |---------|-------------|
-| `create <name> [base]` | Create worktree (`-e` editor, `-a` AI, `--clone`) |
-| `list` | List worktrees (`--dirty`, `--porcelain`) |
-| `use <worktree>` | Switch current symlink |
-| `cd <worktree>` | Navigate to worktree (`@` main, `-` previous) |
-| `remove <worktree>` | Remove worktree (`--with-branch`) |
-| `run <wt> <cmd>` | Run command in worktree |
+| `init` | Initialize project in current repo |
+| `add <branch>` | Create worktree from branch (`-e` editor, `-a` AI) |
+| `list` | List worktrees with git status (`--dirty`) |
+| `cd <worktree>` | Navigate to worktree (`@` main, `-` previous, `--select`) |
+| `project` | List all configured projects |
+| `<project> cd <wt>` | Jump to worktree in another project |
+| `editor` | Open editor in current worktree |
 | `server` | Start dev server (from Pwtfile) |
-| `status` | Interactive TUI dashboard |
-| `tree --ports` | Visual tree with ports |
+| `ai` | Start AI coding assistant |
+| `remove <worktree>` | Remove worktree (`--with-branch`) |
 
 ---
 

@@ -39,14 +39,29 @@ Once your issue is approved:
 git clone https://github.com/YOUR_USERNAME/pwt.git
 cd pwt
 
-# Run tests
-bats tests/
-
-# Run a specific test file
-bats tests/commands.bats
-
 # Run pwt from source
 ./bin/pwt help
+```
+
+## Running Tests
+
+Tests use [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System).
+
+```bash
+# Install BATS (macOS)
+brew install bats-core
+
+# Install BATS (Linux)
+sudo apt-get install bats
+
+# Run all tests
+bats tests/
+
+# Run specific test file
+bats tests/commands.bats
+
+# Run tests matching pattern
+bats tests/pwtfile.bats -f "PWT_ARGS"
 ```
 
 ## Code Style
@@ -55,6 +70,7 @@ bats tests/commands.bats
 - Variables: `UPPER_SNAKE_CASE` for exports, `lower_snake_case` for locals
 - Always provide default values for exported variables: `export VAR="${VAR:-}"`
 - Add tests for new functionality
+- Comments: Explain "why", not "what"
 
 ## Questions?
 

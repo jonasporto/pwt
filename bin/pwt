@@ -78,10 +78,8 @@ PWT_VERSION_CACHE_TTL=86400  # 24 hours
 
 # Detect installation method based on binary path
 _pwt_install_method() {
-    local bin_path
-    bin_path=$(command -v pwt 2>/dev/null || echo "$0")
-
-    case "$bin_path" in
+    # Use PWT_SCRIPT_DIR which is already symlink-resolved at startup
+    case "$PWT_SCRIPT_DIR" in
         */Cellar/pwt/*|*/homebrew/*)
             echo "brew"
             ;;

@@ -74,7 +74,7 @@ BASE_PORT=5000
 PWT_VERSION="0.1.8"
 PWT_VERSION_CHECK_URL="https://api.github.com/repos/jonasporto/pwt/releases/latest"
 PWT_VERSION_CACHE="$PWT_DIR/version-check"
-PWT_VERSION_CACHE_TTL=86400  # 24 hours
+PWT_VERSION_CACHE_TTL=18000  # 5 hours
 
 # Detect installation method based on binary path
 _pwt_install_method() {

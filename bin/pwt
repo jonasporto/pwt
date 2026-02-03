@@ -72,6 +72,82 @@ BASE_PORT=5000
 
 # Version
 PWT_VERSION="0.1.6"
+PWT_VERSION_CHECK_URL="https://api.github.com/repos/jonasporto/pwt/releases/latest"
+PWT_VERSION_CACHE="$PWT_DIR/version-check"
+PWT_VERSION_CACHE_TTL=86400  # 24 hours
+
+# Detect installation method based on binary path
+_pwt_install_method() {
+    local bin_path
+    bin_path=$(command -v pwt 2>/dev/null || echo "$0")
+
+    case "$bin_path" in
+        */Cellar/pwt/*|*/homebrew/*)
+            echo "brew"
+            ;;
+        */node_modules/*|*/.npm/*|*/.nvm/*)
+            echo "npm"
+            ;;
+        *)
+            echo "curl"
+            ;;
+    esac
+}
+
+# Get upgrade command based on installation method
+_pwt_upgrade_command() {
+    case "$(_pwt_install_method)" in
+        brew) echo "brew upgrade pwt" ;;
+        npm)  echo "npm i -g @jonasporto/pwt@latest" ;;
+        curl) echo "curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh | bash" ;;
+    esac
+}
+
+# Check for new version (cached)
+_pwt_check_update() {
+    local cache_file="$PWT_VERSION_CACHE"
+    local now latest_version cache_time
+
+    mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
+    now=$(date +%s)
+
+    # Check cache
+    if [[ -f "$cache_file" ]]; then
+        cache_time=$(head -1 "$cache_file" 2>/dev/null || echo "0")
+        if (( now - cache_time < PWT_VERSION_CACHE_TTL )); then
+            tail -1 "$cache_file" 2>/dev/null
+            return
+        fi
+    fi
+
+    # Fetch latest version (background-safe, no blocking)
+    latest_version=$(curl -sf --max-time 2 "$PWT_VERSION_CHECK_URL" 2>/dev/null | grep -o '"tag_name": *"v[^"]*"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/' || echo "")
+
+    if [[ -n "$latest_version" ]]; then
+        echo "$now" > "$cache_file"
+        echo "$latest_version" >> "$cache_file"
+        echo "$latest_version"
+    fi
+}
+
+# Compare versions (returns 0 if $1 < $2)
+_pwt_version_lt() {
+    [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s' "$1" "$2" | sort -V | head -1)" == "$1" ]]
+}
+
+# Show version with update check
+_pwt_show_version() {
+    echo "pwt version $PWT_VERSION"
+
+    local latest
+    latest=$(_pwt_check_update)
+
+    if [[ -n "$latest" ]] && _pwt_version_lt "$PWT_VERSION" "$latest"; then
+        echo ""
+        echo -e "${YELLOW}Update available: $latest${NC}"
+        echo -e "Run: ${GREEN}$(_pwt_upgrade_command)${NC}"
+    fi
+}
 
 # Exit codes (for scripting)
 EXIT_SUCCESS=0
@@ -5550,7 +5626,7 @@ cmd_setup_shell() {
 # Handle short flags that look like commands (before the main loop)
 case "${1:-}" in
     -v|-V)
-        echo "pwt version $PWT_VERSION"
+        _pwt_show_version
         exit 0
         ;;
     -h)
@@ -5575,7 +5651,7 @@ while [[ "${1:-}" == --* ]]; do
             break
             ;;
         --version)
-            echo "pwt version $PWT_VERSION"
+            _pwt_show_version
             exit 0
             ;;
         --quiet)
@@ -5884,7 +5960,7 @@ case "${1:-}" in
         cmd_port "${2:-}"
         ;;
     version)
-        echo "pwt version $PWT_VERSION"
+        _pwt_show_version
         ;;
     "")
         # No command: if project was explicitly specified, cd to main

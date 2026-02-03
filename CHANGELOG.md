@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-02-03
+
+### Added
+- Quick demo video (GIF and MP4) in README
+
+### Changed
+- Updated README with demo-aligned command examples
+- Simplified Everyday Commands table
+
+### Removed
+- Formula folder (moved to separate homebrew-pwt tap)
+- Examples folder (replaced by main demo)
+
 ## [0.1.0] - 2026-02-02
 
 ### Added

@@ -62,12 +62,12 @@ cmd_create() {
                 break
                 ;;
             -h|--help)
-                echo "Usage: pwt create <branch> [base] [-- description]"
+                echo "Usage: pwt create <branch> [base] [\"description\"]"
                 echo ""
                 echo "Arguments:"
                 echo "  branch          Branch name or ticket (e.g., TICKET-1234)"
                 echo "  base            Base branch (default: master)"
-                echo "  -- description  Optional description after --"
+                echo "  \"description\"   Optional description (quoted text with spaces)"
                 echo ""
                 echo "Options:"
                 echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
@@ -85,10 +85,19 @@ cmd_create() {
                 ;;
             *)
                 # Positional arguments: branch, base_ref, description
+                # Heuristic: if arg contains spaces, it's a description
+                # (git branch names cannot have spaces)
                 if [ -z "$branch" ]; then
                     branch="$1"
                 elif [ -z "$base_ref" ]; then
-                    base_ref="$1"
+                    if [[ "$1" == *" "* ]]; then
+                        # Has spaces → description, not a branch
+                        # Default to DEFAULT_BRANCH as base
+                        description="$1"
+                        base_ref="$DEFAULT_BRANCH"
+                    else
+                        base_ref="$1"
+                    fi
                 else
                     # Accumulate all remaining positional args as description
                     if [ -z "$description" ]; then

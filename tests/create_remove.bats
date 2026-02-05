@@ -332,6 +332,36 @@ teardown() {
     [ -d "$TEST_WORKTREES/TEST-SPECIAL" ]
 }
 
+@test "pwt create with quoted description without base uses default base" {
+    cd "$TEST_REPO"
+
+    # Add a remote so DEFAULT_BRANCH detection works
+    git remote add origin "$TEST_REPO" 2>/dev/null || true
+    git fetch origin --quiet 2>/dev/null || true
+
+    # "auth login bug" has spaces → should be treated as description, not base
+    run "$PWT_BIN" create TEST-QUOTED "auth login bug"
+
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/TEST-QUOTED" ]
+
+    # Description should be saved in metadata
+    local desc=$("$PWT_BIN" meta show TEST-QUOTED | grep -o '"description": *"[^"]*"' | sed 's/.*: *"//;s/"$//')
+    [[ "$desc" == *"auth login bug"* ]]
+}
+
+@test "pwt create with base and quoted description works" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" create TEST-BASEDESC HEAD "fix session timeout"
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/TEST-BASEDESC" ]
+
+    # Description should be saved
+    local desc=$("$PWT_BIN" meta show TEST-BASEDESC | grep -o '"description": *"[^"]*"' | sed 's/.*: *"//;s/"$//')
+    [[ "$desc" == *"fix session timeout"* ]]
+}
+
 @test "pwt create with very long branch name" {
     cd "$TEST_REPO"
     local long_name="TEST-$(head -c 50 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 50)"

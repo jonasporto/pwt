@@ -3260,6 +3260,28 @@ HELP
 # Usage: pwt alias [<alias>|--clear]
 cmd_alias() {
     local new_alias="${1:-}"
+
+    if [[ "$new_alias" == "-h" || "$new_alias" == "--help" ]]; then
+        echo "Usage: pwt alias [<name>|--clear]"
+        echo ""
+        echo "Set a short alias for the current project."
+        echo ""
+        echo "Arguments:"
+        echo "  name       New alias (must not conflict with commands)"
+        echo "  --clear    Remove current alias"
+        echo "  (none)     Show current alias"
+        echo ""
+        echo "Examples:"
+        echo "  pwt alias            # show current alias"
+        echo "  pwt alias api        # set alias to 'api'"
+        echo "  pwt alias --clear    # remove alias"
+        echo ""
+        echo "Once aliased, use it anywhere:"
+        echo "  pwt api list         # same as pwt my-long-project list"
+        echo "  pwt api cd TICKET    # same as pwt my-long-project cd TICKET"
+        return 0
+    fi
+
     local config_file="$PROJECTS_DIR/$CURRENT_PROJECT/config.json"
 
     if [ ! -f "$config_file" ]; then
@@ -3574,7 +3596,7 @@ cmd_run() {
     local worktree_path=""
 
     # Try to resolve first arg as worktree
-    local maybe_wt="$1"
+    local maybe_wt="${1%/}"
     local maybe_path=""
 
     if [ "$maybe_wt" = "@" ]; then
@@ -4274,7 +4296,24 @@ cmd_ai() {
 # Usage: pwt open [worktree]
 cmd_open() {
     local target="${1:-}"
+    target="${target%/}"
     local worktree_path
+
+    if [[ "$target" == "-h" || "$target" == "--help" ]]; then
+        echo "Usage: pwt open [worktree]"
+        echo ""
+        echo "Open a worktree directory in Finder."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree   Target worktree (optional, default: main app)"
+        echo "  @          Main app directory"
+        echo ""
+        echo "Examples:"
+        echo "  pwt open              # open main app"
+        echo "  pwt open TICKET-123   # open worktree"
+        echo "  pwt open @            # open main app"
+        return 0
+    fi
 
     if [ -z "$target" ] || [ "$target" = "@" ]; then
         worktree_path="$MAIN_APP"
@@ -4570,7 +4609,7 @@ cmd_select() {
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
-            --preview|-p)
+            -p|--preview)
                 show_preview=true
                 shift
                 ;;
@@ -4578,11 +4617,30 @@ cmd_select() {
                 show_preview=false
                 shift
                 ;;
-            --dirty)
+            -d|--dirty)
                 show_dirty_only=true
                 shift
                 ;;
-            --query|-q)
+            -h|--help)
+                echo "Usage: pwt select [options]"
+                echo ""
+                echo "Interactive worktree selector with fzf."
+                echo ""
+                echo "Options:"
+                echo "  -p, --preview     Show preview pane (default)"
+                echo "  --no-preview      Hide preview pane"
+                echo "  -d, --dirty       Only show worktrees with changes"
+                echo "  -q, --query STR   Pre-fill search query"
+                echo ""
+                echo "Keybindings:"
+                echo "  Enter     Navigate to selected worktree"
+                echo "  Ctrl+E    Open in editor"
+                echo "  Ctrl+A    Open AI assistant"
+                echo "  Ctrl+O    Open in Finder"
+                echo "  Esc       Cancel"
+                return 0
+                ;;
+            -q|--query)
                 initial_query="$2"
                 shift 2
                 ;;
@@ -5246,7 +5304,16 @@ cmd_help() {
             show_help_all
             ;;
         # Command-specific help: pwt help <command> -> pwt <command> help
-        meta|cd|create|remove|list|select|use|current|info|port|server|ai|plugin|config|status|run|restore)
+        # Map aliases to canonical command name
+        add) cmd_create --help ;;
+        rm) cmd_remove --help ;;
+        ls) cmd_list --help ;;
+        show) cmd_info --help ;;
+        cp) cmd_copy --help ;;
+        fix) cmd_repair --help ;;
+        cleanup) cmd_auto_remove --help ;;
+        m) cmd_meta --help ;;
+        meta|cd|create|remove|list|select|use|current|info|port|server|ai|plugin|config|status|run|restore|open|alias|diff|copy|repair|doctor)
             "cmd_$topic" --help
             ;;
         *)
@@ -6065,7 +6132,7 @@ case "${1:-}" in
         require_project
         cmd_fix_port "${2:-}"
         ;;
-    meta)
+    meta|m)
         cmd_meta "${2:-}" "${3:-}" "${4:-}" "${5:-}"
         ;;
     alias)

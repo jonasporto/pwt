@@ -67,6 +67,10 @@ complete -c pwt -n __pwt_needs_command -a restore -d 'Recover from trash'
 complete -c pwt -n __pwt_needs_command -a fix-port -d 'Resolve port conflict'
 complete -c pwt -n __pwt_needs_command -a doctor -d 'Check system health'
 complete -c pwt -n __pwt_needs_command -a meta -d 'Manage metadata'
+complete -c pwt -n __pwt_needs_command -a m -d 'Manage metadata (alias)'
+complete -c pwt -n __pwt_needs_command -a alias -d 'Set project alias'
+complete -c pwt -n __pwt_needs_command -a steps -d 'List Pwtfile steps'
+complete -c pwt -n __pwt_needs_command -a step -d 'Run a Pwtfile step'
 complete -c pwt -n __pwt_needs_command -a project -d 'Manage projects'
 complete -c pwt -n __pwt_needs_command -a config -d 'Configure project'
 complete -c pwt -n __pwt_needs_command -a port -d 'Get port for worktree'
@@ -119,6 +123,7 @@ complete -c pwt -n '__pwt_using_command add' -a '(__pwt_branches)' -d 'Branch'
 
 # Meta subcommands
 complete -c pwt -n '__pwt_using_command meta' -a 'list show set import' -d 'Action'
+complete -c pwt -n '__pwt_using_command m' -a 'list show set import' -d 'Action'
 
 # Project subcommands
 complete -c pwt -n '__pwt_using_command project' -a 'list init show set path alias' -d 'Action'

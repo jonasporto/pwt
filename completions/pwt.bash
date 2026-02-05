@@ -1,7 +1,7 @@
 # pwt - Power Worktrees bash completion
 # Install: source this file or add to /etc/bash_completion.d/
 
-_pwt_commands="init create add list ls tree status cd use current info show remove rm server s run for-each editor e ai open diff copy repair fix auto-remove cleanup restore fix-port doctor meta project config port plugin claude-setup setup-shell shell-init help version"
+_pwt_commands="init create add list ls tree status cd use current info show remove rm server s run for-each editor e ai open diff copy repair fix auto-remove cleanup restore fix-port doctor meta m project config port plugin claude-setup setup-shell shell-init steps step alias help version"
 
 _pwt_meta_actions="list show set import"
 _pwt_project_actions="list init show set path alias"
@@ -81,8 +81,8 @@ _pwt() {
         auto-remove|cleanup)
             COMPREPLY=($(compgen -W "$(_pwt_get_branches)" -- "$cur"))
             ;;
-        meta)
-            if [[ "$prev" == "meta" ]]; then
+        meta|m)
+            if [[ "$prev" == "meta" ]] || [[ "$prev" == "m" ]]; then
                 COMPREPLY=($(compgen -W "$_pwt_meta_actions" -- "$cur"))
             elif [[ "$prev" == "show" ]] || [[ "$prev" == "set" ]]; then
                 COMPREPLY=($(compgen -W "$(_pwt_get_worktrees)" -- "$cur"))

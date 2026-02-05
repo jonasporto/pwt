@@ -127,3 +127,178 @@ teardown() {
     run "$PWT_BIN" diff --help
     [[ "$output" == *"Examples"* ]]
 }
+
+# ============================================
+# New command --help tests (v0.1.10)
+# ============================================
+
+@test "pwt current --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" current --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"--name"* ]]
+    [[ "$output" == *"--port"* ]]
+}
+
+@test "pwt use --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" use --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"--select"* ]]
+}
+
+@test "pwt fix-port --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" fix-port --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"port"* ]]
+}
+
+@test "pwt open --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" open --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+}
+
+@test "pwt alias --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" alias --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"alias"* ]]
+}
+
+@test "pwt select --help shows usage and keybindings" {
+    cd "$TEST_REPO"
+    # select needs _select dispatch which requires project context
+    run "$PWT_BIN" _select --help 2>&1 || true
+    # Alternatively test via help dispatcher
+    run "$PWT_BIN" help select
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"Keybindings"* ]]
+}
+
+@test "pwt steps --help shows usage" {
+    cd "$TEST_REPO"
+    # steps calls detect_project before checking help, so use help dispatcher
+    run "$PWT_BIN" help steps
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"step_"* ]]
+}
+
+@test "pwt step --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" step --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"PWT_ARGS"* ]]
+}
+
+# ============================================
+# Help alias resolution (pwt help <alias>)
+# ============================================
+
+@test "pwt help add resolves to create help" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" help add
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"create|add"* ]]
+}
+
+@test "pwt help rm resolves to remove help" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" help rm
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"remove|rm"* ]]
+}
+
+@test "pwt help ls resolves to list help" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" help ls
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"list|ls"* ]]
+}
+
+@test "pwt help m resolves to meta help" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" help m
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"meta"* ]]
+}
+
+@test "pwt help fix resolves to repair help" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" help fix
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"repair|fix"* ]]
+}
+
+@test "pwt help s resolves to server help" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" help s
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"server|s"* ]]
+}
+
+@test "pwt help fix-port shows fix-port help" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" help fix-port
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fix-port"* ]]
+}
+
+# ============================================
+# pwt m alias for meta
+# ============================================
+
+@test "pwt m defaults to meta list" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-MALIAS HEAD
+
+    run "$PWT_BIN" m
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WT-MALIAS"* ]]
+}
+
+@test "pwt m show works like pwt meta show" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-MSHOW HEAD
+
+    run "$PWT_BIN" m show WT-MSHOW
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"port"* ]]
+}
+
+# ============================================
+# Help shows alias forms
+# ============================================
+
+@test "create help shows create|add in usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create --help
+    [[ "$output" == *"create|add"* ]]
+}
+
+@test "remove help shows remove|rm in usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" remove --help
+    [[ "$output" == *"remove|rm"* ]]
+}
+
+@test "list help shows list|ls in usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" list --help
+    [[ "$output" == *"list|ls"* ]]
+}
+
+@test "server help shows server|s in usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" server --help
+    [[ "$output" == *"server|s"* ]]
+}

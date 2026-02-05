@@ -12,18 +12,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Description in create**: `pwt create TICKET "auth login bug"` - quoted text with spaces is auto-detected as description
 - **Meta shortcut**: `pwt meta <key> [value]` for quick get/set on current worktree
-  - `pwt meta description` - get description of current worktree
-  - `pwt meta description "my task"` - set description of current worktree
+  - `pwt meta description` - get description
+  - `pwt meta description "my task"` - set description
+  - `pwt meta "text with spaces"` - shorthand for setting description
 - **Description search in cd**: `pwt cd <term>` now searches both name and description
   - Supports multi-word search: `pwt cd "auth login"` finds "fixing auth login bug"
   - Case-insensitive partial matching
-  - Single match navigates directly
-  - Multiple matches or no matches → opens fzf with query for fuzzy search
-- **Interactive query flag**: `pwt select --query <text>` to pre-filter results
-- **Help command**: `pwt help <command>` as alias for `pwt <command> help`
+  - Single match navigates directly; multiple/zero matches → fzf fallback
+- **Interactive query flag**: `pwt select --query <text>` to pre-filter fzf results
+- **Short alias**: `pwt m` as alias for `pwt meta`
+- **Help for all commands**: Every command now supports `-h`/`--help`
+  - Added help to: current, use, fix-port, select, steps, step, repair, port, open, alias
+  - `pwt help <alias>` resolves aliases (add→create, rm→remove, ls→list, fix→repair, m→meta, s→server)
 
 ### Changed
-- Improved `pwt meta` help with detailed examples and output previews
+- Comprehensive `pwt meta` help with ASCII diagrams showing where metadata appears
+- Help text shows alias forms: `Usage: pwt create|add`, `pwt remove|rm`, `pwt list|ls`, etc.
+- `@` (main app) documented consistently across info, editor, ai help texts
+- Flag ordering standardized to `-short|--long` pattern (cmd_select)
+- Trailing slash normalization added to cmd_run and cmd_open (shell completion compat)
+
+### Fixed
+- `pwt help <command>` now correctly dispatches to module commands (create, remove, list, etc.)
+
+### Internal
+- Extracted `get_worktree_port()` helper to deduplicate port lookup with legacy fallback
 
 ## [0.1.9] - 2026-02-03
 

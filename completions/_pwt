@@ -38,6 +38,10 @@ _pwt_commands() {
         'fix-port:Resolve port conflict'
         'doctor:Check system health and configuration'
         'meta:Manage worktree metadata'
+        'm:Manage worktree metadata (alias)'
+        'alias:Set project short alias'
+        'steps:List available Pwtfile steps'
+        'step:Run a single Pwtfile step'
         'project:Manage project configs'
         'config:Configure current project'
         'port:Get port for worktree'
@@ -247,7 +251,7 @@ _pwt() {
                             "worktrees:worktree:_pwt_worktrees $_project" \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|port|editor|e|ai|open|current|repair|fix)
+                    cd|use|server|s|info|show|fix-port|port|editor|e|ai|open|current|repair|fix|step)
                         _pwt_worktrees "$_project"
                         ;;
                     run|for-each)
@@ -268,7 +272,7 @@ _pwt() {
                     tree|status|doctor|list|ls)
                         # These commands have optional flags, no required args
                         ;;
-                    meta)
+                    meta|m)
                         case $CURRENT in
                             4) _pwt_meta_actions ;;
                             5)
@@ -389,7 +393,7 @@ _pwt() {
                             4) _pwt_worktrees ;;
                         esac
                         ;;
-                    meta)
+                    meta|m)
                         case $CURRENT in
                             3) _pwt_meta_actions ;;
                             4)

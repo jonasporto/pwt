@@ -2985,12 +2985,19 @@ cmd_meta() {
     local project="${CURRENT_PROJECT:-unknown}"
 
     # Shortcut: pwt meta <key> [value] for current worktree
-    # If first arg is not a known subcommand, treat as key for current worktree
+    # Also: pwt meta "text with spaces" → sets description (same heuristic as create)
     if [[ -n "$action" && ! "$action" =~ ^(list|show|set|get|delete|import|export|help|--help|-h)$ ]]; then
         local key="$action"
         local shortcut_value="$name"
         local current_dir=$(pwd)
         local current_name=""
+
+        # Heuristic: text with spaces = description value
+        # (no metadata key has spaces, same logic as pwt create)
+        if [[ "$action" == *" "* ]]; then
+            key="description"
+            shortcut_value="$action"
+        fi
 
         # Detect current worktree from pwd or symlink
         if current_name=$(get_current_from_symlink 2>/dev/null); then
@@ -3065,7 +3072,8 @@ cmd_meta() {
         -h|--help|help)
             cat << 'HELP'
 Usage: pwt meta [command] [args]
-       pwt meta <key> [value]     (shortcut from inside a worktree)
+       pwt meta "text with spaces"   (set description on current worktree)
+       pwt meta <key> [value]        (get/set field on current worktree)
 
 Manage worktree metadata - descriptions, ports, and custom fields.
 Metadata helps you find and identify worktrees across pwt commands.
@@ -3073,10 +3081,11 @@ Metadata helps you find and identify worktrees across pwt commands.
 COMMANDS:
   list                           List all metadata (default)
   show <worktree>                Show metadata for one worktree
-  set <worktree> <field> <value> Set a field
+  set <worktree> <field> <value> Set a field on any worktree
   import                         Import existing worktrees
 
 SHORTCUT (from inside a worktree):
+  pwt meta "text with spaces"    Set description (spaces = description)
   pwt meta <key>                 Get a field
   pwt meta <key> <value>         Set a field
 
@@ -3136,14 +3145,19 @@ WHERE METADATA APPEARS
 EXAMPLES
 ═══════════════════════════════════════════════════════════════════════
 
-  Setting description (from inside the worktree):
+  Setting description (quickest - text with spaces = description):
   ┌─────────────────────────────────────────────────────────────────┐
-  │ $ cd ~/worktrees/TICKET-123                                     │
+  │ $ pwt meta "fixing login auth bug"                              │
+  │ ✓ TICKET-123.description = fixing login auth bug                │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Setting description (explicit key):
+  ┌─────────────────────────────────────────────────────────────────┐
   │ $ pwt meta description "fixing login auth bug"                  │
   │ ✓ TICKET-123.description = fixing login auth bug                │
   └─────────────────────────────────────────────────────────────────┘
 
-  Setting description (from anywhere):
+  Setting description (on any worktree, from anywhere):
   ┌─────────────────────────────────────────────────────────────────┐
   │ $ pwt meta set TICKET-123 description "fixing login auth bug"   │
   │ ✓ Updated TICKET-123.description = fixing login auth bug        │
@@ -3177,20 +3191,22 @@ EXAMPLES
 WORKFLOW TIPS
 ═══════════════════════════════════════════════════════════════════════
 
-  1. Set descriptions when creating worktrees:
-     $ pwt create TICKET-123 main
-     $ pwt meta description "auth: fix session timeout bug"
+  Description flows naturally through the entire workflow:
 
-  2. Find worktrees by what they do, not just ticket numbers:
-     $ pwt cd timeout    # finds by description
-     $ pwt cd session    # finds by description
+     # 1. Create with description
+     $ pwt create TICKET-123 "auth: fix session timeout"
 
-  3. Use markers for visual priority:
-     $ pwt meta set TICKET-123 marker "🔥"   # urgent
-     $ pwt meta set TICKET-456 marker "WIP"  # work in progress
+     # 2. Or set later (from inside worktree)
+     $ pwt meta "auth: fix session timeout"
 
-  4. Port is auto-allocated but can be changed:
-     $ pwt meta set TICKET-123 port 4000
+     # 3. Find by description
+     $ pwt cd timeout           # partial match
+     $ pwt cd "session timeout" # multi-word
+     $ pwt cd "ses time"        # no match? fzf fuzzy search
+
+     # 4. See in lists
+     $ pwt list                 # Meta column shows description
+     $ pwt select               # fzf picker shows description
 HELP
             return 0
             ;;

@@ -358,3 +358,21 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"9999"* ]]
 }
+
+@test "pwt meta with quoted text sets description" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-QUOTEMETA HEAD
+
+    cd "$TEST_WORKTREES/WT-QUOTEMETA"
+
+    # Text with spaces → sets description automatically
+    run "$PWT_BIN" meta "fixing the login auth bug"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"✓"* ]]
+    [[ "$output" == *"description"* ]]
+
+    # Verify it was set
+    run "$PWT_BIN" meta description
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fixing the login auth bug"* ]]
+}

@@ -2975,14 +2975,49 @@ cmd_fix_port() {
 # Command: meta
 # View or edit worktree metadata
 cmd_meta() {
-    local action="$1"
-    local name="$2"
-    local field="$3"
-    local value="$4"
+    local action="${1:-}"
+    local name="${2:-}"
+    local field="${3:-}"
+    local value="${4:-}"
 
     init_metadata
 
     local project="${CURRENT_PROJECT:-unknown}"
+
+    # Shortcut: pwt meta <key> [value] for current worktree
+    # If first arg is not a known subcommand, treat as key for current worktree
+    if [[ -n "$action" && ! "$action" =~ ^(list|show|set|get|delete|import|export|help|--help|-h)$ ]]; then
+        local key="$action"
+        local shortcut_value="$name"
+        local current_dir=$(pwd)
+        local current_name=""
+
+        # Detect current worktree from pwd or symlink
+        if current_name=$(get_current_from_symlink 2>/dev/null); then
+            : # got it from symlink
+        elif [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+            current_name=$(basename "$current_dir")
+        fi
+
+        if [ -z "$current_name" ] || [ "$current_name" = "@" ]; then
+            pwt_error "Not in a worktree"
+            return 1
+        fi
+
+        if [ -z "$shortcut_value" ]; then
+            # GET: pwt meta description
+            local result=$(get_metadata "$current_name" "$key")
+            if [ -n "$result" ]; then
+                echo "$result"
+            fi
+        else
+            # SET: pwt meta description "some text"
+            update_metadata "$current_name" "$key" "$shortcut_value"
+            echo -e "${GREEN}✓ $current_name.$key = $shortcut_value${NC}"
+            clear_list_cache
+        fi
+        return $?
+    fi
 
     case "$action" in
         ""|list)
@@ -3028,20 +3063,135 @@ cmd_meta() {
             clear_list_cache  # Invalidate cache so next list shows updated metadata
             ;;
         -h|--help|help)
-            echo "Usage: pwt meta [command] [args]"
-            echo ""
-            echo "Manage worktree metadata."
-            echo ""
-            echo "Commands:"
-            echo "  list                           List all worktree metadata (default)"
-            echo "  show <worktree>                Show metadata for a worktree"
-            echo "  set <worktree> <field> <value> Update a metadata field"
-            echo "  import                         Import metadata for existing worktrees"
-            echo ""
-            echo "Fields: branch, base, description, port"
-            echo ""
-            echo "Options:"
-            echo "  -h, --help, help    Show this help"
+            cat << 'HELP'
+Usage: pwt meta [command] [args]
+       pwt meta <key> [value]     (shortcut from inside a worktree)
+
+Manage worktree metadata - descriptions, ports, and custom fields.
+Metadata helps you find and identify worktrees across pwt commands.
+
+COMMANDS:
+  list                           List all metadata (default)
+  show <worktree>                Show metadata for one worktree
+  set <worktree> <field> <value> Set a field
+  import                         Import existing worktrees
+
+SHORTCUT (from inside a worktree):
+  pwt meta <key>                 Get a field
+  pwt meta <key> <value>         Set a field
+
+FIELDS:
+  description    Free text describing the worktree purpose
+  port           Port number for dev servers (auto-allocated)
+  marker         Visual marker for lists (emoji or text)
+  <custom>       Any custom field you want (e.g., env, reviewer)
+
+═══════════════════════════════════════════════════════════════════════
+WHERE METADATA APPEARS
+═══════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ pwt list                                                        │
+  │ Shows description and port in the Meta column                   │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ Worktree       Branch              Status   Meta                │
+  │ ─────────────────────────────────────────────────────────────── │
+  │ TICKET-123     fix/TICKET-123      ✓ clean  port=3001           │
+  │                                             description=auth bug│
+  │ TICKET-456     feat/TICKET-456     ● dirty  port=3002           │
+  │                                             description=new API │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ pwt select                                                      │
+  │ Shows port and description in the fzf picker                    │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ TICKET-123  fix/TICKET-123   :3001  ·  auth bug                 │
+  │ TICKET-456  feat/TICKET-456  :3002  ·  new API                  │
+  │ @           main             ·      ·  main app                 │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ pwt info TICKET-123                                             │
+  │ Shows all metadata fields                                       │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ Worktree: TICKET-123                                            │
+  │ Branch:   fix/TICKET-123                                        │
+  │ Port:     3001                                                  │
+  │ Desc:     auth bug                                              │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ pwt cd <search>                                                 │
+  │ Searches BOTH name AND description (case-insensitive)           │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ $ pwt cd auth            # partial match                        │
+  │ $ pwt cd "login bug"     # multi-word search                    │
+  │ $ pwt cd "au bug"        # no match? fzf does fuzzy search      │
+  │                                                                 │
+  │ No match or multiple? Opens fzf for fuzzy selection             │
+  └─────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+EXAMPLES
+═══════════════════════════════════════════════════════════════════════
+
+  Setting description (from inside the worktree):
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ cd ~/worktrees/TICKET-123                                     │
+  │ $ pwt meta description "fixing login auth bug"                  │
+  │ ✓ TICKET-123.description = fixing login auth bug                │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Setting description (from anywhere):
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta set TICKET-123 description "fixing login auth bug"   │
+  │ ✓ Updated TICKET-123.description = fixing login auth bug        │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Getting a field value:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta port                                                 │
+  │ 3001                                                            │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Viewing all metadata:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta show TICKET-123                                      │
+  │ {                                                               │
+  │   "port": 3001,                                                 │
+  │   "description": "fixing login auth bug",                       │
+  │   "branch": "fix/TICKET-123",                                   │
+  │   "created_at": "2024-01-15T10:30:00"                           │
+  │ }                                                               │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Adding custom fields:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta set TICKET-123 reviewer "@john"                      │
+  │ $ pwt meta set TICKET-123 env staging                           │
+  │ # Custom fields show in pwt list and pwt info                   │
+  └─────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+WORKFLOW TIPS
+═══════════════════════════════════════════════════════════════════════
+
+  1. Set descriptions when creating worktrees:
+     $ pwt create TICKET-123 main
+     $ pwt meta description "auth: fix session timeout bug"
+
+  2. Find worktrees by what they do, not just ticket numbers:
+     $ pwt cd timeout    # finds by description
+     $ pwt cd session    # finds by description
+
+  3. Use markers for visual priority:
+     $ pwt meta set TICKET-123 marker "🔥"   # urgent
+     $ pwt meta set TICKET-456 marker "WIP"  # work in progress
+
+  4. Port is auto-allocated but can be changed:
+     $ pwt meta set TICKET-123 port 4000
+HELP
             return 0
             ;;
         import)
@@ -3252,13 +3402,30 @@ cmd_cd() {
         return 0
     fi
 
-    # Try partial match
+    # Try partial match by name
     local matches=()
     if [ -d "$WORKTREES_DIR" ]; then
         for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
             local name=$(basename "$dir")
             if [[ "$name" == *"$target"* ]]; then
                 matches+=("$dir")
+            fi
+        done
+    fi
+
+    # If no name matches, try searching in descriptions (case-insensitive)
+    if [ ${#matches[@]} -eq 0 ] && [ -d "$WORKTREES_DIR" ]; then
+        local target_lower=$(echo "$target" | tr '[:upper:]' '[:lower:]')
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            local desc=$(get_metadata "$name" "description" 2>/dev/null)
+            if [ -n "$desc" ]; then
+                local desc_lower=$(echo "$desc" | tr '[:upper:]' '[:lower:]')
+                if [[ "$desc_lower" == *"$target_lower"* ]]; then
+                    matches+=("$dir")
+                fi
             fi
         done
     fi
@@ -3269,11 +3436,23 @@ cmd_cd() {
         echo "${matches[0]%/}"
         return 0
     elif [ ${#matches[@]} -gt 1 ]; then
-        echo "Multiple matches for '$target':" >&2
-        for m in "${matches[@]}"; do
-            echo "  $(basename "${m%/}")" >&2
-        done
-        return 1
+        # Multiple matches: fallback to interactive select with query
+        if command -v fzf &>/dev/null && [ -t 0 ]; then
+            cmd_select --query "$target"
+            return $?
+        else
+            echo "Multiple matches for '$target':" >&2
+            for m in "${matches[@]}"; do
+                echo "  $(basename "${m%/}")" >&2
+            done
+            return 1
+        fi
+    fi
+
+    # No matches: try fzf fuzzy search as last resort (only if interactive)
+    if command -v fzf &>/dev/null && [ -t 0 ]; then
+        cmd_select --query "$target"
+        return $?
     fi
 
     echo "Worktree not found: $target" >&2
@@ -4359,10 +4538,11 @@ cmd_doctor() {
 
 # Command: select
 # Interactive worktree selector using fzf
-# Usage: pwt select [--preview] [--dirty]
+# Usage: pwt select [--preview] [--dirty] [--query <text>]
 cmd_select() {
     local show_preview=true
     local show_dirty_only=false
+    local initial_query=""
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -4378,6 +4558,10 @@ cmd_select() {
             --dirty)
                 show_dirty_only=true
                 shift
+                ;;
+            --query|-q)
+                initial_query="$2"
+                shift 2
                 ;;
             *)
                 shift
@@ -4465,6 +4649,11 @@ cmd_select() {
             --preview="$preview_cmd"
             --preview-window=right:45%:wrap
         )
+    fi
+
+    # Add initial query if provided
+    if [ -n "$initial_query" ]; then
+        fzf_opts+=(--query="$initial_query")
     fi
 
     local selected
@@ -5033,6 +5222,10 @@ cmd_help() {
         all|full)
             show_help_all
             ;;
+        # Command-specific help: pwt help <command> -> pwt <command> help
+        meta|cd|create|remove|list|select|use|current|info|port|server|ai|plugin|config|status|run|restore)
+            "cmd_$topic" help
+            ;;
         *)
             echo "Unknown help topic: $topic"
             echo ""
@@ -5042,6 +5235,9 @@ cmd_help() {
             echo "  navigation  cd, use, multi-project"
             echo "  pwtfile     Syntax, hooks, helpers, examples"
             echo "  all         Everything (good for LLMs)"
+            echo ""
+            echo "Or use: pwt help <command>"
+            echo "  e.g. pwt help meta, pwt help cd, pwt help create"
             exit $EXIT_USAGE
             ;;
     esac

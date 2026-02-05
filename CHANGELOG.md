@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-02-05
+
+### Added
+- **Meta shortcut**: `pwt meta <key> [value]` for quick get/set on current worktree
+  - `pwt meta description` - get description of current worktree
+  - `pwt meta description "my task"` - set description of current worktree
+- **Description search in cd**: `pwt cd <term>` now searches both name and description
+  - Supports multi-word search: `pwt cd "auth login"` finds "fixing auth login bug"
+  - Case-insensitive partial matching
+  - Single match navigates directly
+  - Multiple matches or no matches → opens fzf with query for fuzzy search
+- **Interactive query flag**: `pwt select --query <text>` to pre-filter results
+- **Help command**: `pwt help <command>` as alias for `pwt <command> help`
+
+### Changed
+- Improved `pwt meta` help with detailed examples and output previews
+
 ## [0.1.9] - 2026-02-03
 
 ### Added

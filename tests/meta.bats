@@ -297,3 +297,64 @@ teardown() {
     # Should NOT show notes= (since it's empty)
     [[ "$wt_line" != *"notes="* ]]
 }
+
+# ============================================
+# meta shortcut (pwt meta <key> [value])
+# ============================================
+
+@test "pwt meta <key> gets metadata from current worktree" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-SHORTGET HEAD
+
+    # Set description using traditional syntax
+    "$PWT_BIN" meta set WT-SHORTGET description "shortcut test"
+
+    # Navigate to worktree and test shortcut GET
+    cd "$TEST_WORKTREES/WT-SHORTGET"
+    run "$PWT_BIN" meta description
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"shortcut test"* ]]
+}
+
+@test "pwt meta <key> <value> sets metadata on current worktree" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-SHORTSET HEAD
+
+    # Navigate to worktree and test shortcut SET
+    cd "$TEST_WORKTREES/WT-SHORTSET"
+    run "$PWT_BIN" meta description "set via shortcut"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"✓"* ]]
+
+    # Verify it was set
+    run "$PWT_BIN" meta show WT-SHORTSET
+    [[ "$output" == *"set via shortcut"* ]]
+}
+
+@test "pwt meta <key> fails when not in worktree" {
+    cd "$TEST_REPO"
+
+    # From main repo (not in worktree), shortcut should fail
+    run "$PWT_BIN" meta description
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Not in a worktree"* ]]
+}
+
+@test "pwt meta <key> works with port field" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-PORTSHORT HEAD
+
+    cd "$TEST_WORKTREES/WT-PORTSHORT"
+
+    # Set port via shortcut
+    run "$PWT_BIN" meta port 9999
+    [ "$status" -eq 0 ]
+
+    # Get port via shortcut
+    run "$PWT_BIN" meta port
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"9999"* ]]
+}

@@ -354,3 +354,84 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"Power Worktrees"* ]]
 }
+
+# ============================================
+# cd by description
+# ============================================
+
+@test "pwt cd finds worktree by description" {
+    cd "$TEST_REPO"
+
+    # Create worktree using pwt (this creates proper metadata)
+    "$PWT_BIN" create wt-datascript HEAD
+
+    # Set description
+    "$PWT_BIN" meta set wt-datascript description "data migration script"
+
+    # Search by description term (not in name)
+    run "$PWT_BIN" cd migration
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-datascript" ]
+}
+
+@test "pwt cd description search is case-insensitive" {
+    cd "$TEST_REPO"
+
+    # Create worktree using pwt (this creates proper metadata)
+    "$PWT_BIN" create wt-casetest HEAD
+
+    # Set description with mixed case
+    "$PWT_BIN" meta set wt-casetest description "Important Feature"
+
+    # Search with different case
+    run "$PWT_BIN" cd important
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-casetest" ]
+}
+
+@test "pwt cd prefers name match over description match" {
+    cd "$TEST_REPO"
+
+    # Create two worktrees using pwt (this creates proper metadata)
+    "$PWT_BIN" create wt-alpha HEAD
+    "$PWT_BIN" create wt-beta HEAD
+
+    # Set description of beta to contain "alpha"
+    "$PWT_BIN" meta set wt-beta description "similar to alpha"
+
+    # Search for "alpha" should match wt-alpha by name, not wt-beta by description
+    run "$PWT_BIN" cd alpha
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-alpha" ]
+}
+
+@test "pwt cd works with multi-word description search" {
+    cd "$TEST_REPO"
+
+    # Create worktree with multi-word description
+    "$PWT_BIN" create wt-multiword HEAD
+    "$PWT_BIN" meta set wt-multiword description "fixing auth login bug"
+
+    # Search with multiple words (quoted)
+    run "$PWT_BIN" cd "auth login"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-multiword" ]
+}
+
+@test "pwt cd with partial description match works" {
+    cd "$TEST_REPO"
+
+    # Create worktree with description
+    "$PWT_BIN" create wt-partial HEAD
+    "$PWT_BIN" meta set wt-partial description "session timeout handler"
+
+    # Search with partial word
+    run "$PWT_BIN" cd timeout
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-partial" ]
+}

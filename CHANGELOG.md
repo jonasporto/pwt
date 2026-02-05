@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.10] - 2026-02-05
 
 ### Added
+- **Description in create**: `pwt create TICKET "auth login bug"` - quoted text with spaces is auto-detected as description
 - **Meta shortcut**: `pwt meta <key> [value]` for quick get/set on current worktree
   - `pwt meta description` - get description of current worktree
   - `pwt meta description "my task"` - set description of current worktree

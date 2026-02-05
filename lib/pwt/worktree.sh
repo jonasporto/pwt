@@ -67,7 +67,7 @@ cmd_create() {
                 echo "Arguments:"
                 echo "  branch          Branch name or ticket (e.g., TICKET-1234)"
                 echo "  base            Base branch (default: master)"
-                echo "  \"description\"   Optional description (quoted text with spaces)"
+                echo "  \"description\"   Quoted text with spaces is treated as description"
                 echo ""
                 echo "Options:"
                 echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
@@ -77,6 +77,11 @@ cmd_create() {
                 echo "  -a, --ai          Start AI assistant after creation"
                 echo "  -n, --dry-run     Show what would be done"
                 echo "  -h, --help        Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  pwt create TICKET-1234                        # no description"
+                echo "  pwt create TICKET-1234 \"auth login bug\"       # with description"
+                echo "  pwt create TICKET-1234 develop \"auth login\"   # custom base + description"
                 return 0
                 ;;
             -*)

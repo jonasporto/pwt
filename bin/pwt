@@ -3310,18 +3310,25 @@ cmd_cd() {
     # Handle --help
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
         echo "Usage: pwt cd [worktree|@|-]"
+        echo "       pwt cd <term>      # search by name or description"
         echo "       pwt cd --select    # interactive picker (fzf)"
         echo ""
         echo "Navigate to a worktree (outputs path for shell integration)."
         echo ""
         echo "Arguments:"
         echo "  worktree  Name of the worktree"
+        echo "  <term>    Search term (matches name AND description)"
         echo "  @         Main app directory"
         echo "  -         Previous worktree (like cd -)"
         echo "  (none)    Last used worktree, or main"
         echo ""
         echo "Options:"
         echo "  --select, -s    Interactive worktree selector (fzf)"
+        echo ""
+        echo "Search behavior:"
+        echo "  - Partial name match:  pwt cd auth"
+        echo "  - Description search:  pwt cd \"auth login\""
+        echo "  - If no match found, falls back to fzf for fuzzy selection"
         echo ""
         echo "Tip: Run 'eval \"\$(pwt shell-init)\"' for real cd integration."
         return 0
@@ -5224,7 +5231,7 @@ cmd_help() {
             ;;
         # Command-specific help: pwt help <command> -> pwt <command> help
         meta|cd|create|remove|list|select|use|current|info|port|server|ai|plugin|config|status|run|restore)
-            "cmd_$topic" help
+            "cmd_$topic" --help
             ;;
         *)
             echo "Unknown help topic: $topic"

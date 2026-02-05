@@ -356,6 +356,26 @@ cmd_create() {
 cmd_repair() {
     local name="$1"
 
+    if [[ "$name" == "-h" || "$name" == "--help" ]]; then
+        echo "Usage: pwt repair [worktree]"
+        echo ""
+        echo "Run repair hooks on worktrees."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree   Specific worktree to repair (optional)"
+        echo "             If omitted, repairs all worktrees"
+        echo ""
+        echo "Runs the 'repair' function from Pwtfile and any repair hooks."
+        echo "Useful after config changes or dependency updates."
+        echo ""
+        echo "Aliases: pwt fix"
+        echo ""
+        echo "Examples:"
+        echo "  pwt repair               # repair all worktrees"
+        echo "  pwt repair TICKET-123    # repair specific worktree"
+        return 0
+    fi
+
     # Normalize: strip trailing slash (from shell completion)
     name="${name%/}"
 

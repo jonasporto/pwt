@@ -2293,6 +2293,29 @@ cmd_current() {
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
+            -h|--help)
+                echo "Usage: pwt current [options]"
+                echo ""
+                echo "Show the currently active worktree."
+                echo ""
+                echo "Options:"
+                echo "  --name       Output only the worktree name"
+                echo "  --port       Output only the port number"
+                echo "  --branch     Output only the branch name"
+                echo "  --path       Output only the worktree path"
+                echo "  --json       Output full context as JSON"
+                echo "  --resolved   Show resolved symlink path"
+                echo ""
+                echo "Detection order:"
+                echo "  1. Current directory (if inside a worktree)"
+                echo "  2. 'current' symlink (set via 'pwt use')"
+                echo ""
+                echo "Examples:"
+                echo "  pwt current              # show current worktree"
+                echo "  pwt current --port       # get port for scripts"
+                echo "  pwt current --json       # full context as JSON"
+                return 0
+                ;;
             --name) format="name"; shift ;;
             --port) format="port"; shift ;;
             --branch) format="branch"; shift ;;
@@ -2606,7 +2629,26 @@ cmd_use() {
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
-            --select|-s)
+            -h|--help)
+                echo "Usage: pwt use <worktree> [options]"
+                echo ""
+                echo "Switch the current worktree symlink."
+                echo ""
+                echo "Arguments:"
+                echo "  worktree     Target worktree name (supports partial match)"
+                echo "  @            Switch to main app"
+                echo ""
+                echo "Options:"
+                echo "  -s, --select   Interactive picker (fzf)"
+                echo ""
+                echo "Examples:"
+                echo "  pwt use TICKET-123     # switch by name"
+                echo "  pwt use 123            # partial match"
+                echo "  pwt use @              # switch to main app"
+                echo "  pwt use --select       # interactive picker"
+                return 0
+                ;;
+            -s|--select)
                 use_select=true
                 shift
                 ;;
@@ -2835,6 +2877,24 @@ cmd_info() {
 # Reallocate a worktree to a new free port
 cmd_fix_port() {
     local name="$1"
+
+    if [[ "$name" == "-h" || "$name" == "--help" ]]; then
+        echo "Usage: pwt fix-port [worktree]"
+        echo ""
+        echo "Resolve port conflicts for a worktree."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree   Target worktree (optional if inside one)"
+        echo ""
+        echo "When a port conflict is detected, offers:"
+        echo "  - Kill the process using the port"
+        echo "  - Reallocate to a new port"
+        echo ""
+        echo "Examples:"
+        echo "  pwt fix-port              # fix port for current worktree"
+        echo "  pwt fix-port TICKET-123   # fix port for specific worktree"
+        return 0
+    fi
 
     # Normalize: strip trailing slash (from shell completion)
     name="${name%/}"
@@ -4858,6 +4918,20 @@ cmd_for_each() {
 # List available steps from Pwtfile (functions prefixed with step_)
 # Usage: pwt steps
 cmd_steps() {
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        echo "Usage: pwt steps"
+        echo ""
+        echo "List available steps from the project Pwtfile."
+        echo ""
+        echo "Steps are functions prefixed with 'step_' in the Pwtfile."
+        echo "Run them with: pwt step <name>"
+        echo ""
+        echo "Example Pwtfile:"
+        echo "  step_install() { bundle install; }"
+        echo "  step_seed()    { rails db:seed; }"
+        return 0
+    fi
+
     detect_project
     local pwtfile=$(get_project_pwtfile)
 
@@ -4890,6 +4964,22 @@ cmd_steps() {
 # Usage: pwt step <name> [args...]
 cmd_step() {
     local step_name="${1:-}"
+
+    if [[ "$step_name" == "-h" || "$step_name" == "--help" ]]; then
+        echo "Usage: pwt step <name> [args...]"
+        echo ""
+        echo "Run a single step from the project Pwtfile."
+        echo ""
+        echo "Arguments:"
+        echo "  name    Step name (without step_ prefix)"
+        echo "  args    Extra arguments (available as \$PWT_ARGS)"
+        echo ""
+        echo "Examples:"
+        echo "  pwt step install          # run step_install()"
+        echo "  pwt step seed --fresh     # run step_seed() with args"
+        echo "  pwt steps                 # list available steps"
+        return 0
+    fi
 
     if [ -z "$step_name" ]; then
         echo "Usage: pwt step <name>"
@@ -5234,7 +5324,13 @@ show_help_brief() {
     echo "  restore [backup] [worktree]    Recover backed up changes from trash"
     echo "  doctor                         Check system health and configuration"
     echo "  shell-init                     Output shell function for cd integration"
-    echo "  meta [action] [args]           Manage worktree metadata"
+    echo "  meta|m [action] [args]         Manage worktree metadata"
+    echo "  alias [name|--clear]           Set project short alias"
+    echo "  steps                          List available Pwtfile steps"
+    echo "  step <name> [args]             Run a single Pwtfile step"
+    echo "  repair|fix [worktree]          Run repair hooks"
+    echo "  port [worktree]                Get worktree port number"
+    echo "  config [key] [value]           View/set project configuration"
     echo "  project [action] [args]        Manage project configs"
     echo "  plugin [action]                Manage plugins (list, install, create)"
     echo ""
@@ -5284,6 +5380,20 @@ show_help_brief() {
 cmd_help() {
     local topic="${1:-}"
 
+    # Resolve command aliases
+    case "$topic" in
+        add) topic="create" ;;
+        rm) topic="remove" ;;
+        ls) topic="list" ;;
+        show) topic="info" ;;
+        cp) topic="copy" ;;
+        fix) topic="repair" ;;
+        cleanup) topic="auto_remove" ;;
+        m) topic="meta" ;;
+        s) topic="server" ;;
+        fix-port) topic="fix_port" ;;
+    esac
+
     case "$topic" in
         ""|brief)
             show_help_brief
@@ -5303,17 +5413,24 @@ cmd_help() {
         all|full)
             show_help_all
             ;;
-        # Command-specific help: pwt help <command> -> pwt <command> help
-        # Map aliases to canonical command name
-        add) cmd_create --help ;;
-        rm) cmd_remove --help ;;
-        ls) cmd_list --help ;;
-        show) cmd_info --help ;;
-        cp) cmd_copy --help ;;
-        fix) cmd_repair --help ;;
-        cleanup) cmd_auto_remove --help ;;
-        m) cmd_meta --help ;;
-        meta|cd|create|remove|list|select|use|current|info|port|server|ai|plugin|config|status|run|restore|open|alias|diff|copy|repair|doctor)
+        # Module commands need their module loaded first
+        create|remove|repair|auto_remove)
+            load_module worktree
+            "cmd_$topic" --help
+            ;;
+        list)
+            load_module list
+            "cmd_$topic" --help
+            ;;
+        config|port)
+            load_module project
+            "cmd_$topic" --help
+            ;;
+        plugin)
+            load_module plugin
+            "cmd_$topic" --help
+            ;;
+        meta|cd|select|use|current|info|server|ai|status|run|restore|open|alias|diff|copy|doctor|steps|step|fix_port)
             "cmd_$topic" --help
             ;;
         *)

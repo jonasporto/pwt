@@ -1253,6 +1253,18 @@ get_metadata() {
         '.[$project][$name][$field] // empty' "$METADATA_FILE" 2>/dev/null
 }
 
+# Get port for a worktree, with legacy fallback
+# Tries metadata first, then falls back to extracting from directory name (-XXXX suffix)
+# Usage: get_worktree_port <name>
+get_worktree_port() {
+    local name="$1"
+    local port=$(get_metadata "$name" "port")
+    if [ -z "$port" ] && [[ "$name" =~ -([0-9]{4})$ ]]; then
+        port="${BASH_REMATCH[1]}"
+    fi
+    echo "$port"
+}
+
 # Get extra metadata fields as key=value string (for Meta column in list)
 # Excludes fields already shown as columns: path, branch, base, base_commit, created_at, mode
 # Shows: port, description, and any custom fields (only if non-empty)
@@ -2183,7 +2195,7 @@ check_server_status() {
 cmd_server() {
     # Handle --help before any processing
     if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-        echo "Usage: pwt server [worktree]"
+        echo "Usage: pwt server|s [worktree]"
         echo ""
         echo "Start development server for a worktree."
         echo ""
@@ -2768,6 +2780,7 @@ cmd_info() {
         echo ""
         echo "Arguments:"
         echo "  worktree  Name of the worktree (optional if inside one)"
+        echo "  @         Main app"
         echo ""
         echo "Information shown:"
         echo "  - Branch and tracking information"
@@ -2775,6 +2788,11 @@ cmd_info() {
         echo "  - Server status"
         echo "  - Creation metadata"
         echo "  - Git status (dirty files)"
+        echo ""
+        echo "Examples:"
+        echo "  pwt info              # info for current worktree"
+        echo "  pwt info TICKET-123   # info for specific worktree"
+        echo "  pwt info @            # info for main app"
         return 0
     fi
 
@@ -2810,15 +2828,8 @@ cmd_info() {
     fi
 
     # Extract information
-    local port=$(get_metadata "$name" "port")
-    if [ -z "$port" ]; then
-        # Legacy: extract from directory name if ends with -XXXX
-        if [[ "$name" =~ -([0-9]{4})$ ]]; then
-            port="${BASH_REMATCH[1]}"
-        else
-            port="-"
-        fi
-    fi
+    local port=$(get_worktree_port "$name")
+    [ -z "$port" ] && port="-"
     local ticket="$name"
     local branch=$(git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "detached")
     local upstream=$(git -C "$worktree_dir" rev-parse --abbrev-ref "${branch}@{upstream}" 2>/dev/null || echo "-")
@@ -2920,13 +2931,7 @@ cmd_fix_port() {
     fi
 
     # Get current port from metadata, fallback to directory name
-    local old_port=$(get_metadata "$name" "port")
-    if [ -z "$old_port" ]; then
-        # Legacy: extract from directory name if ends with -XXXX
-        if [[ "$name" =~ -([0-9]{4})$ ]]; then
-            old_port="${BASH_REMATCH[1]}"
-        fi
-    fi
+    local old_port=$(get_worktree_port "$name")
 
     if [ -z "$old_port" ] || ! [[ "$old_port" =~ ^[0-9]+$ ]]; then
         pwt_error "Error: Could not find port for worktree: $name"
@@ -4039,6 +4044,7 @@ cmd_editor_help() {
     echo "Usage:"
     echo "  pwt editor                      Open current in default editor"
     echo "  pwt editor TICKET               Open worktree in default editor"
+    echo "  pwt editor @                    Open main app in editor"
     echo "  pwt editor:sublime              Open current in sublime"
     echo "  pwt editor:sublime TICKET       Open worktree in sublime"
     echo "  pwt editor @                    Open main app"
@@ -4226,9 +4232,10 @@ cmd_ai_help() {
     echo "  pwt ai:<name> --default      Set default tool"
     echo ""
     echo "Usage:"
-    echo "  pwt ai                       Run default tool in main"
+    echo "  pwt ai                       Run default tool in current/main"
     echo "  pwt ai TICKET                Run default in worktree"
-    echo "  pwt ai:gemini                Run gemini in main"
+    echo "  pwt ai @                     Run default in main app"
+    echo "  pwt ai:gemini                Run gemini in current/main"
     echo "  pwt ai:gemini TICKET         Run gemini in worktree"
     echo "  pwt ai:codex -- --full-auto  Run with extra args"
     echo "  pwt ai:gemini --add          Add to config + run"
@@ -4477,7 +4484,7 @@ cmd_copy() {
     shift 2
 
     if [ -z "$src" ] || [ -z "$dest" ] || [ $# -eq 0 ]; then
-        echo -e "${RED}Usage: pwt copy <src> <dest> <patterns...>${NC}"
+        echo -e "${RED}Usage: pwt copy|cp <src> <dest> <patterns...>${NC}"
         echo "  src/dest can be @ for main app"
         echo ""
         echo "Examples:"

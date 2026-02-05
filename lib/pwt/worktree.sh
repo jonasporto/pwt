@@ -62,7 +62,7 @@ cmd_create() {
                 break
                 ;;
             -h|--help)
-                echo "Usage: pwt create <branch> [base] [\"description\"]"
+                echo "Usage: pwt create|add <branch> [base] [\"description\"]"
                 echo ""
                 echo "Arguments:"
                 echo "  branch          Branch name or ticket (e.g., TICKET-1234)"
@@ -357,7 +357,7 @@ cmd_repair() {
     local name="$1"
 
     if [[ "$name" == "-h" || "$name" == "--help" ]]; then
-        echo "Usage: pwt repair [worktree]"
+        echo "Usage: pwt repair|fix [worktree]"
         echo ""
         echo "Run repair hooks on worktrees."
         echo ""
@@ -367,8 +367,6 @@ cmd_repair() {
         echo ""
         echo "Runs the 'repair' function from Pwtfile and any repair hooks."
         echo "Useful after config changes or dependency updates."
-        echo ""
-        echo "Aliases: pwt fix"
         echo ""
         echo "Examples:"
         echo "  pwt repair               # repair all worktrees"
@@ -435,7 +433,7 @@ cmd_auto_remove() {
                 shift
                 ;;
             -h|--help)
-                echo "Usage: pwt auto-remove [target] [options]"
+                echo "Usage: pwt auto-remove|cleanup [target] [options]"
                 echo ""
                 echo "Safely remove worktrees that have been merged into target branch."
                 echo ""
@@ -649,10 +647,11 @@ cmd_remove() {
                 shift
                 ;;
             -h|--help)
-                echo "Usage: pwt remove [worktree] [options]"
+                echo "Usage: pwt remove|rm [worktree] [options]"
                 echo ""
                 echo "Arguments:"
                 echo "  worktree        Worktree name (default: current)"
+                echo "  @               Not allowed (cannot remove main app)"
                 echo ""
                 echo "Options:"
                 echo "  --with-branch     Also delete the branch (if merged)"

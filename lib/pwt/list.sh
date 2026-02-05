@@ -219,7 +219,7 @@ cmd_list() {
     while [ $# -gt 0 ]; do
         case "$1" in
             -h|--help)
-                echo "Usage: pwt list [options]"
+                echo "Usage: pwt list|ls [options]"
                 echo ""
                 echo "List all worktrees for the current project."
                 echo ""

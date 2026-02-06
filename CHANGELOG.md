@@ -21,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Single match navigates directly; multiple/zero matches → fzf fallback
 - **Interactive query flag**: `pwt select --query <text>` to pre-filter fzf results
 - **Short alias**: `pwt m` as alias for `pwt meta`
+- **Background execution**: `--bg` flag to daemonize Pwtfile commands (e.g., `pwt server --bg`)
+  - Uses perl double-fork + setsid for reliable process detachment
+  - Outputs JSON with job_id, pid, and log file path
+  - Duplicate job detection prevents running same command twice
+- **Non-interactive mode**: `--no-input` flag closes stdin and sets `PWT_AGENT=1`
+  - Designed for CI/CD and AI agent workflows
+  - Prevents interactive prompts from blocking automated processes
+- **Job management**: `pwt jobs` command to manage background jobs
+  - `pwt jobs list` - show all running/stopped jobs
+  - `pwt jobs logs <id> [-f]` - view/follow job output
+  - `pwt jobs stop <id>` - stop a running job
+  - `pwt jobs stop --all` - stop all jobs
+  - `pwt jobs clean` - remove stale entries
+- **PWT_AGENT variable**: Exported to Pwtfiles (defaults to `0`, set to `1` with `--no-input`)
 - **Help for all commands**: Every command now supports `-h`/`--help`
   - Added help to: current, use, fix-port, select, steps, step, repair, port, open, alias
   - `pwt help <alias>` resolves aliases (add→create, rm→remove, ls→list, fix→repair, m→meta, s→server)
@@ -37,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 - Extracted `get_worktree_port()` helper to deduplicate port lookup with legacy fallback
+- New `lib/pwt/jobs.sh` module for background job state management
+- `_strip_pwt_execution_flags()` helper strips --bg/--no-input from PWT_ARGS
+- Fixed `cmd_server` dispatch to pass all args (was losing flags like --sidekiq)
 
 ## [0.1.9] - 2026-02-03
 

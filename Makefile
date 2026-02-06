@@ -10,7 +10,7 @@ ZSH_COMPLETIONS ?= $(PREFIX)/share/zsh/site-functions
 BASH_COMPLETIONS ?= $(PREFIX)/share/bash-completion/completions
 FISH_COMPLETIONS ?= $(PREFIX)/share/fish/vendor_completions.d
 
-.PHONY: install uninstall update test lint clean help
+.PHONY: install uninstall update test test-fast lint clean help
 
 help:
 	@echo "pwt - Power Worktrees"
@@ -20,6 +20,7 @@ help:
 	@echo "  make update         Update existing installation (auto-detects PREFIX)"
 	@echo "  make uninstall      Remove from $(PREFIX)"
 	@echo "  make test           Run tests"
+	@echo "  make test-fast      Run a smaller test subset"
 	@echo "  make lint           Check bash syntax"
 	@echo "  make clean          Clean temporary files"
 	@echo ""
@@ -121,6 +122,14 @@ uninstall:
 test:
 	@if command -v bats >/dev/null; then \
 		bats tests/; \
+	else \
+		echo "bats not installed. Install with: brew install bats-core"; \
+		exit 1; \
+	fi
+
+test-fast:
+	@if command -v bats >/dev/null; then \
+		bats tests/version.bats tests/main_app.bats tests/current_json.bats tests/port.bats tests/port_alloc.bats; \
 	else \
 		echo "bats not installed. Install with: brew install bats-core"; \
 		exit 1; \

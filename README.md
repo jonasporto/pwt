@@ -6,11 +6,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.9-green.svg)](CHANGELOG.md)
 
-## Quick demo
+## Demos
 
-![pwt demo](demo.gif)
+![Quick Start](examples/gifs/01-quickstart.gif)
+![Use Symlink](examples/gifs/02-use-symlink.gif)
+![Status TUI](examples/gifs/03-status-tui.gif)
 
-[Watch in higher quality (mp4)](demo.mp4)
+[Watch overview (mp4)](examples/videos/00-overview.mp4)
+
+More demos in `examples/` (tapes in `examples/tapes`, gifs in `examples/gifs`, how to record in `examples/README.md`).
 
 ---
 

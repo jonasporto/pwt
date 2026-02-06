@@ -49,6 +49,7 @@ _pwt_commands() {
         'claude-setup:Configure Claude Code integration'
         'setup-shell:Install shell integration'
         'shell-init:Output shell integration code'
+        'jobs:Manage background jobs'
         'help:Show help'
     )
     _describe 'command' commands
@@ -213,6 +214,10 @@ _pwt() {
 
     _arguments -C \
         '--project[Specify project]:project:_pwt_projects' \
+        '--bg[Run in background]' \
+        '--no-input[Close stdin, set PWT_AGENT=1]' \
+        '--quiet[Suppress non-essential output]' \
+        '--verbose[Show detailed output]' \
         '1: :->command' \
         '*: :->args'
 
@@ -315,6 +320,16 @@ _pwt() {
                             5) _pwt_worktrees "$_project" ;;
                         esac
                         ;;
+                    jobs)
+                        local jobs_actions=(
+                            'list:List all jobs'
+                            'logs:View job output'
+                            'stop:Stop a running job'
+                            'clean:Remove stale job entries'
+                            'help:Show help'
+                        )
+                        _describe 'action' jobs_actions
+                        ;;
                 esac
             else
                 case $cmd in
@@ -373,6 +388,16 @@ _pwt() {
                             'help:Show help'
                         )
                         _describe 'action' claude_actions
+                        ;;
+                    jobs)
+                        local jobs_actions=(
+                            'list:List all jobs'
+                            'logs:View job output'
+                            'stop:Stop a running job'
+                            'clean:Remove stale job entries'
+                            'help:Show help'
+                        )
+                        _describe 'action' jobs_actions
                         ;;
                     help|-h|--help)
                         local help_topics=(

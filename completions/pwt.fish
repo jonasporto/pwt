@@ -78,6 +78,7 @@ complete -c pwt -n __pwt_needs_command -a plugin -d 'Manage plugins'
 complete -c pwt -n __pwt_needs_command -a claude-setup -d 'Configure Claude Code'
 complete -c pwt -n __pwt_needs_command -a setup-shell -d 'Install shell integration'
 complete -c pwt -n __pwt_needs_command -a shell-init -d 'Output shell init code'
+complete -c pwt -n __pwt_needs_command -a jobs -d 'Manage background jobs'
 complete -c pwt -n __pwt_needs_command -a help -d 'Show help'
 complete -c pwt -n __pwt_needs_command -a version -d 'Show version'
 
@@ -137,7 +138,14 @@ complete -c pwt -n '__pwt_using_command claude-setup' -a 'install vars format pr
 # Config keys
 complete -c pwt -n '__pwt_using_command config' -a 'main_app worktrees_dir branch_prefix base_port' -d 'Config key'
 
+# Jobs subcommands
+complete -c pwt -n '__pwt_using_command jobs' -a 'list logs stop clean help' -d 'Action'
+
 # Global flags
 complete -c pwt -l project -d 'Specify project' -a '(__pwt_projects)'
 complete -c pwt -l help -s h -d 'Show help'
 complete -c pwt -l version -s v -s V -d 'Show version'
+complete -c pwt -l bg -d 'Run in background'
+complete -c pwt -l no-input -d 'Close stdin, set PWT_AGENT=1'
+complete -c pwt -l quiet -d 'Suppress non-essential output'
+complete -c pwt -l verbose -d 'Show detailed output'

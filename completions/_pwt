@@ -38,6 +38,10 @@ _pwt_commands() {
         'fix-port:Resolve port conflict'
         'doctor:Check system health and configuration'
         'meta:Manage worktree metadata'
+        'm:Manage worktree metadata (alias)'
+        'alias:Set project short alias'
+        'steps:List available Pwtfile steps'
+        'step:Run a single Pwtfile step'
         'project:Manage project configs'
         'config:Configure current project'
         'port:Get port for worktree'
@@ -45,6 +49,7 @@ _pwt_commands() {
         'claude-setup:Configure Claude Code integration'
         'setup-shell:Install shell integration'
         'shell-init:Output shell integration code'
+        'jobs:Manage background jobs'
         'help:Show help'
     )
     _describe 'command' commands
@@ -209,6 +214,10 @@ _pwt() {
 
     _arguments -C \
         '--project[Specify project]:project:_pwt_projects' \
+        '--bg[Run in background]' \
+        '--no-input[Close stdin, set PWT_AGENT=1]' \
+        '--quiet[Suppress non-essential output]' \
+        '--verbose[Show detailed output]' \
         '1: :->command' \
         '*: :->args'
 
@@ -247,7 +256,7 @@ _pwt() {
                             "worktrees:worktree:_pwt_worktrees $_project" \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|port|editor|e|ai|open|current|repair|fix)
+                    cd|use|server|s|info|show|fix-port|port|editor|e|ai|open|current|repair|fix|step)
                         _pwt_worktrees "$_project"
                         ;;
                     run|for-each)
@@ -268,7 +277,7 @@ _pwt() {
                     tree|status|doctor|list|ls)
                         # These commands have optional flags, no required args
                         ;;
-                    meta)
+                    meta|m)
                         case $CURRENT in
                             4) _pwt_meta_actions ;;
                             5)
@@ -310,6 +319,16 @@ _pwt() {
                             4) _pwt_backups ;;
                             5) _pwt_worktrees "$_project" ;;
                         esac
+                        ;;
+                    jobs)
+                        local jobs_actions=(
+                            'list:List all jobs'
+                            'logs:View job output'
+                            'stop:Stop a running job'
+                            'clean:Remove stale job entries'
+                            'help:Show help'
+                        )
+                        _describe 'action' jobs_actions
                         ;;
                 esac
             else
@@ -370,6 +389,16 @@ _pwt() {
                         )
                         _describe 'action' claude_actions
                         ;;
+                    jobs)
+                        local jobs_actions=(
+                            'list:List all jobs'
+                            'logs:View job output'
+                            'stop:Stop a running job'
+                            'clean:Remove stale job entries'
+                            'help:Show help'
+                        )
+                        _describe 'action' jobs_actions
+                        ;;
                     help|-h|--help)
                         local help_topics=(
                             'concepts:What is pwt, worktree vs clone'
@@ -389,7 +418,7 @@ _pwt() {
                             4) _pwt_worktrees ;;
                         esac
                         ;;
-                    meta)
+                    meta|m)
                         case $CURRENT in
                             3) _pwt_meta_actions ;;
                             4)

@@ -48,8 +48,9 @@ Update project configuration
 
 .SS Worktree Operations
 .TP
-.B create \fIBRANCH\fR [\fIBASE\fR] [\fIDESCRIPTION\fR]
+.B create\fR|\fBadd \fIBRANCH\fR [\fIBASE\fR] [\fI"DESCRIPTION"\fR]
 Create a new worktree. Allocates port automatically and optionally creates branch.
+Quoted text with spaces is auto-detected as description (not a branch name).
 .RS
 .TP
 .BR \-n ", " \-\-dry\-run
@@ -68,7 +69,7 @@ Create from specific ref (tag, commit, branch)
 Create from current branch
 .RE
 .TP
-.B remove \fINAME\fR
+.B remove\fR|\fBrm \fINAME\fR
 Remove a worktree and clean up resources
 .RS
 .TP
@@ -85,7 +86,7 @@ Kill processes using the port
 Skip confirmation prompts
 .RE
 .TP
-.B list \fR[\fIOPTIONS\fR]
+.B list\fR|\fBls \fR[\fIOPTIONS\fR]
 List all worktrees with status information
 .RS
 .TP
@@ -106,11 +107,13 @@ Show port numbers
 
 .SS Navigation
 .TP
-.B cd \fINAME\fR
-Print path to worktree (use with shell integration for actual cd)
+.B cd \fINAME\fR|\fI@\fR|\fI-\fR|\fITERM\fR
+Navigate to worktree. Searches by name and description (case-insensitive).
+If multiple matches found, opens fzf for selection.
+Use \fB@\fR for main app, \fB-\fR for previous worktree.
 .TP
-.B use \fINAME\fR
-Set worktree as "current" (updates symlink)
+.B use \fINAME\fR|\fI@\fR
+Set worktree as "current" (updates symlink). Supports partial name matching.
 .TP
 .B current \fR[\fIOPTIONS\fR]
 Show current worktree
@@ -125,7 +128,7 @@ Go to previous worktree
 
 .SS Development
 .TP
-.B server \fR[\fINAME\fR]
+.B server\fR|\fBs \fR[\fINAME\fR]
 Start development server for worktree (runs Pwtfile server command)
 .TP
 .B run \fINAME\fR \fICOMMAND\fR...
@@ -167,7 +170,7 @@ Show all projects (global view)
 
 .SS Maintenance
 .TP
-.B repair \fR[\fINAME\fR]
+.B repair\fR|\fBfix \fR[\fINAME\fR]
 Repair broken worktree (runs Pwtfile repair command)
 .TP
 .B auto\-remove \fR[\fITARGET\fR]
@@ -181,13 +184,27 @@ Recover backed up changes from trash
 
 .SS Interactive Selection (requires fzf)
 .TP
-.B select
-Interactive worktree selector
+.B select \fR[\fIOPTIONS\fR]
+Interactive worktree selector with preview, keybindings, and query support.
+.RS
 .TP
-.B pick
-Interactive select with auto-use
+.BR \-q ", " \-\-query " " \fITEXT\fR
+Pre-fill search query
+.TP
+.BR \-d ", " \-\-dirty
+Only show dirty worktrees
+.RE
 
 .SS Metadata
+.TP
+.B meta\fR|\fBm \fIKEY\fR
+Get metadata field from current worktree (shortcut).
+.TP
+.B meta\fR|\fBm \fIKEY\fR \fIVALUE\fR
+Set metadata field on current worktree (shortcut).
+.TP
+.B meta \fI"text with spaces"\fR
+Set description on current worktree (space heuristic).
 .TP
 .B meta list
 List all metadata
@@ -197,6 +214,19 @@ Show metadata for worktree
 .TP
 .B meta set \fINAME\fR \fIFIELD\fR \fIVALUE\fR
 Update metadata field
+
+.SS Steps (Pwtfile Automation)
+.TP
+.B steps
+List available step functions from the project Pwtfile.
+.TP
+.B step \fINAME\fR [\fIARGS\fR]
+Run a single step function (defined as step_NAME() in Pwtfile).
+
+.SS Project Alias
+.TP
+.B alias \fR[\fINAME\fR|\fB\-\-clear\fR]
+Set a short alias for the current project. Without arguments, shows current alias.
 
 .SS Plugins
 .TP

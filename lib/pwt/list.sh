@@ -112,8 +112,11 @@ check_merge_status() {
 
     # Check for uncommitted changes (staged, modified, or untracked)
     local has_changes=false
-    local git_status=$(git -C "$dir" status --porcelain 2>/dev/null)
-    if [ -n "$git_status" ]; then
+    local counts
+    counts=$(git_status_counts "$dir")
+    local staged modified untracked entries
+    read -r staged modified untracked entries <<< "$counts"
+    if [ "$entries" -gt 0 ]; then
         has_changes=true
     fi
 
@@ -164,10 +167,11 @@ cmd_list_porcelain() {
 
             # Check for uncommitted changes
             local is_dirty=false
-            local staged=$(git -C "$dir" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
-            local unstaged=$(git -C "$dir" diff --numstat 2>/dev/null | wc -l | tr -d ' ')
-            local untracked=$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
-            if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
+            local counts
+            counts=$(git_status_counts "$dir")
+            local staged modified untracked entries
+            read -r staged modified untracked entries <<< "$counts"
+            if [ "$entries" -gt 0 ]; then
                 is_dirty=true
             fi
 
@@ -702,14 +706,15 @@ cmd_list_verbose() {
                 # Check for uncommitted changes
                 local changes=""
                 local is_dirty=false
-                local staged=$(git -C "$dir" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
-                local unstaged=$(git -C "$dir" diff --numstat 2>/dev/null | wc -l | tr -d ' ')
-                local untracked=$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
-                if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
+                local counts
+                counts=$(git_status_counts "$dir")
+                local staged modified untracked entries
+                read -r staged modified untracked entries <<< "$counts"
+                if [ "$entries" -gt 0 ]; then
                     is_dirty=true
                     local parts=()
                     [ "$staged" -gt 0 ] && parts+=("${staged} staged")
-                    [ "$unstaged" -gt 0 ] && parts+=("${unstaged} modified")
+                    [ "$modified" -gt 0 ] && parts+=("${modified} modified")
                     [ "$untracked" -gt 0 ] && parts+=("${untracked} untracked")
                     changes=$(IFS=', '; echo "${parts[*]}")
                 fi
@@ -862,7 +867,11 @@ cmd_tree() {
         # Main app
         local main_branch=$(git -C "$main_app" branch --show-current 2>/dev/null || echo "?")
         local main_status=""
-        if [ -n "$(git -C "$main_app" status --porcelain 2>/dev/null)" ]; then
+        local main_counts
+        main_counts=$(git_status_counts "$main_app")
+        local main_staged main_modified main_untracked main_entries
+        read -r main_staged main_modified main_untracked main_entries <<< "$main_counts"
+        if [ "$main_entries" -gt 0 ]; then
             main_status=" ${RED}*${NC}"
         fi
         if [ "$short_mode" = true ]; then
@@ -890,9 +899,12 @@ cmd_tree() {
                 # Status
                 local status_text=""
                 local is_dirty=false
-                if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
-                    local dirty_count=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-                    status_text=" ${RED}*${dirty_count}${NC}"
+                local counts
+                counts=$(git_status_counts "$dir")
+                local staged modified untracked entries
+                read -r staged modified untracked entries <<< "$counts"
+                if [ "$entries" -gt 0 ]; then
+                    status_text=" ${RED}*${entries}${NC}"
                     is_dirty=true
                 fi
 

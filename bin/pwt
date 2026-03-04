@@ -71,7 +71,7 @@ DEFAULT_BRANCH=""  # Detected from remote (master or main)
 BASE_PORT=5000
 
 # Version
-PWT_VERSION="0.1.9"
+PWT_VERSION="0.1.10"
 PWT_VERSION_CHECK_URL="https://api.github.com/repos/jonasporto/pwt/releases/latest"
 PWT_VERSION_CACHE="$PWT_DIR/version-check"
 PWT_VERSION_CACHE_TTL=18000  # 5 hours
@@ -157,6 +157,8 @@ EXIT_CONFLICT=4     # Conflict (already exists, port in use)
 # Output control (set via --quiet or --verbose flags)
 PWT_QUIET=false
 PWT_VERBOSE=false
+PWT_BG=false        # --bg: daemonize Pwtfile execution
+PWT_NO_INPUT=false  # --no-input: close stdin, set PWT_AGENT=1
 
 # Performance: List cache and fetch state
 LIST_CACHE_DIR="$PWT_DIR/cache"
@@ -195,6 +197,28 @@ pwt_debug() {
 
 pwt_error() {
     echo -e "${RED}$*${NC}" >&2
+}
+
+# Strip --bg and --no-input from arguments, setting globals instead
+# Uses string concatenation (not arrays) to avoid empty array issues with set -u
+_strip_pwt_execution_flags() {
+    local result=""
+    local first=true
+    for arg in "$@"; do
+        case "$arg" in
+            --bg)       PWT_BG=true ;;
+            --no-input) PWT_NO_INPUT=true ;;
+            *)
+                if [ "$first" = true ]; then
+                    result="$arg"
+                    first=false
+                else
+                    result="$result $arg"
+                fi
+                ;;
+        esac
+    done
+    printf '%s' "$result"
 }
 
 # Find similar string from a list (for "did you mean?" suggestions)
@@ -1253,6 +1277,18 @@ get_metadata() {
         '.[$project][$name][$field] // empty' "$METADATA_FILE" 2>/dev/null
 }
 
+# Get port for a worktree, with legacy fallback
+# Tries metadata first, then falls back to extracting from directory name (-XXXX suffix)
+# Usage: get_worktree_port <name>
+get_worktree_port() {
+    local name="$1"
+    local port=$(get_metadata "$name" "port")
+    if [ -z "$port" ] && [[ "$name" =~ -([0-9]{4})$ ]]; then
+        port="${BASH_REMATCH[1]}"
+    fi
+    echo "$port"
+}
+
 # Get extra metadata fields as key=value string (for Meta column in list)
 # Excludes fields already shown as columns: path, branch, base, base_commit, created_at, mode
 # Shows: port, description, and any custom fields (only if non-empty)
@@ -1829,26 +1865,153 @@ run_single_pwtfile() {
         return 0  # Function doesn't exist, skip silently
     fi
 
+    # --bg: delegate to background execution
+    if [ "$PWT_BG" = true ]; then
+        _run_pwtfile_bg "$pwtfile" "$phase" "$label"
+        return $?
+    fi
+
     echo -e "${BLUE}Running $label ($phase)...${NC}"
-    (
-        cd "$PWT_WORKTREE_PATH"
-        # Make helpers available
-        env() { pwtfile_env "$@"; }
-        replace() { pwtfile_replace "$@"; }
-        replace_literal() { pwtfile_replace_literal "$@"; }
-        replace_re() { pwtfile_replace_re "$@"; }
-        database() { pwtfile_database "$@"; }
-        rake() { pwtfile_rake "$@"; }
-        run() { pwtfile_run "$@"; }
+    if [ "$PWT_NO_INPUT" = true ]; then
+        export PWT_AGENT=1
+        (
+            cd "$PWT_WORKTREE_PATH"
+            # Make helpers available
+            env() { pwtfile_env "$@"; }
+            replace() { pwtfile_replace "$@"; }
+            replace_literal() { pwtfile_replace_literal "$@"; }
+            replace_re() { pwtfile_replace_re "$@"; }
+            database() { pwtfile_database "$@"; }
+            rake() { pwtfile_rake "$@"; }
+            run() { pwtfile_run "$@"; }
 
-        source "$pwtfile"
+            source "$pwtfile"
 
-        # Call the phase function if it exists
-        if type "$phase" &>/dev/null; then
-            "$phase"
-        fi
-    )
+            # Call the phase function if it exists
+            if type "$phase" &>/dev/null; then
+                "$phase"
+            fi
+        ) </dev/null
+    else
+        (
+            cd "$PWT_WORKTREE_PATH"
+            # Make helpers available
+            env() { pwtfile_env "$@"; }
+            replace() { pwtfile_replace "$@"; }
+            replace_literal() { pwtfile_replace_literal "$@"; }
+            replace_re() { pwtfile_replace_re "$@"; }
+            database() { pwtfile_database "$@"; }
+            rake() { pwtfile_rake "$@"; }
+            run() { pwtfile_run "$@"; }
+
+            source "$pwtfile"
+
+            # Call the phase function if it exists
+            if type "$phase" &>/dev/null; then
+                "$phase"
+            fi
+        )
+    fi
     echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
+}
+
+# Run a Pwtfile phase in the background as a daemon
+# Uses perl double-fork + setsid to fully detach from parent
+_run_pwtfile_bg() {
+    local pwtfile="$1"
+    local phase="$2"
+    local label="$3"
+
+    load_module jobs
+    local worktree="${PWT_WORKTREE:-unknown}"
+    local project="${PWT_PROJECT:-unknown}"
+
+    # Check for duplicate
+    local dup_id
+    if dup_id=$(check_duplicate_job "$worktree" "$phase"); then
+        pwt_error "Already running: $phase for $worktree (job: $dup_id)"
+        pwt_error "Stop with: pwt jobs stop $dup_id"
+        return $EXIT_CONFLICT
+    fi
+
+    local job_id=$(_generate_job_id "$worktree" "$phase")
+    local log_file="$PWT_JOBS_DIR/${job_id}.log"
+    local pid_file="$PWT_JOBS_DIR/${job_id}.pid"
+    _init_jobs_dir
+
+    # Build a self-contained bash script for background execution
+    local bg_script="$PWT_JOBS_DIR/${job_id}.sh"
+    cat > "$bg_script" << BGEOF
+#!/usr/bin/env bash
+export PWT_PORT='${PWT_PORT:-}'
+export PWT_WORKTREE='${PWT_WORKTREE:-}'
+export PWT_WORKTREE_PATH='${PWT_WORKTREE_PATH:-}'
+export PWT_BRANCH='${PWT_BRANCH:-}'
+export PWT_TICKET='${PWT_TICKET:-}'
+export PWT_PROJECT='${PWT_PROJECT:-}'
+export PWT_ARGS='${PWT_ARGS:-}'
+export PWT_AGENT='${PWT_AGENT:-0}'
+export MAIN_APP='${MAIN_APP:-}'
+cd '${PWT_WORKTREE_PATH}' || exit 1
+source '${pwtfile}'
+type '${phase}' &>/dev/null && '${phase}'
+BGEOF
+    chmod +x "$bg_script"
+
+    # Use perl double-fork daemon pattern
+    # This creates a truly detached process that won't be waited on by parent
+    perl -e '
+        use POSIX qw(setsid);
+        my $pid = fork();
+        if ($pid == 0) {
+            setsid();
+            open(STDIN, "<", "/dev/null");
+            open(STDOUT, ">", $ARGV[1]);
+            open(STDERR, ">&STDOUT");
+            exec("/bin/bash", $ARGV[0]) or die "exec failed: $!";
+        }
+        open(my $fh, ">", $ARGV[2]);
+        print $fh "$pid\n";
+        close($fh);
+    ' "$bg_script" "$log_file" "$pid_file"
+
+    # Read the PID from the file
+    local bg_pid=""
+    if [ -f "$pid_file" ]; then
+        bg_pid=$(cat "$pid_file")
+        rm -f "$pid_file"
+    fi
+
+    if [ -z "$bg_pid" ]; then
+        pwt_error "Background job failed to start (no PID)"
+        rm -f "$bg_script" 2>/dev/null
+        return $EXIT_ERROR
+    fi
+
+    # Grace period: verify startup
+    sleep 2
+    if kill -0 "$bg_pid" 2>/dev/null; then
+        local pgid
+        pgid=$(ps -o pgid= -p "$bg_pid" 2>/dev/null | tr -d ' ')
+        _save_job "$job_id" "$bg_pid" "${pgid:-$bg_pid}" "$phase" "$worktree" "$project" "$log_file"
+
+        if [ "$PWT_QUIET" = true ]; then
+            echo "{\"job_id\":\"$job_id\",\"pid\":$bg_pid,\"log\":\"$log_file\"}"
+        else
+            echo -e "${GREEN}✓${NC} Background job started"
+            echo "{\"job_id\":\"$job_id\",\"pid\":$bg_pid,\"log\":\"$log_file\"}"
+            echo ""
+            echo "  pwt jobs logs $job_id       # view output"
+            echo "  pwt jobs logs $job_id -f    # follow output"
+            echo "  pwt jobs stop $job_id       # stop"
+        fi
+    else
+        pwt_error "Background job failed to start"
+        echo "Last output:" >&2
+        tail -20 "$log_file" 2>/dev/null >&2 || echo "(no output)" >&2
+        rm -f "$PWT_JOBS_DIR/${job_id}.json" 2>/dev/null
+        return $EXIT_ERROR
+    fi
 }
 
 # Check if a command exists in a specific file
@@ -1936,8 +2099,8 @@ run_pwtfile_command() {
         PWT_BRANCH=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "master")
     fi
 
-    # Pass arguments to the command via environment
-    export PWT_ARGS="$*"
+    # Pass arguments to the command via environment (strip --bg/--no-input)
+    export PWT_ARGS="$(_strip_pwt_execution_flags "$@")"
 
     run_pwtfile "$cmd"
 }
@@ -1957,6 +2120,7 @@ run_pwtfile() {
     export PWT_TICKET="${PWT_TICKET:-}"
     export PWT_PROJECT="${PWT_PROJECT:-$CURRENT_PROJECT}"
     export PWT_ARGS="${PWT_ARGS:-}"
+    export PWT_AGENT="${PWT_AGENT:-0}"
     export MAIN_APP="${MAIN_APP:-}"
 
     # Back-compat aliases (short names)
@@ -2181,28 +2345,69 @@ check_server_status() {
 # Start the server using Pwtfile's server() function
 # Usage: cmd_server [worktree]
 cmd_server() {
-    # Handle --help before any processing
-    if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-        echo "Usage: pwt server [worktree]"
-        echo ""
-        echo "Start development server for a worktree."
-        echo ""
-        echo "Arguments:"
-        echo "  worktree        Worktree name (default: current worktree or symlink)"
-        echo ""
-        echo "Options:"
-        echo "  -h, --help      Show this help"
-        echo ""
-        echo "Detection order:"
-        echo "  1. Argument provided: pwt server ACME-1234-50XX"
-        echo "  2. Inside worktree directory"
-        echo "  3. Current symlink set via 'pwt use'"
-        echo ""
-        echo "Server runs on port from worktree metadata (usually 50XX)."
-        return 0
+    # Parse server-specific flags (--bg, --no-input, --help)
+    # Separate worktree arg from pwtfile args (like --sidekiq)
+    local worktree_arg=""
+    local pwtfile_args=""
+    local pwtfile_first=true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                echo "Usage: pwt server|s [worktree] [--bg] [--no-input]"
+                echo ""
+                echo "Start development server for a worktree."
+                echo ""
+                echo "Arguments:"
+                echo "  worktree        Worktree name (default: current worktree or symlink)"
+                echo ""
+                echo "Options:"
+                echo "  --bg            Run server in background (daemonize)"
+                echo "  --no-input      Close stdin and set PWT_AGENT=1"
+                echo "  -h, --help      Show this help"
+                echo ""
+                echo "Detection order:"
+                echo "  1. Argument provided: pwt server ACME-1234-50XX"
+                echo "  2. Inside worktree directory"
+                echo "  3. Current symlink set via 'pwt use'"
+                echo ""
+                echo "Server runs on port from worktree metadata (usually 50XX)."
+                return 0
+                ;;
+            --bg)       PWT_BG=true; shift ;;
+            --no-input) PWT_NO_INPUT=true; shift ;;
+            -*)
+                # Flags like --sidekiq go to pwtfile args
+                if [ "$pwtfile_first" = true ]; then
+                    pwtfile_args="$1"
+                    pwtfile_first=false
+                else
+                    pwtfile_args="$pwtfile_args $1"
+                fi
+                shift
+                ;;
+            *)
+                if [ -z "$worktree_arg" ]; then
+                    worktree_arg="$1"
+                else
+                    # Extra positional args go to pwtfile args
+                    if [ "$pwtfile_first" = true ]; then
+                        pwtfile_args="$1"
+                        pwtfile_first=false
+                    else
+                        pwtfile_args="$pwtfile_args $1"
+                    fi
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Pass pwtfile args via PWT_ARGS
+    if [ -n "$pwtfile_args" ]; then
+        export PWT_ARGS="$pwtfile_args"
     fi
 
-    local arg="${1:-}"
+    local arg="$worktree_arg"
     local current_dir=$(pwd)
     local worktree_name=""
     local worktree_path=""
@@ -2273,6 +2478,17 @@ cmd_server() {
 
     echo -e "${BLUE}Starting server on port $port...${NC}"
 
+    # Pre-check for duplicate background jobs (run_pwtfile uses || true which swallows errors)
+    if [ "$PWT_BG" = true ]; then
+        load_module jobs
+        local dup_id
+        if dup_id=$(check_duplicate_job "$worktree_name" "server"); then
+            pwt_error "Already running: server for $worktree_name (job: $dup_id)"
+            pwt_error "Stop with: pwt jobs stop $dup_id"
+            return $EXIT_CONFLICT
+        fi
+    fi
+
     # Actually cd to worktree path (for Pwtfile commands that use pwd)
     cd "$worktree_path" || exit 1
 
@@ -2293,6 +2509,29 @@ cmd_current() {
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
+            -h|--help)
+                echo "Usage: pwt current [options]"
+                echo ""
+                echo "Show the currently active worktree."
+                echo ""
+                echo "Options:"
+                echo "  --name       Output only the worktree name"
+                echo "  --port       Output only the port number"
+                echo "  --branch     Output only the branch name"
+                echo "  --path       Output only the worktree path"
+                echo "  --json       Output full context as JSON"
+                echo "  --resolved   Show resolved symlink path"
+                echo ""
+                echo "Detection order:"
+                echo "  1. Current directory (if inside a worktree)"
+                echo "  2. 'current' symlink (set via 'pwt use')"
+                echo ""
+                echo "Examples:"
+                echo "  pwt current              # show current worktree"
+                echo "  pwt current --port       # get port for scripts"
+                echo "  pwt current --json       # full context as JSON"
+                return 0
+                ;;
             --name) format="name"; shift ;;
             --port) format="port"; shift ;;
             --branch) format="branch"; shift ;;
@@ -2520,7 +2759,9 @@ cmd_ps1() {
 }
 
 # Helper for pwt use --select (interactive picker)
+# Usage: _use_interactive_select [query]
 _use_interactive_select() {
+    local initial_query="${1:-}"
     # Check if fzf is installed
     if ! command -v fzf &>/dev/null; then
         pwt_error "Error: fzf is required for pwt use --select"
@@ -2578,7 +2819,8 @@ _use_interactive_select() {
         --ansi \
         --header=$'Select worktree to set as current\n↵:use  Esc:cancel' \
         --preview="$preview_cmd" \
-        --preview-window=right:45%:wrap)
+        --preview-window=right:45%:wrap \
+        ${initial_query:+--query="$initial_query"})
 
     if [ -z "$selected" ]; then
         exit 0
@@ -2606,7 +2848,26 @@ cmd_use() {
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
-            --select|-s)
+            -h|--help)
+                echo "Usage: pwt use <worktree> [options]"
+                echo ""
+                echo "Switch the current worktree symlink."
+                echo ""
+                echo "Arguments:"
+                echo "  worktree     Target worktree name (supports partial match)"
+                echo "  @            Switch to main app"
+                echo ""
+                echo "Options:"
+                echo "  -s, --select   Interactive picker (fzf)"
+                echo ""
+                echo "Examples:"
+                echo "  pwt use TICKET-123     # switch by name"
+                echo "  pwt use 123            # partial match"
+                echo "  pwt use @              # switch to main app"
+                echo "  pwt use --select       # interactive picker"
+                return 0
+                ;;
+            -s|--select)
                 use_select=true
                 shift
                 ;;
@@ -2623,7 +2884,7 @@ cmd_use() {
 
     # Interactive selection mode
     if [ "$use_select" = true ]; then
-        _use_interactive_select
+        _use_interactive_select "$target"
         return $?
     fi
 
@@ -2726,6 +2987,7 @@ cmd_info() {
         echo ""
         echo "Arguments:"
         echo "  worktree  Name of the worktree (optional if inside one)"
+        echo "  @         Main app"
         echo ""
         echo "Information shown:"
         echo "  - Branch and tracking information"
@@ -2733,6 +2995,11 @@ cmd_info() {
         echo "  - Server status"
         echo "  - Creation metadata"
         echo "  - Git status (dirty files)"
+        echo ""
+        echo "Examples:"
+        echo "  pwt info              # info for current worktree"
+        echo "  pwt info TICKET-123   # info for specific worktree"
+        echo "  pwt info @            # info for main app"
         return 0
     fi
 
@@ -2768,15 +3035,8 @@ cmd_info() {
     fi
 
     # Extract information
-    local port=$(get_metadata "$name" "port")
-    if [ -z "$port" ]; then
-        # Legacy: extract from directory name if ends with -XXXX
-        if [[ "$name" =~ -([0-9]{4})$ ]]; then
-            port="${BASH_REMATCH[1]}"
-        else
-            port="-"
-        fi
-    fi
+    local port=$(get_worktree_port "$name")
+    [ -z "$port" ] && port="-"
     local ticket="$name"
     local branch=$(git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "detached")
     local upstream=$(git -C "$worktree_dir" rev-parse --abbrev-ref "${branch}@{upstream}" 2>/dev/null || echo "-")
@@ -2836,6 +3096,24 @@ cmd_info() {
 cmd_fix_port() {
     local name="$1"
 
+    if [[ "$name" == "-h" || "$name" == "--help" ]]; then
+        echo "Usage: pwt fix-port [worktree]"
+        echo ""
+        echo "Resolve port conflicts for a worktree."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree   Target worktree (optional if inside one)"
+        echo ""
+        echo "When a port conflict is detected, offers:"
+        echo "  - Kill the process using the port"
+        echo "  - Reallocate to a new port"
+        echo ""
+        echo "Examples:"
+        echo "  pwt fix-port              # fix port for current worktree"
+        echo "  pwt fix-port TICKET-123   # fix port for specific worktree"
+        return 0
+    fi
+
     # Normalize: strip trailing slash (from shell completion)
     name="${name%/}"
 
@@ -2860,13 +3138,7 @@ cmd_fix_port() {
     fi
 
     # Get current port from metadata, fallback to directory name
-    local old_port=$(get_metadata "$name" "port")
-    if [ -z "$old_port" ]; then
-        # Legacy: extract from directory name if ends with -XXXX
-        if [[ "$name" =~ -([0-9]{4})$ ]]; then
-            old_port="${BASH_REMATCH[1]}"
-        fi
-    fi
+    local old_port=$(get_worktree_port "$name")
 
     if [ -z "$old_port" ] || ! [[ "$old_port" =~ ^[0-9]+$ ]]; then
         pwt_error "Error: Could not find port for worktree: $name"
@@ -2975,14 +3247,56 @@ cmd_fix_port() {
 # Command: meta
 # View or edit worktree metadata
 cmd_meta() {
-    local action="$1"
-    local name="$2"
-    local field="$3"
-    local value="$4"
+    local action="${1:-}"
+    local name="${2:-}"
+    local field="${3:-}"
+    local value="${4:-}"
 
     init_metadata
 
     local project="${CURRENT_PROJECT:-unknown}"
+
+    # Shortcut: pwt meta <key> [value] for current worktree
+    # Also: pwt meta "text with spaces" → sets description (same heuristic as create)
+    if [[ -n "$action" && ! "$action" =~ ^(list|show|set|get|delete|import|export|help|--help|-h)$ ]]; then
+        local key="$action"
+        local shortcut_value="$name"
+        local current_dir=$(pwd)
+        local current_name=""
+
+        # Heuristic: text with spaces = description value
+        # (no metadata key has spaces, same logic as pwt create)
+        if [[ "$action" == *" "* ]]; then
+            key="description"
+            shortcut_value="$action"
+        fi
+
+        # Detect current worktree from pwd or symlink
+        if current_name=$(get_current_from_symlink 2>/dev/null); then
+            : # got it from symlink
+        elif [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+            current_name=$(basename "$current_dir")
+        fi
+
+        if [ -z "$current_name" ] || [ "$current_name" = "@" ]; then
+            pwt_error "Not in a worktree"
+            return 1
+        fi
+
+        if [ -z "$shortcut_value" ]; then
+            # GET: pwt meta description
+            local result=$(get_metadata "$current_name" "$key")
+            if [ -n "$result" ]; then
+                echo "$result"
+            fi
+        else
+            # SET: pwt meta description "some text"
+            update_metadata "$current_name" "$key" "$shortcut_value"
+            echo -e "${GREEN}✓ $current_name.$key = $shortcut_value${NC}"
+            clear_list_cache
+        fi
+        return $?
+    fi
 
     case "$action" in
         ""|list)
@@ -3028,20 +3342,144 @@ cmd_meta() {
             clear_list_cache  # Invalidate cache so next list shows updated metadata
             ;;
         -h|--help|help)
-            echo "Usage: pwt meta [command] [args]"
-            echo ""
-            echo "Manage worktree metadata."
-            echo ""
-            echo "Commands:"
-            echo "  list                           List all worktree metadata (default)"
-            echo "  show <worktree>                Show metadata for a worktree"
-            echo "  set <worktree> <field> <value> Update a metadata field"
-            echo "  import                         Import metadata for existing worktrees"
-            echo ""
-            echo "Fields: branch, base, description, port"
-            echo ""
-            echo "Options:"
-            echo "  -h, --help, help    Show this help"
+            cat << 'HELP'
+Usage: pwt meta [command] [args]
+       pwt meta "text with spaces"   (set description on current worktree)
+       pwt meta <key> [value]        (get/set field on current worktree)
+
+Manage worktree metadata - descriptions, ports, and custom fields.
+Metadata helps you find and identify worktrees across pwt commands.
+
+COMMANDS:
+  list                           List all metadata (default)
+  show <worktree>                Show metadata for one worktree
+  set <worktree> <field> <value> Set a field on any worktree
+  import                         Import existing worktrees
+
+SHORTCUT (from inside a worktree):
+  pwt meta "text with spaces"    Set description (spaces = description)
+  pwt meta <key>                 Get a field
+  pwt meta <key> <value>         Set a field
+
+FIELDS:
+  description    Free text describing the worktree purpose
+  port           Port number for dev servers (auto-allocated)
+  marker         Visual marker for lists (emoji or text)
+  <custom>       Any custom field you want (e.g., env, reviewer)
+
+═══════════════════════════════════════════════════════════════════════
+WHERE METADATA APPEARS
+═══════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ pwt list                                                        │
+  │ Shows description and port in the Meta column                   │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ Worktree       Branch              Status   Meta                │
+  │ ─────────────────────────────────────────────────────────────── │
+  │ TICKET-123     fix/TICKET-123      ✓ clean  port=3001           │
+  │                                             description=auth bug│
+  │ TICKET-456     feat/TICKET-456     ● dirty  port=3002           │
+  │                                             description=new API │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ pwt select                                                      │
+  │ Shows port and description in the fzf picker                    │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ TICKET-123  fix/TICKET-123   :3001  ·  auth bug                 │
+  │ TICKET-456  feat/TICKET-456  :3002  ·  new API                  │
+  │ @           main             ·      ·  main app                 │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ pwt info TICKET-123                                             │
+  │ Shows all metadata fields                                       │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ Worktree: TICKET-123                                            │
+  │ Branch:   fix/TICKET-123                                        │
+  │ Port:     3001                                                  │
+  │ Desc:     auth bug                                              │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ pwt cd <search>                                                 │
+  │ Searches BOTH name AND description (case-insensitive)           │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ $ pwt cd auth            # partial match                        │
+  │ $ pwt cd "login bug"     # multi-word search                    │
+  │ $ pwt cd "au bug"        # no match? fzf does fuzzy search      │
+  │                                                                 │
+  │ No match or multiple? Opens fzf for fuzzy selection             │
+  └─────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+EXAMPLES
+═══════════════════════════════════════════════════════════════════════
+
+  Setting description (quickest - text with spaces = description):
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta "fixing login auth bug"                              │
+  │ ✓ TICKET-123.description = fixing login auth bug                │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Setting description (explicit key):
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta description "fixing login auth bug"                  │
+  │ ✓ TICKET-123.description = fixing login auth bug                │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Setting description (on any worktree, from anywhere):
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta set TICKET-123 description "fixing login auth bug"   │
+  │ ✓ Updated TICKET-123.description = fixing login auth bug        │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Getting a field value:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta port                                                 │
+  │ 3001                                                            │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Viewing all metadata:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta show TICKET-123                                      │
+  │ {                                                               │
+  │   "port": 3001,                                                 │
+  │   "description": "fixing login auth bug",                       │
+  │   "branch": "fix/TICKET-123",                                   │
+  │   "created_at": "2024-01-15T10:30:00"                           │
+  │ }                                                               │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Adding custom fields:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ $ pwt meta set TICKET-123 reviewer "@john"                      │
+  │ $ pwt meta set TICKET-123 env staging                           │
+  │ # Custom fields show in pwt list and pwt info                   │
+  └─────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+WORKFLOW TIPS
+═══════════════════════════════════════════════════════════════════════
+
+  Description flows naturally through the entire workflow:
+
+     # 1. Create with description
+     $ pwt create TICKET-123 "auth: fix session timeout"
+
+     # 2. Or set later (from inside worktree)
+     $ pwt meta "auth: fix session timeout"
+
+     # 3. Find by description
+     $ pwt cd timeout           # partial match
+     $ pwt cd "session timeout" # multi-word
+     $ pwt cd "ses time"        # no match? fzf fuzzy search
+
+     # 4. See in lists
+     $ pwt list                 # Meta column shows description
+     $ pwt select               # fzf picker shows description
+HELP
             return 0
             ;;
         import)
@@ -3094,6 +3532,28 @@ cmd_meta() {
 # Usage: pwt alias [<alias>|--clear]
 cmd_alias() {
     local new_alias="${1:-}"
+
+    if [[ "$new_alias" == "-h" || "$new_alias" == "--help" ]]; then
+        echo "Usage: pwt alias [<name>|--clear]"
+        echo ""
+        echo "Set a short alias for the current project."
+        echo ""
+        echo "Arguments:"
+        echo "  name       New alias (must not conflict with commands)"
+        echo "  --clear    Remove current alias"
+        echo "  (none)     Show current alias"
+        echo ""
+        echo "Examples:"
+        echo "  pwt alias            # show current alias"
+        echo "  pwt alias api        # set alias to 'api'"
+        echo "  pwt alias --clear    # remove alias"
+        echo ""
+        echo "Once aliased, use it anywhere:"
+        echo "  pwt api list         # same as pwt my-long-project list"
+        echo "  pwt api cd TICKET    # same as pwt my-long-project cd TICKET"
+        return 0
+    fi
+
     local config_file="$PROJECTS_DIR/$CURRENT_PROJECT/config.json"
 
     if [ ! -f "$config_file" ]; then
@@ -3160,12 +3620,14 @@ cmd_cd() {
     # Handle --help
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
         echo "Usage: pwt cd [worktree|@|-]"
+        echo "       pwt cd <term>      # search by name or description"
         echo "       pwt cd --select    # interactive picker (fzf)"
         echo ""
         echo "Navigate to a worktree (outputs path for shell integration)."
         echo ""
         echo "Arguments:"
         echo "  worktree  Name of the worktree"
+        echo "  <term>    Search term (matches name AND description)"
         echo "  @         Main app directory"
         echo "  -         Previous worktree (like cd -)"
         echo "  (none)    Last used worktree, or main"
@@ -3173,13 +3635,23 @@ cmd_cd() {
         echo "Options:"
         echo "  --select, -s    Interactive worktree selector (fzf)"
         echo ""
-        echo "Tip: Run 'eval \"\$(pwt shell-init)\"' for real cd integration."
+        echo "Search behavior:"
+        echo "  - Partial name match:  pwt cd auth"
+        echo "  - Description search:  pwt cd \"auth login\""
+        echo "  - If no match found, falls back to fzf for fuzzy selection"
+        echo ""
+        echo "Tip: Run '$(basename "$0") shell-init' for real cd integration."
         return 0
     fi
 
     # Handle --select flag
     if [[ "${1:-}" == "--select" || "${1:-}" == "-s" ]]; then
-        cmd_select
+        shift
+        if [ -n "${1:-}" ]; then
+            cmd_select --query "$1"
+        else
+            cmd_select
+        fi
         return $?
     fi
 
@@ -3252,13 +3724,30 @@ cmd_cd() {
         return 0
     fi
 
-    # Try partial match
+    # Try partial match by name
     local matches=()
     if [ -d "$WORKTREES_DIR" ]; then
         for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
             local name=$(basename "$dir")
             if [[ "$name" == *"$target"* ]]; then
                 matches+=("$dir")
+            fi
+        done
+    fi
+
+    # If no name matches, try searching in descriptions (case-insensitive)
+    if [ ${#matches[@]} -eq 0 ] && [ -d "$WORKTREES_DIR" ]; then
+        local target_lower=$(echo "$target" | tr '[:upper:]' '[:lower:]')
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local name=$(basename "$dir")
+            local desc=$(get_metadata "$name" "description" 2>/dev/null)
+            if [ -n "$desc" ]; then
+                local desc_lower=$(echo "$desc" | tr '[:upper:]' '[:lower:]')
+                if [[ "$desc_lower" == *"$target_lower"* ]]; then
+                    matches+=("$dir")
+                fi
             fi
         done
     fi
@@ -3269,11 +3758,23 @@ cmd_cd() {
         echo "${matches[0]%/}"
         return 0
     elif [ ${#matches[@]} -gt 1 ]; then
-        echo "Multiple matches for '$target':" >&2
-        for m in "${matches[@]}"; do
-            echo "  $(basename "${m%/}")" >&2
-        done
-        return 1
+        # Multiple matches: fallback to interactive select with query
+        if command -v fzf &>/dev/null && [ -t 0 ]; then
+            cmd_select --query "$target"
+            return $?
+        else
+            echo "Multiple matches for '$target':" >&2
+            for m in "${matches[@]}"; do
+                echo "  $(basename "${m%/}")" >&2
+            done
+            return 1
+        fi
+    fi
+
+    # No matches: try fzf fuzzy search as last resort (only if interactive)
+    if command -v fzf &>/dev/null && [ -t 0 ]; then
+        cmd_select --query "$target"
+        return $?
     fi
 
     echo "Worktree not found: $target" >&2
@@ -3372,7 +3873,7 @@ cmd_run() {
     local worktree_path=""
 
     # Try to resolve first arg as worktree
-    local maybe_wt="$1"
+    local maybe_wt="${1%/}"
     local maybe_path=""
 
     if [ "$maybe_wt" = "@" ]; then
@@ -3755,6 +4256,7 @@ cmd_editor_help() {
     echo "Usage:"
     echo "  pwt editor                      Open current in default editor"
     echo "  pwt editor TICKET               Open worktree in default editor"
+    echo "  pwt editor @                    Open main app in editor"
     echo "  pwt editor:sublime              Open current in sublime"
     echo "  pwt editor:sublime TICKET       Open worktree in sublime"
     echo "  pwt editor @                    Open main app"
@@ -3942,9 +4444,10 @@ cmd_ai_help() {
     echo "  pwt ai:<name> --default      Set default tool"
     echo ""
     echo "Usage:"
-    echo "  pwt ai                       Run default tool in main"
+    echo "  pwt ai                       Run default tool in current/main"
     echo "  pwt ai TICKET                Run default in worktree"
-    echo "  pwt ai:gemini                Run gemini in main"
+    echo "  pwt ai @                     Run default in main app"
+    echo "  pwt ai:gemini                Run gemini in current/main"
     echo "  pwt ai:gemini TICKET         Run gemini in worktree"
     echo "  pwt ai:codex -- --full-auto  Run with extra args"
     echo "  pwt ai:gemini --add          Add to config + run"
@@ -4072,7 +4575,24 @@ cmd_ai() {
 # Usage: pwt open [worktree]
 cmd_open() {
     local target="${1:-}"
+    target="${target%/}"
     local worktree_path
+
+    if [[ "$target" == "-h" || "$target" == "--help" ]]; then
+        echo "Usage: pwt open [worktree]"
+        echo ""
+        echo "Open a worktree directory in Finder."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree   Target worktree (optional, default: main app)"
+        echo "  @          Main app directory"
+        echo ""
+        echo "Examples:"
+        echo "  pwt open              # open main app"
+        echo "  pwt open TICKET-123   # open worktree"
+        echo "  pwt open @            # open main app"
+        return 0
+    fi
 
     if [ -z "$target" ] || [ "$target" = "@" ]; then
         worktree_path="$MAIN_APP"
@@ -4176,7 +4696,7 @@ cmd_copy() {
     shift 2
 
     if [ -z "$src" ] || [ -z "$dest" ] || [ $# -eq 0 ]; then
-        echo -e "${RED}Usage: pwt copy <src> <dest> <patterns...>${NC}"
+        echo -e "${RED}Usage: pwt copy|cp <src> <dest> <patterns...>${NC}"
         echo "  src/dest can be @ for main app"
         echo ""
         echo "Examples:"
@@ -4294,6 +4814,41 @@ cmd_doctor() {
         echo -e "${YELLOW}⚠${NC} fzf: not installed (needed for --select option)"
     fi
 
+    # Check shell integration
+    local cmd_name
+    cmd_name=$(basename "$0")
+    local user_shell
+    user_shell=$(basename "${SHELL:-bash}")
+    local shell_init_ok=false
+    case "$user_shell" in
+        fish)
+            local fish_config="${HOME}/.config/fish/config.fish"
+            if [ -f "$fish_config" ] && grep -q "shell-init.*fish" "$fish_config" 2>/dev/null; then
+                shell_init_ok=true
+            fi
+            ;;
+        zsh)
+            local zshrc="${HOME}/.zshrc"
+            if [ -f "$zshrc" ] && grep -q "shell-init" "$zshrc" 2>/dev/null; then
+                shell_init_ok=true
+            fi
+            ;;
+        bash)
+            local bashrc="${HOME}/.bashrc"
+            local bash_profile="${HOME}/.bash_profile"
+            if { [ -f "$bashrc" ] && grep -q "shell-init" "$bashrc" 2>/dev/null; } || \
+               { [ -f "$bash_profile" ] && grep -q "shell-init" "$bash_profile" 2>/dev/null; }; then
+                shell_init_ok=true
+            fi
+            ;;
+    esac
+    if [ "$shell_init_ok" = true ]; then
+        echo -e "${GREEN}✓${NC} Shell integration: configured ($user_shell)"
+    else
+        echo -e "${YELLOW}⚠${NC} Shell integration: not configured (cd won't change directory)"
+        _show_shell_init_tip
+    fi
+
     echo ""
 
     # Check project configuration
@@ -4359,15 +4914,16 @@ cmd_doctor() {
 
 # Command: select
 # Interactive worktree selector using fzf
-# Usage: pwt select [--preview] [--dirty]
+# Usage: pwt select [--preview] [--dirty] [--query <text>]
 cmd_select() {
     local show_preview=true
     local show_dirty_only=false
+    local initial_query=""
 
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
-            --preview|-p)
+            -p|--preview)
                 show_preview=true
                 shift
                 ;;
@@ -4375,11 +4931,38 @@ cmd_select() {
                 show_preview=false
                 shift
                 ;;
-            --dirty)
+            -d|--dirty)
                 show_dirty_only=true
                 shift
                 ;;
+            -h|--help)
+                echo "Usage: pwt select [options]"
+                echo ""
+                echo "Interactive worktree selector with fzf."
+                echo ""
+                echo "Options:"
+                echo "  -p, --preview     Show preview pane (default)"
+                echo "  --no-preview      Hide preview pane"
+                echo "  -d, --dirty       Only show worktrees with changes"
+                echo "  -q, --query STR   Pre-fill search query"
+                echo ""
+                echo "Keybindings:"
+                echo "  Enter     Navigate to selected worktree"
+                echo "  Ctrl+E    Open in editor"
+                echo "  Ctrl+A    Open AI assistant"
+                echo "  Ctrl+O    Open in Finder"
+                echo "  Esc       Cancel"
+                return 0
+                ;;
+            -q|--query)
+                initial_query="$2"
+                shift 2
+                ;;
             *)
+                # Treat positional args as query
+                if [ -z "$initial_query" ]; then
+                    initial_query="$1"
+                fi
                 shift
                 ;;
         esac
@@ -4467,6 +5050,11 @@ cmd_select() {
         )
     fi
 
+    # Add initial query if provided
+    if [ -n "$initial_query" ]; then
+        fzf_opts+=(--query="$initial_query")
+    fi
+
     local selected
     selected=$(echo "$formatted" | fzf "${fzf_opts[@]}")
 
@@ -4547,7 +5135,7 @@ cmd_for_each() {
             PWT_WORKTREE_PATH="$wt_path"
             PWT_PORT=$(get_metadata "$wt_name" "port" 2>/dev/null || echo "")
             PWT_BRANCH=$(get_metadata "$wt_name" "branch" 2>/dev/null || echo "")
-            export PWT_ARGS="${*:2}"  # All args after command name
+            export PWT_ARGS="$(_strip_pwt_execution_flags "${@:2}")"  # All args after command name
             (
                 cd "$wt_path" || exit 1
                 run_pwtfile "$first_arg"
@@ -4588,6 +5176,20 @@ cmd_for_each() {
 # List available steps from Pwtfile (functions prefixed with step_)
 # Usage: pwt steps
 cmd_steps() {
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        echo "Usage: pwt steps"
+        echo ""
+        echo "List available steps from the project Pwtfile."
+        echo ""
+        echo "Steps are functions prefixed with 'step_' in the Pwtfile."
+        echo "Run them with: pwt step <name>"
+        echo ""
+        echo "Example Pwtfile:"
+        echo "  step_install() { bundle install; }"
+        echo "  step_seed()    { rails db:seed; }"
+        return 0
+    fi
+
     detect_project
     local pwtfile=$(get_project_pwtfile)
 
@@ -4620,6 +5222,22 @@ cmd_steps() {
 # Usage: pwt step <name> [args...]
 cmd_step() {
     local step_name="${1:-}"
+
+    if [[ "$step_name" == "-h" || "$step_name" == "--help" ]]; then
+        echo "Usage: pwt step <name> [args...]"
+        echo ""
+        echo "Run a single step from the project Pwtfile."
+        echo ""
+        echo "Arguments:"
+        echo "  name    Step name (without step_ prefix)"
+        echo "  args    Extra arguments (available as \$PWT_ARGS)"
+        echo ""
+        echo "Examples:"
+        echo "  pwt step install          # run step_install()"
+        echo "  pwt step seed --fresh     # run step_seed() with args"
+        echo "  pwt steps                 # list available steps"
+        return 0
+    fi
 
     if [ -z "$step_name" ]; then
         echo "Usage: pwt step <name>"
@@ -4672,9 +5290,69 @@ cmd_step() {
     fi
 
     shift  # Remove step name
-    export PWT_ARGS="$*"
+    export PWT_ARGS="$(_strip_pwt_execution_flags "$@")"
 
     run_single_pwtfile "$pwtfile" "$func_name" "Step"
+}
+
+# =============================================================================
+# Jobs Management
+# =============================================================================
+
+# Command: jobs
+# Manage background jobs started with --bg
+cmd_jobs() {
+    load_module jobs
+    local subcmd="${1:-list}"
+    case "$subcmd" in
+        -h|--help|help)
+            echo "Usage: pwt jobs [subcommand]"
+            echo ""
+            echo "Manage background jobs started with --bg."
+            echo ""
+            echo "Subcommands:"
+            echo "  list              List all jobs (default)"
+            echo "  logs <job-id> [-f] View job output (-f to follow)"
+            echo "  stop <job-id>     Stop a running job"
+            echo "  stop --all        Stop all running jobs"
+            echo "  clean             Remove stale job entries"
+            echo "  help              Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  pwt server --bg              # start server in background"
+            echo "  pwt jobs                     # list running jobs"
+            echo "  pwt jobs logs abc123         # view job output"
+            echo "  pwt jobs logs abc123 -f      # follow job output"
+            echo "  pwt jobs stop abc123         # stop a job"
+            echo "  pwt jobs stop --all          # stop all jobs"
+            return 0
+            ;;
+        list|ls)
+            _jobs_list_formatted
+            ;;
+        logs|log)
+            local follow=false
+            if [ "${3:-}" = "-f" ] || [ "${3:-}" = "--follow" ]; then
+                follow=true
+            fi
+            _tail_job_log "${2:-}" "$follow"
+            ;;
+        stop)
+            if [ "${2:-}" = "--all" ]; then
+                _stop_all_jobs
+            else
+                _stop_job "${2:-}"
+            fi
+            ;;
+        clean)
+            _clean_jobs
+            ;;
+        *)
+            pwt_error "Unknown jobs subcommand: $subcmd"
+            echo "Run 'pwt jobs help' for usage"
+            return $EXIT_USAGE
+            ;;
+    esac
 }
 
 # =============================================================================
@@ -4964,9 +5642,22 @@ show_help_brief() {
     echo "  restore [backup] [worktree]    Recover backed up changes from trash"
     echo "  doctor                         Check system health and configuration"
     echo "  shell-init                     Output shell function for cd integration"
-    echo "  meta [action] [args]           Manage worktree metadata"
+    echo "  meta|m [action] [args]         Manage worktree metadata"
+    echo "  alias [name|--clear]           Set project short alias"
+    echo "  steps                          List available Pwtfile steps"
+    echo "  step <name> [args]             Run a single Pwtfile step"
+    echo "  repair|fix [worktree]          Run repair hooks"
+    echo "  port [worktree]                Get worktree port number"
+    echo "  config [key] [value]           View/set project configuration"
     echo "  project [action] [args]        Manage project configs"
     echo "  plugin [action]                Manage plugins (list, install, create)"
+    echo "  jobs [subcommand]              Manage background jobs (list, logs, stop, clean)"
+    echo ""
+    echo "Global options:"
+    echo "  --bg                           Run Pwtfile command in background (daemonize)"
+    echo "  --no-input                     Close stdin and set PWT_AGENT=1"
+    echo "  --quiet                        Suppress non-essential output"
+    echo "  --verbose                      Show detailed output"
     echo ""
     echo "Project selection (in order of priority):"
     echo "  1. pwt <project> <command>     Project as first argument"
@@ -5014,6 +5705,20 @@ show_help_brief() {
 cmd_help() {
     local topic="${1:-}"
 
+    # Resolve command aliases
+    case "$topic" in
+        add) topic="create" ;;
+        rm) topic="remove" ;;
+        ls) topic="list" ;;
+        show) topic="info" ;;
+        cp) topic="copy" ;;
+        fix) topic="repair" ;;
+        cleanup) topic="auto_remove" ;;
+        m) topic="meta" ;;
+        s) topic="server" ;;
+        fix-port) topic="fix_port" ;;
+    esac
+
     case "$topic" in
         ""|brief)
             show_help_brief
@@ -5033,6 +5738,26 @@ cmd_help() {
         all|full)
             show_help_all
             ;;
+        # Module commands need their module loaded first
+        create|remove|repair|auto_remove)
+            load_module worktree
+            "cmd_$topic" --help
+            ;;
+        list)
+            load_module list
+            "cmd_$topic" --help
+            ;;
+        config|port)
+            load_module project
+            "cmd_$topic" --help
+            ;;
+        plugin)
+            load_module plugin
+            "cmd_$topic" --help
+            ;;
+        meta|cd|select|use|current|info|server|ai|status|run|restore|open|alias|diff|copy|doctor|steps|step|fix_port)
+            "cmd_$topic" --help
+            ;;
         *)
             echo "Unknown help topic: $topic"
             echo ""
@@ -5042,6 +5767,9 @@ cmd_help() {
             echo "  navigation  cd, use, multi-project"
             echo "  pwtfile     Syntax, hooks, helpers, examples"
             echo "  all         Everything (good for LLMs)"
+            echo ""
+            echo "Or use: pwt help <command>"
+            echo "  e.g. pwt help meta, pwt help cd, pwt help create"
             exit $EXIT_USAGE
             ;;
     esac
@@ -5052,8 +5780,10 @@ cmd_help() {
 # Usage: eval "$(pwt shell-init)"
 cmd_shell_init() {
     local shell="${1:-}"
+    local cmd_name
+    cmd_name=$(basename "$0")
     local pwt_path
-    pwt_path=$(which pwt 2>/dev/null || echo "$0")
+    pwt_path=$(which "$cmd_name" 2>/dev/null || echo "$0")
 
     if [ -z "$shell" ]; then
         shell=$(basename "${SHELL:-}")
@@ -5061,7 +5791,7 @@ cmd_shell_init() {
 
     case "$shell" in
         fish)
-            cat << 'EOF'
+            cat << 'EOF' | sed "s/__PWT_CMD__/$cmd_name/g"
 # pwt shell integration (fish)
 # Add to ~/.config/fish/config.fish:
 #   pwt shell-init fish | source
@@ -5175,7 +5905,7 @@ end
 # Update title on init
 _pwt_update_title
 
-function pwt
+function __PWT_CMD__
     set -l is_cd 0
     if test (count $argv) -ge 1
         if test "$argv[1]" = "cd"
@@ -5186,7 +5916,7 @@ function pwt
             if test (count $argv) -eq 1
                 set is_cd 1
             else if test "$argv[2]" = "-h"; or test "$argv[2]" = "--help"
-                command pwt $argv
+                command __PWT_CMD__ $argv
                 return $status
             else if string match -qr "^@" -- "$argv[2]"
                 set is_cd 1
@@ -5219,9 +5949,9 @@ function pwt
             set target "$PWT_PREVIOUS_PATH"
         else
             if test -n "$project"
-                set target (command pwt $project _cd $input 2>&1)
+                set target (command __PWT_CMD__ $project _cd $input 2>&1)
             else
-                set target (command pwt _cd $input 2>&1)
+                set target (command __PWT_CMD__ _cd $input 2>&1)
             end
             if test $status -ne 0; or test ! -d "$target"
                 echo "$target"
@@ -5246,10 +5976,10 @@ function pwt
     if test "$argv[1]" = "select"; or test "$argv[2]" = "select"
         set -l target ""
         if test "$argv[1]" = "select"
-            set target (command pwt _select $argv[2..-1] 2>&1)
+            set target (command __PWT_CMD__ _select $argv[2..-1] 2>&1)
         else
             set -l project "$argv[1]"
-            set target (command pwt $project _select $argv[3..-1] 2>&1)
+            set target (command __PWT_CMD__ $project _select $argv[3..-1] 2>&1)
         end
 
         if test $status -ne 0; or test -z "$target"
@@ -5273,7 +6003,7 @@ function pwt
     end
 
     if test "$argv[1]" = "use"; or test "$argv[2]" = "use"
-        command pwt $argv
+        command __PWT_CMD__ $argv
         set -l exit_code $status
 
         if string match -q "*/current" -- "$PWD"
@@ -5287,14 +6017,14 @@ function pwt
         return $exit_code
     end
 
-    command pwt $argv
+    command __PWT_CMD__ $argv
 end
 EOF
             ;;
         *)
             cat << EOF
-# pwt shell integration
-# Add to ~/.zshrc: eval "\$(pwt shell-init zsh)"
+# $cmd_name shell integration
+# Add to ~/.zshrc: eval "\$($cmd_name shell-init zsh)"
 
 # Helper: check if arg is a pwt project
 _pwt_is_project() {
@@ -5422,7 +6152,7 @@ fi
 # Update title on shell init
 _pwt_update_title
 
-pwt() {
+$cmd_name() {
     # Check if first arg is project and no command (pwt <project>) or cd command
     local _is_cd=false
     if [[ "\$1" == "cd" ]]; then
@@ -5621,6 +6351,25 @@ cmd_setup_shell() {
 
 
 
+# Show shell-init tip with instructions for the user's current shell
+_show_shell_init_tip() {
+    local cmd_name
+    cmd_name=$(basename "$0")
+    local user_shell
+    user_shell=$(basename "${SHELL:-bash}")
+    case "$user_shell" in
+        fish)
+            echo -e "${DIM}Tip: $cmd_name shell-init fish | source  (add to ~/.config/fish/config.fish)${NC}"
+            ;;
+        zsh)
+            echo -e "${DIM}Tip: eval \"\$($cmd_name shell-init zsh)\"  (add to ~/.zshrc)${NC}"
+            ;;
+        *)
+            echo -e "${DIM}Tip: eval \"\$($cmd_name shell-init bash)\"  (add to ~/.bashrc)${NC}"
+            ;;
+    esac
+}
+
 # Handle short flags that look like commands (before the main loop)
 case "${1:-}" in
     -v|-V)
@@ -5658,6 +6407,14 @@ while [[ "${1:-}" == --* ]]; do
             ;;
         --verbose)
             PWT_VERBOSE=true
+            shift
+            ;;
+        --bg)
+            PWT_BG=true
+            shift
+            ;;
+        --no-input)
+            PWT_NO_INPUT=true
             shift
             ;;
         *)
@@ -5726,7 +6483,7 @@ if [ -n "${1:-}" ]; then
                         PWT_PORT=$(get_metadata "$_wt_name" "port" 2>/dev/null || echo "")
                         PWT_BRANCH=$(get_metadata "$_wt_name" "branch" 2>/dev/null || echo "")
                     fi
-                    export PWT_ARGS="$*"
+                    export PWT_ARGS="$(_strip_pwt_execution_flags "$@")"
                     run_pwtfile "$_second_arg"
                     exit 0
                 fi
@@ -5825,7 +6582,8 @@ case "${1:-}" in
         ;;
     server|s)
         require_project
-        cmd_server "${2:-}"
+        shift
+        cmd_server "$@"
         ;;
     repair|fix)
         require_project
@@ -5846,7 +6604,7 @@ case "${1:-}" in
         require_project
         cmd_fix_port "${2:-}"
         ;;
-    meta)
+    meta|m)
         cmd_meta "${2:-}" "${3:-}" "${4:-}" "${5:-}"
         ;;
     alias)
@@ -5862,7 +6620,7 @@ case "${1:-}" in
         require_project --info-only
         cmd_cd "-"
         _cd_status=$?
-        [ -t 1 ] && echo -e "${DIM}Tip: eval \"\$(pwt shell-init)\" for actual cd${NC}" >&2
+        [ -t 1 ] && _show_shell_init_tip >&2
         exit $_cd_status
         ;;
     cd)
@@ -5871,7 +6629,7 @@ case "${1:-}" in
         cmd_cd "${2:-}"
         _cd_status=$?
         # Hint only if interactive (not piped)
-        [ -t 1 ] && echo -e "${DIM}Tip: eval \"\$(pwt shell-init)\" for actual cd${NC}" >&2
+        [ -t 1 ] && _show_shell_init_tip >&2
         exit $_cd_status
         ;;
     _cd)
@@ -5933,7 +6691,11 @@ case "${1:-}" in
         shift  # remove "doctor" from args
         cmd_doctor "$@"
         ;;
-    _select)
+    jobs)
+        shift
+        cmd_jobs "$@"
+        ;;
+    select|_select)
         require_project --info-only
         shift
         cmd__select "$@"
@@ -6078,7 +6840,7 @@ case "${1:-}" in
         else
             echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
             # Try to suggest similar commands (include installed plugins)
-            _known_commands="create list tree info current use pick select remove cd run shell editor ai open diff copy server fix-port auto-remove restore doctor meta project plugin port help version for-each"
+            _known_commands="create list tree info current use pick select remove cd run shell editor ai open diff copy server fix-port auto-remove restore doctor meta project plugin port help version for-each jobs"
             # Add installed plugins from all directories to suggestions
             _get_all_plugin_dirs() {
                 echo "$PWT_DIR/plugins"

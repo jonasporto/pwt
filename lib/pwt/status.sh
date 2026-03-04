@@ -89,11 +89,19 @@ STATUS_TERM_WIDTH=80    # Terminal width
 STATUS_TERM_HEIGHT=24   # Terminal height
 STATUS_REFRESH_INTERVAL=2  # Refresh interval in seconds
 STATUS_LAST_REFRESH=0   # Last refresh timestamp
+STATUS_SLOW_REFRESH_INTERVAL=10  # Slow refresh interval for heavy git ops
+STATUS_LAST_SLOW_REFRESH=0       # Last slow refresh timestamp
 STATUS_RUNNING=true     # Main loop control
 STATUS_SHOW_HELP=false  # Show help overlay
 STATUS_NEEDS_CLEAR=false  # Flag to trigger full screen clear (on view change, resize, etc.)
 STATUS_FILTER=""        # Filter string
 STATUS_SHOW_ALL=false   # Show all projects (--all flag)
+
+# Cached heavy fields (per worktree name)
+declare -a STATUS_CACHE_NAMES=()
+declare -a STATUS_CACHE_MAIN_DIV=()
+declare -a STATUS_CACHE_REMOTE_DIV=()
+declare -a STATUS_CACHE_AGES=()
 
 # Global view state (list of all projects)
 declare -a STATUS_PROJECTS=()        # Project names
@@ -138,8 +146,10 @@ status_init() {
     if [ "$STATUS_VIEW" = "global" ]; then
         status_collect_global_data
     else
-        status_collect_data
+        status_collect_data true
     fi
+    STATUS_LAST_REFRESH=$(date +%s)
+    STATUS_LAST_SLOW_REFRESH=$STATUS_LAST_REFRESH
 }
 
 # Cleanup TUI (restore terminal)
@@ -198,8 +208,42 @@ status_read_key() {
     return 1
 }
 
+# Cache helpers for slow-refresh fields
+status_cache_get() {
+    local name="$1"
+    local i
+    for i in "${!STATUS_CACHE_NAMES[@]}"; do
+        if [ "${STATUS_CACHE_NAMES[$i]}" = "$name" ]; then
+            echo "${STATUS_CACHE_MAIN_DIV[$i]}|${STATUS_CACHE_REMOTE_DIV[$i]}|${STATUS_CACHE_AGES[$i]}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+status_cache_set() {
+    local name="$1"
+    local main_div="$2"
+    local remote_div="$3"
+    local age="$4"
+    local i
+    for i in "${!STATUS_CACHE_NAMES[@]}"; do
+        if [ "${STATUS_CACHE_NAMES[$i]}" = "$name" ]; then
+            STATUS_CACHE_MAIN_DIV[$i]="$main_div"
+            STATUS_CACHE_REMOTE_DIV[$i]="$remote_div"
+            STATUS_CACHE_AGES[$i]="$age"
+            return 0
+        fi
+    done
+    STATUS_CACHE_NAMES+=("$name")
+    STATUS_CACHE_MAIN_DIV+=("$main_div")
+    STATUS_CACHE_REMOTE_DIV+=("$remote_div")
+    STATUS_CACHE_AGES+=("$age")
+}
+
 # Collect data for all worktrees
 status_collect_data() {
+    local slow_refresh="${1:-true}"
     # Clear arrays
     STATUS_WORKTREES=()
     STATUS_BRANCHES=()
@@ -228,11 +272,30 @@ status_collect_data() {
             STATUS_SERVER_STATUS+=("STOPPED")
         fi
 
-        STATUS_MAIN_DIV+=("")
-        STATUS_REMOTE_DIV+=("$(get_remote_divergence "$MAIN_APP")")
+        local main_div=""
+        local remote_div=""
+        local age=""
 
-        local age_ts=$(git -C "$MAIN_APP" log -1 --format=%ct 2>/dev/null || echo "0")
-        STATUS_AGES+=("$(format_relative_time "$age_ts")")
+        if [ "$slow_refresh" = true ]; then
+            remote_div=$(get_remote_divergence "$MAIN_APP")
+            local age_ts=$(git -C "$MAIN_APP" log -1 --format=%ct 2>/dev/null || echo "0")
+            age=$(format_relative_time "$age_ts")
+            status_cache_set "@" "" "$remote_div" "$age"
+        else
+            local cached
+            if cached=$(status_cache_get "@"); then
+                IFS='|' read -r main_div remote_div age <<< "$cached"
+            else
+                remote_div=$(get_remote_divergence "$MAIN_APP")
+                local age_ts=$(git -C "$MAIN_APP" log -1 --format=%ct 2>/dev/null || echo "0")
+                age=$(format_relative_time "$age_ts")
+                status_cache_set "@" "" "$remote_div" "$age"
+            fi
+        fi
+
+        STATUS_MAIN_DIV+=("$main_div")
+        STATUS_REMOTE_DIV+=("$remote_div")
+        STATUS_AGES+=("$age")
     fi
 
     # Add worktrees
@@ -264,12 +327,32 @@ status_collect_data() {
             fi
 
             # Divergence
-            STATUS_MAIN_DIV+=("$(get_divergence "$path" "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null || echo "")")
-            STATUS_REMOTE_DIV+=("$(get_remote_divergence "$path" 2>/dev/null || echo "")")
+            local main_div=""
+            local remote_div=""
+            local age=""
 
-            # Age
-            local age_ts=$(git -C "$path" log -1 --format=%ct 2>/dev/null || echo "0")
-            STATUS_AGES+=("$(format_relative_time "$age_ts")")
+            if [ "$slow_refresh" = true ]; then
+                main_div=$(get_divergence "$path" "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null || echo "")
+                remote_div=$(get_remote_divergence "$path" 2>/dev/null || echo "")
+                local age_ts=$(git -C "$path" log -1 --format=%ct 2>/dev/null || echo "0")
+                age=$(format_relative_time "$age_ts")
+                status_cache_set "$name" "$main_div" "$remote_div" "$age"
+            else
+                local cached
+                if cached=$(status_cache_get "$name"); then
+                    IFS='|' read -r main_div remote_div age <<< "$cached"
+                else
+                    main_div=$(get_divergence "$path" "origin/${DEFAULT_BRANCH:-master}" 2>/dev/null || echo "")
+                    remote_div=$(get_remote_divergence "$path" 2>/dev/null || echo "")
+                    local age_ts=$(git -C "$path" log -1 --format=%ct 2>/dev/null || echo "0")
+                    age=$(format_relative_time "$age_ts")
+                    status_cache_set "$name" "$main_div" "$remote_div" "$age"
+                fi
+            fi
+
+            STATUS_MAIN_DIV+=("$main_div")
+            STATUS_REMOTE_DIV+=("$remote_div")
+            STATUS_AGES+=("$age")
         done
     fi
 }
@@ -355,7 +438,7 @@ status_drill_down_project() {
             STATUS_PANE=0
 
             # Collect project data (suppress errors)
-            status_collect_data 2>/dev/null || true
+            status_collect_data true 2>/dev/null || true
             status_add_activity "Entered project: $selected_project"
         fi
     fi
@@ -2081,7 +2164,7 @@ status_action_toggle_server() {
 
         # Give it a moment to start
         sleep 1
-        status_collect_data  # Refresh to get new status
+        status_collect_data true  # Refresh to get new status
     fi
 }
 
@@ -2095,7 +2178,7 @@ status_action_git_pull() {
         git -C "$path" pull --quiet 2>/dev/null && \
             status_add_activity "pull completed" || \
             status_add_activity "pull failed"
-        status_collect_data
+        status_collect_data true
     fi
 }
 
@@ -2109,7 +2192,7 @@ status_action_git_push() {
         git -C "$path" push --quiet 2>/dev/null && \
             status_add_activity "push completed" || \
             status_add_activity "push failed"
-        status_collect_data
+        status_collect_data true
     fi
 }
 
@@ -2142,7 +2225,7 @@ status_action_git_fetch() {
         fi
     done
     status_add_activity "fetch completed"
-    status_collect_data
+    status_collect_data true
 }
 
 # Handle keyboard input
@@ -2269,7 +2352,7 @@ status_handle_key() {
             if [ "$STATUS_VIEW" = "global" ]; then
                 status_collect_global_data
             else
-                status_collect_data
+                status_collect_data true
             fi
             status_add_activity "Refreshed"
             ;;
@@ -2352,10 +2435,16 @@ cmd_status() {
 
         # Auto-refresh every N seconds based on current view
         if (( now - STATUS_LAST_REFRESH >= STATUS_REFRESH_INTERVAL )); then
+            local slow_refresh=false
+            if (( now - STATUS_LAST_SLOW_REFRESH >= STATUS_SLOW_REFRESH_INTERVAL )); then
+                slow_refresh=true
+                STATUS_LAST_SLOW_REFRESH=$now
+            fi
+
             if [ "$STATUS_VIEW" = "global" ]; then
                 status_collect_global_data 2>/dev/null || true
             else
-                status_collect_data 2>/dev/null || true
+                status_collect_data "$slow_refresh" 2>/dev/null || true
             fi
             STATUS_LAST_REFRESH=$now
         fi

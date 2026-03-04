@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-02-05
+
+### Added
+- **Description in create**: `pwt create TICKET "auth login bug"` - quoted text with spaces is auto-detected as description
+- **Meta shortcut**: `pwt meta <key> [value]` for quick get/set on current worktree
+  - `pwt meta description` - get description
+  - `pwt meta description "my task"` - set description
+  - `pwt meta "text with spaces"` - shorthand for setting description
+- **Description search in cd**: `pwt cd <term>` now searches both name and description
+  - Supports multi-word search: `pwt cd "auth login"` finds "fixing auth login bug"
+  - Case-insensitive partial matching
+  - Single match navigates directly; multiple/zero matches → fzf fallback
+- **Interactive query flag**: `pwt select --query <text>` to pre-filter fzf results
+- **Short alias**: `pwt m` as alias for `pwt meta`
+- **Background execution**: `--bg` flag to daemonize Pwtfile commands (e.g., `pwt server --bg`)
+  - Uses perl double-fork + setsid for reliable process detachment
+  - Outputs JSON with job_id, pid, and log file path
+  - Duplicate job detection prevents running same command twice
+- **Non-interactive mode**: `--no-input` flag closes stdin and sets `PWT_AGENT=1`
+  - Designed for CI/CD and AI agent workflows
+  - Prevents interactive prompts from blocking automated processes
+- **Job management**: `pwt jobs` command to manage background jobs
+  - `pwt jobs list` - show all running/stopped jobs
+  - `pwt jobs logs <id> [-f]` - view/follow job output
+  - `pwt jobs stop <id>` - stop a running job
+  - `pwt jobs stop --all` - stop all jobs
+  - `pwt jobs clean` - remove stale entries
+- **PWT_AGENT variable**: Exported to Pwtfiles (defaults to `0`, set to `1` with `--no-input`)
+- **Partial match in remove**: `pwt remove 12345` matches `TICKET-12345` automatically
+  - Single match resolves directly; ambiguous matches show candidates and abort
+- **Help for all commands**: Every command now supports `-h`/`--help`
+  - Added help to: current, use, fix-port, select, steps, step, repair, port, open, alias
+  - `pwt help <alias>` resolves aliases (add→create, rm→remove, ls→list, fix→repair, m→meta, s→server)
+
+### Changed
+- Comprehensive `pwt meta` help with ASCII diagrams showing where metadata appears
+- Help text shows alias forms: `Usage: pwt create|add`, `pwt remove|rm`, `pwt list|ls`, etc.
+- `@` (main app) documented consistently across info, editor, ai help texts
+- Flag ordering standardized to `-short|--long` pattern (cmd_select)
+- Trailing slash normalization added to cmd_run and cmd_open (shell completion compat)
+
+### Fixed
+- `pwt help <command>` now correctly dispatches to module commands (create, remove, list, etc.)
+
+### Internal
+- Extracted `get_worktree_port()` helper to deduplicate port lookup with legacy fallback
+- New `lib/pwt/jobs.sh` module for background job state management
+- `_strip_pwt_execution_flags()` helper strips --bg/--no-input from PWT_ARGS
+- Fixed `cmd_server` dispatch to pass all args (was losing flags like --sidekiq)
+
 ## [0.1.9] - 2026-02-03
 
 ### Added

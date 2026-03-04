@@ -29,6 +29,9 @@ cd bats-core
 # Run all tests
 bats tests/
 
+# Run a fast subset (also available as make target)
+make test-fast
+
 # Run specific test file
 bats tests/extract_worktree_name.bats
 

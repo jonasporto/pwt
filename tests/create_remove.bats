@@ -332,6 +332,36 @@ teardown() {
     [ -d "$TEST_WORKTREES/TEST-SPECIAL" ]
 }
 
+@test "pwt create with quoted description without base uses default base" {
+    cd "$TEST_REPO"
+
+    # Add a remote so DEFAULT_BRANCH detection works
+    git remote add origin "$TEST_REPO" 2>/dev/null || true
+    git fetch origin --quiet 2>/dev/null || true
+
+    # "auth login bug" has spaces → should be treated as description, not base
+    run "$PWT_BIN" create TEST-QUOTED "auth login bug"
+
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/TEST-QUOTED" ]
+
+    # Description should be saved in metadata
+    local desc=$("$PWT_BIN" meta show TEST-QUOTED | grep -o '"description": *"[^"]*"' | sed 's/.*: *"//;s/"$//')
+    [[ "$desc" == *"auth login bug"* ]]
+}
+
+@test "pwt create with base and quoted description works" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" create TEST-BASEDESC HEAD "fix session timeout"
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/TEST-BASEDESC" ]
+
+    # Description should be saved
+    local desc=$("$PWT_BIN" meta show TEST-BASEDESC | grep -o '"description": *"[^"]*"' | sed 's/.*: *"//;s/"$//')
+    [[ "$desc" == *"fix session timeout"* ]]
+}
+
 @test "pwt create with very long branch name" {
     cd "$TEST_REPO"
     local long_name="TEST-$(head -c 50 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 50)"
@@ -380,4 +410,30 @@ teardown() {
     # Verify worktree removed from metadata
     local removed=$(jq -r '.["test-project"]["TEST-SLASH-META"] // "null"' "$meta_file")
     [ "$removed" = "null" ]
+}
+
+@test "pwt remove with partial name matches worktree" {
+    "$PWT_BIN" create TICKET-12345 HEAD
+
+    # Remove using partial match (just the number)
+    run "$PWT_BIN" remove "12345" -y
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Matched: TICKET-12345"* ]]
+
+    # Verify it was actually removed
+    [ ! -d "$TEST_WORKTREES/TICKET-12345" ]
+}
+
+@test "pwt remove with ambiguous partial name shows error" {
+    "$PWT_BIN" create TICKET-100-A HEAD
+    "$PWT_BIN" create TICKET-100-B HEAD
+
+    # Try to remove with ambiguous match
+    run "$PWT_BIN" remove "100" -y
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Ambiguous"* ]]
+
+    # Both should still exist
+    [ -d "$TEST_WORKTREES/TICKET-100-A" ]
+    [ -d "$TEST_WORKTREES/TICKET-100-B" ]
 }

@@ -62,12 +62,12 @@ cmd_create() {
                 break
                 ;;
             -h|--help)
-                echo "Usage: pwt create <branch> [base] [-- description]"
+                echo "Usage: pwt create|add <branch> [base] [\"description\"]"
                 echo ""
                 echo "Arguments:"
                 echo "  branch          Branch name or ticket (e.g., TICKET-1234)"
                 echo "  base            Base branch (default: master)"
-                echo "  -- description  Optional description after --"
+                echo "  \"description\"   Quoted text with spaces is treated as description"
                 echo ""
                 echo "Options:"
                 echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
@@ -77,6 +77,11 @@ cmd_create() {
                 echo "  -a, --ai          Start AI assistant after creation"
                 echo "  -n, --dry-run     Show what would be done"
                 echo "  -h, --help        Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  pwt create TICKET-1234                        # no description"
+                echo "  pwt create TICKET-1234 \"auth login bug\"       # with description"
+                echo "  pwt create TICKET-1234 develop \"auth login\"   # custom base + description"
                 return 0
                 ;;
             -*)
@@ -85,10 +90,19 @@ cmd_create() {
                 ;;
             *)
                 # Positional arguments: branch, base_ref, description
+                # Heuristic: if arg contains spaces, it's a description
+                # (git branch names cannot have spaces)
                 if [ -z "$branch" ]; then
                     branch="$1"
                 elif [ -z "$base_ref" ]; then
-                    base_ref="$1"
+                    if [[ "$1" == *" "* ]]; then
+                        # Has spaces → description, not a branch
+                        # Default to DEFAULT_BRANCH as base
+                        description="$1"
+                        base_ref="$DEFAULT_BRANCH"
+                    else
+                        base_ref="$1"
+                    fi
                 else
                     # Accumulate all remaining positional args as description
                     if [ -z "$description" ]; then
@@ -342,6 +356,24 @@ cmd_create() {
 cmd_repair() {
     local name="$1"
 
+    if [[ "$name" == "-h" || "$name" == "--help" ]]; then
+        echo "Usage: pwt repair|fix [worktree]"
+        echo ""
+        echo "Run repair hooks on worktrees."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree   Specific worktree to repair (optional)"
+        echo "             If omitted, repairs all worktrees"
+        echo ""
+        echo "Runs the 'repair' function from Pwtfile and any repair hooks."
+        echo "Useful after config changes or dependency updates."
+        echo ""
+        echo "Examples:"
+        echo "  pwt repair               # repair all worktrees"
+        echo "  pwt repair TICKET-123    # repair specific worktree"
+        return 0
+    fi
+
     # Normalize: strip trailing slash (from shell completion)
     name="${name%/}"
 
@@ -401,7 +433,7 @@ cmd_auto_remove() {
                 shift
                 ;;
             -h|--help)
-                echo "Usage: pwt auto-remove [target] [options]"
+                echo "Usage: pwt auto-remove|cleanup [target] [options]"
                 echo ""
                 echo "Safely remove worktrees that have been merged into target branch."
                 echo ""
@@ -615,10 +647,11 @@ cmd_remove() {
                 shift
                 ;;
             -h|--help)
-                echo "Usage: pwt remove [worktree] [options]"
+                echo "Usage: pwt remove|rm [worktree] [options]"
                 echo ""
                 echo "Arguments:"
                 echo "  worktree        Worktree name (default: current)"
+                echo "  @               Not allowed (cannot remove main app)"
                 echo ""
                 echo "Options:"
                 echo "  --with-branch     Also delete the branch (if merged)"
@@ -669,9 +702,30 @@ cmd_remove() {
 
     local worktree_dir="$WORKTREES_DIR/$name"
 
+    # Try partial match if exact name not found
     if [ ! -d "$worktree_dir" ]; then
-        pwt_error "Error: Worktree not found: $name"
-        exit 1
+        local matches=()
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local dname=$(basename "$dir")
+            if [[ "$dname" == *"$name"* ]]; then
+                matches+=("$dname")
+            fi
+        done
+        if [ ${#matches[@]} -eq 1 ]; then
+            name="${matches[0]}"
+            worktree_dir="$WORKTREES_DIR/$name"
+            echo -e "${DIM}Matched: $name${NC}"
+        elif [ ${#matches[@]} -gt 1 ]; then
+            pwt_error "Error: Ambiguous match for '$name':"
+            for m in "${matches[@]}"; do
+                echo "  $m" >&2
+            done
+            exit 1
+        else
+            pwt_error "Error: Worktree not found: $name"
+            exit 1
+        fi
     fi
 
     # Get port from metadata, fallback to extracting from name

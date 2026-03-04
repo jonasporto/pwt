@@ -384,6 +384,23 @@ cmd_project() {
 cmd_port() {
     local name="$1"
 
+    if [[ "$name" == "-h" || "$name" == "--help" ]]; then
+        echo "Usage: pwt port [worktree]"
+        echo ""
+        echo "Get the port number for a worktree."
+        echo ""
+        echo "Arguments:"
+        echo "  worktree   Target worktree (optional if inside one)"
+        echo ""
+        echo "Outputs just the port number, useful in scripts:"
+        echo "  curl http://localhost:\$(pwt port)"
+        echo ""
+        echo "Examples:"
+        echo "  pwt port               # port for current worktree"
+        echo "  pwt port TICKET-123    # port for specific worktree"
+        return 0
+    fi
+
     # Normalize: strip trailing slash (from shell completion)
     name="${name%/}"
 

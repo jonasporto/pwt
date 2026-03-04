@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `pwt jobs stop --all` - stop all jobs
   - `pwt jobs clean` - remove stale entries
 - **PWT_AGENT variable**: Exported to Pwtfiles (defaults to `0`, set to `1` with `--no-input`)
+- **Partial match in remove**: `pwt remove 12345` matches `TICKET-12345` automatically
+  - Single match resolves directly; ambiguous matches show candidates and abort
 - **Help for all commands**: Every command now supports `-h`/`--help`
   - Added help to: current, use, fix-port, select, steps, step, repair, port, open, alias
   - `pwt help <alias>` resolves aliases (add→create, rm→remove, ls→list, fix→repair, m→meta, s→server)

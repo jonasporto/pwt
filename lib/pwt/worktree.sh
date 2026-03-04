@@ -702,9 +702,30 @@ cmd_remove() {
 
     local worktree_dir="$WORKTREES_DIR/$name"
 
+    # Try partial match if exact name not found
     if [ ! -d "$worktree_dir" ]; then
-        pwt_error "Error: Worktree not found: $name"
-        exit 1
+        local matches=()
+        for dir in "$WORKTREES_DIR"/*/; do
+            [ -d "$dir" ] || continue
+            local dname=$(basename "$dir")
+            if [[ "$dname" == *"$name"* ]]; then
+                matches+=("$dname")
+            fi
+        done
+        if [ ${#matches[@]} -eq 1 ]; then
+            name="${matches[0]}"
+            worktree_dir="$WORKTREES_DIR/$name"
+            echo -e "${DIM}Matched: $name${NC}"
+        elif [ ${#matches[@]} -gt 1 ]; then
+            pwt_error "Error: Ambiguous match for '$name':"
+            for m in "${matches[@]}"; do
+                echo "  $m" >&2
+            done
+            exit 1
+        else
+            pwt_error "Error: Worktree not found: $name"
+            exit 1
+        fi
     fi
 
     # Get port from metadata, fallback to extracting from name

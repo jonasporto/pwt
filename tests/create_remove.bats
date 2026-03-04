@@ -411,3 +411,29 @@ teardown() {
     local removed=$(jq -r '.["test-project"]["TEST-SLASH-META"] // "null"' "$meta_file")
     [ "$removed" = "null" ]
 }
+
+@test "pwt remove with partial name matches worktree" {
+    "$PWT_BIN" create TICKET-12345 HEAD
+
+    # Remove using partial match (just the number)
+    run "$PWT_BIN" remove "12345" -y
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Matched: TICKET-12345"* ]]
+
+    # Verify it was actually removed
+    [ ! -d "$TEST_WORKTREES/TICKET-12345" ]
+}
+
+@test "pwt remove with ambiguous partial name shows error" {
+    "$PWT_BIN" create TICKET-100-A HEAD
+    "$PWT_BIN" create TICKET-100-B HEAD
+
+    # Try to remove with ambiguous match
+    run "$PWT_BIN" remove "100" -y
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Ambiguous"* ]]
+
+    # Both should still exist
+    [ -d "$TEST_WORKTREES/TICKET-100-A" ]
+    [ -d "$TEST_WORKTREES/TICKET-100-B" ]
+}

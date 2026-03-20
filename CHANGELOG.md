@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-03-20
+
+### Added
+- **`pwt_arg` helper**: Extract flags from `PWT_ARGS` inside Pwtfiles
+  - `pwt_arg -p` → value, `pwt_arg --sidekiq` → `"true"`, `pwt_arg --port=5002` → `"5002"`
+  - Returns exit 1 when flag not found (use `|| true` for optional flags)
+  - Works with `set -u` strict mode
+- **Server on main app (`@`)**: `pwt server` now works from the main app directory
+  - `pwt server @` explicitly targets main app from anywhere
+  - Auto-detects main app when pwd is inside `$MAIN_APP`
+  - Uses `BASE_PORT` (from Pwtfile `PORT_BASE`) for main app port
+
+### Changed
+- `cmd_server` flag parsing: flags with values (`-p 5002`) now correctly captured as pairs
+- Current symlink pointing to `@` no longer errors — runs server on main app instead
+
+### Internal
+- Replaced `$(basename ...)` with `${var##*/}` parameter expansion in shell-init (faster, no fork)
+- Replaced `basename "$(dirname ...)"` with `${var%/*}` chains in `_pwt_detect_project`
+
 ## [0.1.10] - 2026-02-05
 
 ### Added
@@ -91,5 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Test suite**: 530+ tests with BATS framework
 - **CI/CD**: GitHub Actions for automated testing
 
-[Unreleased]: https://github.com/jonasporto/pwt/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jonasporto/pwt/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/jonasporto/pwt/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/jonasporto/pwt/compare/v0.1.9...v0.1.10
+[0.1.9]: https://github.com/jonasporto/pwt/compare/v0.1.0...v0.1.9
 [0.1.0]: https://github.com/jonasporto/pwt/releases/tag/v0.1.0

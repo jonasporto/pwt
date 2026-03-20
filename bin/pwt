@@ -71,7 +71,7 @@ DEFAULT_BRANCH=""  # Detected from remote (master or main)
 BASE_PORT=5000
 
 # Version
-PWT_VERSION="0.1.10"
+PWT_VERSION="0.1.11"
 PWT_VERSION_CHECK_URL="https://api.github.com/repos/jonasporto/pwt/releases/latest"
 PWT_VERSION_CACHE="$PWT_DIR/version-check"
 PWT_VERSION_CACHE_TTL=18000  # 5 hours
@@ -1618,6 +1618,50 @@ pwtfile_symlink() {
     echo "  ✓ Symlinked: $path"
 }
 
+# Extract a flag value from PWT_ARGS
+# Usage (in Pwtfile): pwt_arg <flag>
+# Returns: flag value, "true" for boolean flags, "" if not found (exit 1)
+# Examples:
+#   PWT_ARGS="-p 5002 --sidekiq -e staging"
+#   pwt_arg -p        → "5002"
+#   pwt_arg --sidekiq → "true"
+#   pwt_arg --foo     → "" (exit 1)
+#   pwt_arg --env=staging → "staging"
+pwt_arg() {
+    local flag="$1"
+    local args="${PWT_ARGS:-}"
+    local found=false
+
+    for arg in $args; do
+        if [ "$found" = true ]; then
+            # Previous arg was our flag; if next starts with -, flag was boolean
+            if [[ "$arg" == -* ]]; then
+                echo "true"
+                return 0
+            fi
+            echo "$arg"
+            return 0
+        fi
+        # Handle --flag=value syntax
+        if [[ "$arg" == "${flag}="* ]]; then
+            echo "${arg#*=}"
+            return 0
+        fi
+        if [ "$arg" = "$flag" ]; then
+            found=true
+        fi
+    done
+
+    # Flag was last arg (boolean)
+    if [ "$found" = true ]; then
+        echo "true"
+        return 0
+    fi
+
+    # Not found
+    return 1
+}
+
 # Copy from main app to current worktree
 # Usage: pwtfile_copy <path>
 # Example: pwtfile_copy ".env"
@@ -1952,6 +1996,21 @@ export PWT_PROJECT='${PWT_PROJECT:-}'
 export PWT_ARGS='${PWT_ARGS:-}'
 export PWT_AGENT='${PWT_AGENT:-0}'
 export MAIN_APP='${MAIN_APP:-}'
+pwt_arg() {
+    local flag="\$1"
+    local args="\${PWT_ARGS:-}"
+    local found=false
+    for arg in \$args; do
+        if [ "\$found" = true ]; then
+            if [[ "\$arg" == -* ]]; then echo "true"; return 0; fi
+            echo "\$arg"; return 0
+        fi
+        if [[ "\$arg" == "\${flag}="* ]]; then echo "\${arg#*=}"; return 0; fi
+        if [ "\$arg" = "\$flag" ]; then found=true; fi
+    done
+    if [ "\$found" = true ]; then echo "true"; return 0; fi
+    return 1
+}
 cd '${PWT_WORKTREE_PATH}' || exit 1
 source '${pwtfile}'
 type '${phase}' &>/dev/null && '${phase}'
@@ -2377,13 +2436,20 @@ cmd_server() {
             --no-input) PWT_NO_INPUT=true; shift ;;
             -*)
                 # Flags like --sidekiq go to pwtfile args
+                local flag="$1"
+                shift
                 if [ "$pwtfile_first" = true ]; then
-                    pwtfile_args="$1"
+                    pwtfile_args="$flag"
                     pwtfile_first=false
                 else
-                    pwtfile_args="$pwtfile_args $1"
+                    pwtfile_args="$pwtfile_args $flag"
                 fi
-                shift
+                # If flag has --key=value, value is already included
+                # Otherwise, peek at next arg: if it's not a flag, it's the value
+                if [[ "$flag" != *"="* ]] && [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+                    pwtfile_args="$pwtfile_args $1"
+                    shift
+                fi
                 ;;
             *)
                 if [ -z "$worktree_arg" ]; then
@@ -2416,34 +2482,44 @@ cmd_server() {
 
     # 0. Check if worktree name provided as argument
     if [ -n "$arg" ]; then
-        worktree_path="$WORKTREES_DIR/$arg"
-        # Try partial match if not found
-        if [ ! -d "$worktree_path" ]; then
-            local match=$(cmd_cd "$arg" 2>/dev/null)
-            if [ -n "$match" ] && [ -d "$match" ]; then
-                worktree_path="$match"
+        # Handle @ (main app)
+        if [ "$arg" = "@" ]; then
+            worktree_name="@"
+            worktree_path="$MAIN_APP"
+            via_argument=true
+        else
+            worktree_path="$WORKTREES_DIR/$arg"
+            # Try partial match if not found
+            if [ ! -d "$worktree_path" ]; then
+                local match=$(cmd_cd "$arg" 2>/dev/null)
+                if [ -n "$match" ] && [ -d "$match" ]; then
+                    worktree_path="$match"
+                fi
             fi
+            if [ ! -d "$worktree_path" ]; then
+                pwt_error "Error: Worktree not found: $arg"
+                exit 1
+            fi
+            worktree_name=$(basename "$worktree_path")
+            via_argument=true
         fi
-        if [ ! -d "$worktree_path" ]; then
-            pwt_error "Error: Worktree not found: $arg"
-            exit 1
-        fi
-        worktree_name=$(basename "$worktree_path")
-        via_argument=true
     # 1. Check if inside a worktree directly
     elif [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
         worktree_name=$(basename "$current_dir")
         worktree_path="$current_dir"
-    # 2. Check if current symlink is set
+    # 2. Check if inside main app directory
+    elif [[ "$current_dir" == "$MAIN_APP"* ]]; then
+        worktree_name="@"
+        worktree_path="$MAIN_APP"
+    # 3. Check if current symlink is set
     elif worktree_name=$(get_current_from_symlink 2>/dev/null); then
-        # @ = main (can't run server from main)
+        # @ = main app
         if [ "$worktree_name" = "@" ]; then
-            pwt_error "Error: current points to main (@)"
-            echo "Use: pwt use <worktree>  # switch to a worktree first"
-            exit 1
+            worktree_path="$MAIN_APP"
+        else
+            worktree_path="$WORKTREES_DIR/$worktree_name"
+            via_symlink=true
         fi
-        worktree_path="$WORKTREES_DIR/$worktree_name"
-        via_symlink=true
     else
         pwt_error "Error: Not inside a worktree and no current set"
         echo ""
@@ -2454,11 +2530,16 @@ cmd_server() {
         exit 1
     fi
 
-    local port=$(get_metadata "$worktree_name" "port")
-
-    if [ -z "$port" ]; then
-        echo -e "${YELLOW}Warning: Port not found in metadata${NC}"
-        port="3000"
+    local port=""
+    if [ "$worktree_name" = "@" ]; then
+        # Main app uses BASE_PORT
+        port="${BASE_PORT:-5000}"
+    else
+        port=$(get_metadata "$worktree_name" "port")
+        if [ -z "$port" ]; then
+            echo -e "${YELLOW}Warning: Port not found in metadata${NC}"
+            port="3000"
+        fi
     fi
 
     # Warning if running via symlink
@@ -6047,13 +6128,15 @@ _pwt_detect_project() {
     if [[ "\$path" == *"-worktrees/"* ]]; then
         # Extract project from worktrees parent dir name: /path/to/project-worktrees/TICKET
         local worktrees_dir="\${path%%-worktrees/*}-worktrees"
-        local parent_name=\$(basename "\$(dirname "\$worktrees_dir")")
+        local parent_dir="\${worktrees_dir%/*}"
+        local parent_name="\${parent_dir##*/}"
         # Try to find matching project by worktrees_dir
         for config in ~/.pwt/projects/*/config.json; do
             [ -f "\$config" ] || continue
             local wt_dir=\$(jq -r '.worktrees_dir // empty' "\$config" 2>/dev/null)
             if [[ "\$wt_dir" == "\$worktrees_dir" ]]; then
-                basename "\$(dirname "\$config")"
+                local config_dir="\${config%/*}"
+                echo "\${config_dir##*/}"
                 return 0
             fi
         done
@@ -6067,7 +6150,8 @@ _pwt_detect_project() {
         [ -f "\$config" ] || continue
         local main_path=\$(jq -r '.path // .main_app // empty' "\$config" 2>/dev/null)
         if [[ -n "\$main_path" && "\$path" == "\$main_path"* ]]; then
-            basename "\$(dirname "\$config")"
+            local config_dir="\${config%/*}"
+            echo "\${config_dir##*/}"
             return 0
         fi
     done
@@ -6105,7 +6189,7 @@ _pwt_update_title() {
     # Detect worktree
     local worktree="@"
     if [[ "\$PWD" == *"-worktrees/"* ]]; then
-        worktree=\$(basename "\$PWD")
+        worktree="\${PWD##*/}"
     fi
 
     # Export for other tools
@@ -6128,7 +6212,7 @@ _pwt_update_title() {
     title="\${title//\{worktree\}/\$worktree}"
     title="\${title//\{branch\}/\$branch}"
     title="\${title//\{path\}/\$PWD}"
-    title="\${title//\{dir\}/\$(basename "\$PWD")}"
+    title="\${title//\{dir\}/\${PWD##*/}}"
 
     # Set terminal title
     printf '\\033]0;%s\\007' "\$title"
@@ -6211,7 +6295,7 @@ $cmd_name() {
 
         # Set PWT_WORKTREE for prompts and scripts
         if [[ "\$target" == *"-worktrees/"* ]]; then
-            export PWT_WORKTREE=\$(basename "\$target")
+            export PWT_WORKTREE="\${target##*/}"
         else
             unset PWT_WORKTREE
         fi
@@ -6245,7 +6329,7 @@ $cmd_name() {
 
         # Set PWT_WORKTREE for prompts and scripts
         if [[ "\$target" == *"-worktrees/"* ]]; then
-            export PWT_WORKTREE=\$(basename "\$target")
+            export PWT_WORKTREE="\${target##*/}"
         else
             unset PWT_WORKTREE
         fi
@@ -6260,7 +6344,8 @@ $cmd_name() {
             local current_path="\${PWD%%/current*}/current"
             if [[ -L "\$current_path" ]]; then
                 builtin cd "\$current_path"
-                export PWT_WORKTREE=\$(basename "\$(readlink "\$current_path")")
+                local _readlink_target=\$(readlink "\$current_path")
+                export PWT_WORKTREE="\${_readlink_target##*/}"
             fi
         fi
         return \$exit_code

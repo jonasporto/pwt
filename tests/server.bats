@@ -36,24 +36,70 @@ teardown() {
 # Server context detection
 # ============================================
 
-@test "pwt server fails outside worktree with no current" {
+@test "pwt server runs on main app when inside main dir" {
     cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+server() {
+    echo "MAIN_SERVER: $PWT_WORKTREE on port $PWT_PORT"
+}
+EOF
+
     # Ensure no current symlink
     rm -f "$PWT_DIR/projects/test-project/current"
 
     run "$PWT_BIN" server
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"Not inside a worktree"* ]] || [[ "$output" == *"no current"* ]]
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MAIN_SERVER: @"* ]]
 }
 
-@test "pwt server fails when current points to @" {
+@test "pwt server runs on main when current points to @" {
     cd "$TEST_REPO"
-    # Set current to main app
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+server() {
+    echo "MAIN_VIA_CURRENT: $PWT_WORKTREE on port $PWT_PORT"
+}
+EOF
+
     "$PWT_BIN" use @
 
     run "$PWT_BIN" server
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"main"* ]] || [[ "$output" == *"@"* ]]
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MAIN_VIA_CURRENT: @"* ]]
+}
+
+@test "pwt server @ runs on main from anywhere" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+server() {
+    echo "MAIN_EXPLICIT: $PWT_WORKTREE on port $PWT_PORT"
+}
+EOF
+
+    "$PWT_BIN" create TEST-OTHER HEAD
+    cd "$TEST_WORKTREES/TEST-OTHER"
+
+    # Explicitly request main app
+    run "$PWT_BIN" server @
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MAIN_EXPLICIT: @"* ]]
+}
+
+@test "pwt server uses BASE_PORT for main app" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+PORT_BASE=5001
+server() {
+    echo "PORT_IS: $PWT_PORT"
+}
+EOF
+
+    run "$PWT_BIN" server
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PORT_IS: 5000"* ]]
 }
 
 @test "pwt server detects worktree from pwd" {
@@ -89,9 +135,9 @@ EOF
     "$PWT_BIN" create TEST-SYMLINK HEAD
     "$PWT_BIN" use TEST-SYMLINK
 
-    # Run server from main repo (should use current symlink)
-    cd "$TEST_REPO"
-    run "$PWT_BIN" server
+    # Run server from unrelated dir (should use current symlink)
+    cd "$TEST_TEMP_DIR"
+    run "$PWT_BIN" test-project server
     [ "$status" -eq 0 ]
     [[ "$output" == *"SERVER_FROM_SYMLINK: TEST-SYMLINK"* ]]
     [[ "$output" == *"via symlink"* ]]
@@ -195,10 +241,10 @@ EOF
 
     "$PWT_BIN" create TEST-PWD HEAD
 
-    # Run from main repo but server should cd to worktree
+    # Run from unrelated dir via current symlink
     "$PWT_BIN" use TEST-PWD
-    cd "$TEST_REPO"
-    run "$PWT_BIN" server
+    cd "$TEST_TEMP_DIR"
+    run "$PWT_BIN" test-project server
 
     [[ "$output" == *"PWD_IS:"* ]]
     [[ "$output" == *"TEST-PWD"* ]]

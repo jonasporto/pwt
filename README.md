@@ -4,7 +4,7 @@
 
 [![Tests](https://github.com/jonasporto/pwt/actions/workflows/test.yml/badge.svg)](https://github.com/jonasporto/pwt/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.12-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.13-green.svg)](CHANGELOG.md)
 
 ## Demos
 
@@ -223,7 +223,7 @@ Each worktree keeps its own allocated port, but you can also run one stable
 project-scoped gateway URL and switch which worktree it targets:
 
 ```bash
-pwt gateway up --port 5999
+pwt gateway up --port 5999 --host localhost
 pwt gateway use PROJ-1234
 open "$(pwt gateway url)"
 ```
@@ -233,6 +233,19 @@ open "$(pwt gateway url)"
 allocated server port. If the target port is not listening and the project
 Pwtfile defines `server()`, pwt starts it with `pwt server <worktree> --bg`
 before switching the gateway.
+
+The public gateway URL defaults to `localhost` so browser cookies and sessions
+are shared with direct local app URLs such as `http://localhost:5001`. Set
+`gateway_host` or pass `--host` when a project should use another loopback
+hostname or IP:
+
+```bash
+pwt config gateway_host 127.0.0.1
+pwt gateway up --port 5999 --host passare.localhost
+```
+
+Custom hosts must resolve to loopback and may need to be allowed by the app's
+development host configuration. The proxy still binds to loopback only.
 
 Gateways are scoped by project:
 

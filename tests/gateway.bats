@@ -91,7 +91,32 @@ http.get({host: "127.0.0.1", port, path: "/"}, (res) => {
 
     run "$PWT_BIN" gateway url
     [ "$status" -eq 0 ]
-    [ "$output" = "http://127.0.0.1:$TEST_GATEWAY_PORT" ]
+    [ "$output" = "http://localhost:$TEST_GATEWAY_PORT" ]
+}
+
+@test "pwt gateway init accepts custom public host" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" gateway init --port "$TEST_GATEWAY_PORT" --host "passare.localhost"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Gateway host set to passare.localhost"* ]]
+
+    run "$PWT_BIN" gateway url
+    [ "$status" -eq 0 ]
+    [ "$output" = "http://passare.localhost:$TEST_GATEWAY_PORT" ]
+
+    run "$PWT_BIN" gateway status --json
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.host')" = "passare.localhost" ]
+    [ "$(echo "$output" | jq -r '.url')" = "http://passare.localhost:$TEST_GATEWAY_PORT" ]
+}
+
+@test "pwt gateway init rejects host with protocol" {
+    cd "$TEST_REPO"
+
+    run "$PWT_BIN" gateway init --port "$TEST_GATEWAY_PORT" --host "http://localhost"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"without protocol, port, or path"* ]]
 }
 
 @test "pwt gateway up --port starts project-scoped daemon and down stops it" {
@@ -105,8 +130,10 @@ http.get({host: "127.0.0.1", port, path: "/"}, (res) => {
     [ "$status" -eq 0 ]
     local running=$(echo "$output" | jq -r '.running')
     local port=$(echo "$output" | jq -r '.port')
+    local url=$(echo "$output" | jq -r '.url')
     [ "$running" = "true" ]
     [ "$port" = "$TEST_GATEWAY_PORT" ]
+    [ "$url" = "http://localhost:$TEST_GATEWAY_PORT" ]
 
     run "$PWT_BIN" gateway down
     [ "$status" -eq 0 ]

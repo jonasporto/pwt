@@ -81,7 +81,7 @@ _pwt() {
             elif [[ "$prev" == "use" ]]; then
                 COMPREPLY=($(compgen -W "$(_pwt_get_worktrees)" -- "$cur"))
             else
-                COMPREPLY=($(compgen -W "--port --json -f --follow" -- "$cur"))
+                COMPREPLY=($(compgen -W "--port --host --json -f --follow" -- "$cur"))
             fi
             ;;
         remove|rm)
@@ -124,7 +124,7 @@ _pwt() {
             fi
             ;;
         config)
-            local keys="main_app worktrees_dir branch_prefix base_port gateway_port"
+            local keys="main_app worktrees_dir branch_prefix base_port gateway_port gateway_host"
             COMPREPLY=($(compgen -W "$keys" -- "$cur"))
             ;;
         jobs)

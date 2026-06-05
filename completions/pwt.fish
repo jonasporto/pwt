@@ -154,13 +154,14 @@ complete -c pwt -n '__pwt_using_command plugin' -a 'list install remove create p
 complete -c pwt -n '__pwt_using_command claude-setup' -a 'install vars format preview test toggle help' -d 'Action'
 
 # Config keys
-complete -c pwt -n '__pwt_using_command config' -a 'main_app worktrees_dir branch_prefix base_port gateway_port' -d 'Config key'
+complete -c pwt -n '__pwt_using_command config' -a 'main_app worktrees_dir branch_prefix base_port gateway_port gateway_host' -d 'Config key'
 
 # Jobs subcommands
 complete -c pwt -n '__pwt_using_command jobs' -a 'list logs stop clean help' -d 'Action'
 complete -c pwt -n '__pwt_using_command servers' -l all -s a -d 'Show stopped worktrees'
 complete -c pwt -n '__pwt_using_command servers' -l json -d 'Output JSON'
 complete -c pwt -n '__pwt_using_command gateway' -l port -s p -d 'Gateway port'
+complete -c pwt -n '__pwt_using_command gateway' -l host -s H -d 'Gateway public host'
 complete -c pwt -n '__pwt_using_command gateway' -l json -d 'Output JSON'
 
 # Global flags

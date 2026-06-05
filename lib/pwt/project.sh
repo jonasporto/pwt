@@ -56,6 +56,7 @@ cmd_config() {
             echo "  branch_prefix  - Prefix for branches (e.g., user/)"
             echo "  base_port      - Base port for allocation (default: 5000)"
             echo "  gateway_port   - Stable gateway proxy port"
+            echo "  gateway_host   - Public gateway URL host"
             echo ""
             echo "Options:"
             echo "  -h, --help, help    Show this help"
@@ -75,6 +76,9 @@ cmd_config() {
             local gateway_port
             gateway_port=$(get_project_config "$CURRENT_PROJECT" "gateway_port" || true)
             echo "  gateway_port:  ${gateway_port:-"(not set)"}"
+            local gateway_host
+            gateway_host=$(get_project_config "$CURRENT_PROJECT" "gateway_host" || true)
+            echo "  gateway_host:  ${gateway_host:-localhost}"
             echo ""
             if [ -f "$config_file" ] && [ "$(cat "$config_file")" != "{}" ]; then
                 echo "Saved overrides ($config_file):"
@@ -83,12 +87,22 @@ cmd_config() {
                 echo "No saved overrides (using auto-detected values)."
             fi
             ;;
-        main_app|worktrees_dir|branch_prefix|base_port|gateway_port)
+        main_app|worktrees_dir|branch_prefix|base_port|gateway_port|gateway_host)
             if [ -z "$value" ]; then
                 # Show current value
                 local current=$(jq -r ".$key // empty" "$config_file" 2>/dev/null)
-                echo "${current:-"(not set)"}"
+                if [ "$key" = "gateway_host" ]; then
+                    echo "${current:-"localhost"}"
+                else
+                    echo "${current:-"(not set)"}"
+                fi
             else
+                if [ "$key" = "gateway_host" ]; then
+                    if ! [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] && ! [[ "$value" =~ ^[A-Za-z0-9]$ ]]; then
+                        pwt_error "Error: gateway_host must be a hostname or IP without protocol, port, or path"
+                        return $EXIT_USAGE
+                    fi
+                fi
                 # Set value (create tmp in same dir for atomic mv)
                 local tmp_file
                 tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
@@ -105,6 +119,7 @@ cmd_config() {
             echo "  branch_prefix  - Prefix for branches (e.g., user/)"
             echo "  base_port      - Base port for allocation"
             echo "  gateway_port   - Stable gateway proxy port"
+            echo "  gateway_host   - Public gateway URL host"
             exit 1
             ;;
     esac

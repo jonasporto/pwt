@@ -152,9 +152,10 @@ Go to previous worktree
 .B server\fR|\fBs \fR[\fINAME\fR]
 Start development server for worktree (runs Pwtfile server command)
 .TP
-.B gateway up \fR[\fB\-\-port\fR \fIPORT\fR]
+.B gateway up \fR[\fB\-\-port\fR \fIPORT\fR] [\fB\-\-host\fR \fIHOST\fR]
 Start the project-scoped gateway proxy daemon. If a port is provided, it is
-saved as the project's gateway_port.
+saved as the project's gateway_port. If a host is provided, it is saved as the
+project's gateway_host and used in the public gateway URL.
 .TP
 .B gateway down
 Stop the gateway proxy daemon for the current project. From outside a project,
@@ -329,7 +330,7 @@ Configuration is stored in \fB~/.pwt/\fR:
 
 .TP
 .B ~/.pwt/projects/\fINAME\fR/config.json
-Project configuration (path, worktrees_dir, branch_prefix, base_port, gateway_port)
+Project configuration (path, worktrees_dir, branch_prefix, base_port, gateway_port, gateway_host)
 .TP
 .B ~/.pwt/projects/\fINAME\fR/metadata.json
 Worktree metadata (ports, branches, descriptions)

@@ -177,6 +177,7 @@ _pwt_config_keys() {
         'branch_prefix:Branch prefix (e.g. user/)'
         'base_port:Base port for allocation'
         'gateway_port:Stable gateway proxy port'
+        'gateway_host:Gateway public URL host'
     )
     _describe 'key' keys
 }
@@ -297,10 +298,10 @@ _pwt() {
                             5)
                                 case ${words[4]} in
                                     use) _pwt_worktrees "$_project" ;;
-                                    init) _arguments '--port[Gateway port]:port:' ;;
+                                    init) _arguments '--port[Gateway port]:port:' '--host[Gateway public host]:host:' '-H[Gateway public host]:host:' ;;
                                 esac
                                 ;;
-                            *) _arguments '--port[Gateway port]:port:' '--json[JSON output]' '--all[Show all]' '-a[Show all]' ;;
+                            *) _arguments '--port[Gateway port]:port:' '--host[Gateway public host]:host:' '-H[Gateway public host]:host:' '--json[JSON output]' '--all[Show all]' '-a[Show all]' ;;
                         esac
                         ;;
                     run|for-each)
@@ -410,10 +411,10 @@ _pwt() {
                             4)
                                 case ${words[3]} in
                                     use) _pwt_worktrees ;;
-                                    init) _arguments '--port[Gateway port]:port:' ;;
+                                    init) _arguments '--port[Gateway port]:port:' '--host[Gateway public host]:host:' '-H[Gateway public host]:host:' ;;
                                 esac
                                 ;;
-                            *) _arguments '--port[Gateway port]:port:' '--json[JSON output]' ;;
+                            *) _arguments '--port[Gateway port]:port:' '--host[Gateway public host]:host:' '-H[Gateway public host]:host:' '--json[JSON output]' ;;
                         esac
                         ;;
                     run|for-each)

@@ -82,6 +82,13 @@ teardown() {
     [[ "$output" == *"test/"* ]]
 }
 
+@test "pwt config gateway_host defaults to localhost" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" config gateway_host
+    [ "$status" -eq 0 ]
+    [ "$output" = "localhost" ]
+}
+
 # ============================================
 # config set (key value)
 # ============================================
@@ -94,6 +101,23 @@ teardown() {
     # Verify it was updated
     run "$PWT_BIN" config branch_prefix
     [[ "$output" == *"feature/"* ]]
+}
+
+@test "pwt config gateway_host accepts custom domain" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" config gateway_host "app.localhost"
+    [ "$status" -eq 0 ]
+
+    run "$PWT_BIN" config gateway_host
+    [ "$status" -eq 0 ]
+    [ "$output" = "app.localhost" ]
+}
+
+@test "pwt config gateway_host rejects full URL" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" config gateway_host "http://app.localhost"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"without protocol, port, or path"* ]]
 }
 
 # ============================================

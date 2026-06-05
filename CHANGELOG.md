@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-06-05
+
+### Added
+- `gateway_host` project config and `pwt gateway init|up --host <host>` for
+  choosing the public gateway URL host.
+
+### Fixed
+- Gateway URLs now default to `localhost` instead of `127.0.0.1` so browser
+  cookies and sessions are shared with direct local app URLs on `localhost`.
+
 ## [0.1.12] - 2026-06-05
 
 ### Added
@@ -137,7 +147,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Test suite**: 530+ tests with BATS framework
 - **CI/CD**: GitHub Actions for automated testing
 
-[Unreleased]: https://github.com/jonasporto/pwt/compare/v0.1.12...HEAD
+[Unreleased]: https://github.com/jonasporto/pwt/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/jonasporto/pwt/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/jonasporto/pwt/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/jonasporto/pwt/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/jonasporto/pwt/compare/v0.1.9...v0.1.10

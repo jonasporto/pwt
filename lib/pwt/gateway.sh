@@ -35,6 +35,22 @@ _gateway_port() {
     get_project_config "$CURRENT_PROJECT" "gateway_port"
 }
 
+_gateway_host() {
+    local host
+    host=$(get_project_config "$CURRENT_PROJECT" "gateway_host")
+    echo "${host:-localhost}"
+}
+
+_gateway_validate_host() {
+    local host="$1"
+    if [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] || [[ "$host" =~ ^[A-Za-z0-9]$ ]]; then
+        return 0
+    fi
+
+    pwt_error "Error: gateway host must be a hostname or IP without protocol, port, or path"
+    return $EXIT_USAGE
+}
+
 _gateway_require_port() {
     local port
     port=$(_gateway_port)
@@ -48,7 +64,9 @@ _gateway_require_port() {
 
 _gateway_url() {
     local port="$1"
-    echo "http://127.0.0.1:$port"
+    local host
+    host=$(_gateway_host)
+    echo "http://$host:$port"
 }
 
 _gateway_set_port() {
@@ -65,6 +83,19 @@ _gateway_set_port() {
     local tmp_file
     tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
     jq --arg port "$port" '.gateway_port = $port' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+}
+
+_gateway_set_host() {
+    local host="$1"
+    local config_file=$(_gateway_config_file)
+
+    _gateway_validate_host "$host" || return $?
+
+    mkdir -p "$(dirname "$config_file")"
+    [ -f "$config_file" ] || echo "{}" > "$config_file"
+    local tmp_file
+    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
+    jq --arg host "$host" '.gateway_host = $host' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
 }
 
 _gateway_is_running() {
@@ -387,6 +418,8 @@ _gateway_status() {
 
     local port
     port=$(_gateway_port)
+    local host
+    host=$(_gateway_host)
     local running=false
     _gateway_is_running && running=true
     local target=$(_gateway_target_name)
@@ -398,6 +431,7 @@ _gateway_status() {
         jq -n -c \
             --arg project "$CURRENT_PROJECT" \
             --arg port "$port" \
+            --arg host "$host" \
             --arg target "$target" \
             --arg target_port "$target_port" \
             --arg pid "$pid" \
@@ -406,7 +440,8 @@ _gateway_status() {
                 project: $project,
                 configured: ($port != ""),
                 port: (if $port != "" then ($port | tonumber) else null end),
-                url: (if $port != "" then "http://127.0.0.1:" + $port else null end),
+                host: $host,
+                url: (if $port != "" then "http://" + $host + ":" + $port else null end),
                 running: $running,
                 pid: (if $pid != "" then ($pid | tonumber) else null end),
                 target: (if $target != "" then $target else null end),
@@ -606,8 +641,10 @@ cmd_gateway() {
             echo "Manage a stable per-project gateway URL that forwards to a worktree server."
             echo ""
             echo "Commands:"
-            echo "  init --port <port>        Configure gateway port"
-            echo "  up [--port <port>]        Start gateway proxy daemon"
+            echo "  init --port <port> [--host <host>]"
+            echo "                              Configure gateway port and public host"
+            echo "  up [--port <port>] [--host <host>]"
+            echo "                              Start gateway proxy daemon"
             echo "  down                      Stop gateway proxy"
             echo "  start                     Alias for up"
             echo "  stop                      Alias for down"
@@ -620,9 +657,11 @@ cmd_gateway() {
             ;;
         init)
             local port=""
+            local host=""
             while [ $# -gt 0 ]; do
                 case "$1" in
                     --port|-p) port="${2:-}"; shift 2 ;;
+                    --host|-H) host="${2:-}"; shift 2 ;;
                     *) port="$1"; shift ;;
                 esac
             done
@@ -631,7 +670,13 @@ cmd_gateway() {
                 return $EXIT_USAGE
             fi
             _gateway_set_port "$port" || return $?
+            if [ -n "$host" ]; then
+                _gateway_set_host "$host" || return $?
+            fi
             echo "Gateway port set to $port"
+            if [ -n "$host" ]; then
+                echo "Gateway host set to $host"
+            fi
             ;;
         up|start)
             local port
@@ -639,6 +684,10 @@ cmd_gateway() {
                 case "$1" in
                     --port|-p)
                         _gateway_set_port "${2:-}" || return $?
+                        shift 2
+                        ;;
+                    --host|-H)
+                        _gateway_set_host "${2:-}" || return $?
                         shift 2
                         ;;
                     *) shift ;;

@@ -89,7 +89,7 @@ EOF
 checkagent() {
     echo "AGENT:$PWT_AGENT"
     # Try to read from stdin - should fail immediately with closed stdin
-    if ! read -t 0 2>/dev/null; then
+    if ! read -r -t 0.1 _line 2>/dev/null; then
         echo "STDIN_CLOSED"
     fi
 }

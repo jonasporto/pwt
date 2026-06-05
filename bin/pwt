@@ -1004,6 +1004,10 @@ cmd_discover() {
     local skipped_configured=()
     local skipped_worktrees=()
     local skipped_submodules=()
+    local find_depth="$max_depth"
+    if [[ "$find_depth" =~ ^[0-9]+$ ]]; then
+        find_depth=$((find_depth + 1))
+    fi
 
     # Get list of already configured project paths
     local configured_paths=()
@@ -1081,7 +1085,7 @@ cmd_discover() {
             found_repos+=("$repo_path")
         fi
 
-    done < <(find "$search_path" -maxdepth "$max_depth" \( -name ".git" -type d -o -name ".git" -type f \) 2>/dev/null | sort)
+    done < <(find "$search_path" -maxdepth "$find_depth" \( -name ".git" -type d -o -name ".git" -type f \) 2>/dev/null | sort)
 
     # Display results
     if [ ${#found_repos[@]} -eq 0 ]; then

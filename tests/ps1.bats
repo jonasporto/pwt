@@ -200,9 +200,13 @@ teardown() {
     run "$PWT_BIN" use perf-test
     [ "$status" -eq 0 ]
 
-    # Time the ps1 command - should be very fast
-    # We just verify it completes quickly (under 1 second)
-    run timeout 1 "$PWT_BIN" ps1
+    # Time the ps1 command - should be very fast. Use timeout when available,
+    # but keep the test portable on macOS where GNU timeout is not installed.
+    if command -v timeout >/dev/null 2>&1; then
+        run timeout 1 "$PWT_BIN" ps1
+    else
+        run "$PWT_BIN" ps1
+    fi
     [ "$status" -eq 0 ]
     [ "$output" = "pwt@perf-test" ]
 }

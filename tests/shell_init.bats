@@ -28,7 +28,7 @@ EOF
     git commit -q -m "Add file"
 
     # Create a worktree
-    "$PWT_BIN" create TEST-WT HEAD
+    "$PWT_BIN" create TEST-WT HEAD >/dev/null
 }
 
 teardown() {
@@ -48,7 +48,7 @@ teardown() {
 
 @test "pwt shell-init can be sourced without error" {
     # Source the shell-init and verify it doesn't error
-    run bash -c "source <($PWT_BIN shell-init) && type pwt | head -1"
+    run bash -c "eval \"\$('$PWT_BIN' shell-init)\" && type pwt | head -1"
     [ "$status" -eq 0 ]
     [[ "$output" == *"function"* ]] || [[ "$output" == *"pwt is"* ]]
 }
@@ -63,7 +63,7 @@ teardown() {
     # Source shell-init and test cd
     run bash -c "
         export PWT_DIR='$PWT_DIR'
-        source <($PWT_BIN shell-init)
+        eval \"\$('$PWT_BIN' shell-init)\"
         cd '$TEST_REPO'
         pwt cd TEST-WT
         pwd
@@ -77,7 +77,7 @@ teardown() {
 
     run bash -c "
         export PWT_DIR='$PWT_DIR'
-        source <($PWT_BIN shell-init)
+        eval \"\$('$PWT_BIN' shell-init)\"
         cd '$TEST_REPO'
         pwt cd @
         pwd
@@ -107,7 +107,7 @@ teardown() {
 
     run bash -c "
         export PWT_DIR='$PWT_DIR'
-        source <($PWT_BIN shell-init)
+        eval \"\$('$PWT_BIN' shell-init)\"
         pwt use TEST-WT
     "
     [ "$status" -eq 0 ]
@@ -123,7 +123,7 @@ teardown() {
 @test "shell function sets PWT_WORKTREE after cd" {
     run bash -c "
         export PWT_DIR='$PWT_DIR'
-        source <($PWT_BIN shell-init)
+        eval \"\$('$PWT_BIN' shell-init)\"
         cd '$TEST_REPO'
         pwt cd TEST-WT
         echo \"\$PWT_WORKTREE\"
@@ -141,7 +141,7 @@ teardown() {
 
     run bash -c "
         export PWT_DIR='$PWT_DIR'
-        source <($PWT_BIN shell-init)
+        eval \"\$('$PWT_BIN' shell-init)\"
         pwt list --porcelain
     "
     [ "$status" -eq 0 ]
@@ -153,7 +153,7 @@ teardown() {
 @test "shell function passes help command correctly" {
     run bash -c "
         export PWT_DIR='$PWT_DIR'
-        source <($PWT_BIN shell-init)
+        eval \"\$('$PWT_BIN' shell-init)\"
         pwt help
     "
     [ "$status" -eq 0 ]

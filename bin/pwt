@@ -1032,8 +1032,27 @@ cmd_discover() {
             # It's a git worktree or submodule
             if grep -q "gitdir:" "$git_path" 2>/dev/null; then
                 # Check if it's a submodule (parent has .gitmodules referencing it)
-                local parent_dir=$(dirname "$repo_path")
-                if [ -f "$parent_dir/.gitmodules" ] && grep -q "path = $repo_name" "$parent_dir/.gitmodules" 2>/dev/null; then
+                local submodule_root=""
+                local scan_dir
+                scan_dir=$(dirname "$repo_path")
+                while [ "$scan_dir" != "$search_path" ] && [ "$scan_dir" != "/" ] && [ -n "$scan_dir" ]; do
+                    if [ -f "$scan_dir/.gitmodules" ]; then
+                        local submodule_rel="${repo_path#$scan_dir/}"
+                        if awk -F= -v path="$submodule_rel" '
+                            $1 ~ /^[[:space:]]*path[[:space:]]*$/ {
+                                value = $2
+                                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+                                if (value == path) found = 1
+                            }
+                            END { exit found ? 0 : 1 }
+                        ' "$scan_dir/.gitmodules" 2>/dev/null; then
+                            submodule_root="$scan_dir"
+                            break
+                        fi
+                    fi
+                    scan_dir=$(dirname "$scan_dir")
+                done
+                if [ -n "$submodule_root" ]; then
                     if [ "$include_submodules" = false ]; then
                         skipped_submodules+=("$relative_path (submodule)")
                         continue
@@ -1062,7 +1081,7 @@ cmd_discover() {
             found_repos+=("$repo_path")
         fi
 
-    done < <(find "$search_path" -maxdepth "$max_depth" -name ".git" -type d -o -name ".git" -type f 2>/dev/null | sort)
+    done < <(find "$search_path" -maxdepth "$max_depth" \( -name ".git" -type d -o -name ".git" -type f \) 2>/dev/null | sort)
 
     # Display results
     if [ ${#found_repos[@]} -eq 0 ]; then

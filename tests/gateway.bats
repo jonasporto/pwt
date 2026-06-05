@@ -194,6 +194,8 @@ http.get({host: "127.0.0.1", port, path: "/"}, (res) => {
 
     mkdir -p "$other_repo" "$other_worktrees"
     git -C "$other_repo" init -q
+    git -C "$other_repo" config user.email "test@test.com"
+    git -C "$other_repo" config user.name "Test User"
     echo "other" > "$other_repo/file.txt"
     git -C "$other_repo" add file.txt
     git -C "$other_repo" commit -q -m "Initial commit"

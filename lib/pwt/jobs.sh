@@ -149,7 +149,7 @@ _stop_all_jobs() {
         j_status=$(grep -o '"status": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
         if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
             _stop_job "$j_id"
-            ((count++))
+            count=$((count + 1))
         fi
     done
     if [ "$count" -eq 0 ]; then
@@ -172,10 +172,10 @@ _clean_jobs() {
 
         if [ "$j_status" = "running" ] && ! _is_job_alive "$j_id"; then
             _mark_job_stopped "$j_id"
-            ((count++))
+            count=$((count + 1))
         elif [ "$j_status" = "stopped" ]; then
             rm -f "$json_file" "$PWT_JOBS_DIR/${j_id}.log"
-            ((count++))
+            count=$((count + 1))
         fi
     done
     echo "Cleaned $count job(s)"

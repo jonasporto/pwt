@@ -4,7 +4,7 @@
 
 [![Tests](https://github.com/jonasporto/pwt/actions/workflows/test.yml/badge.svg)](https://github.com/jonasporto/pwt/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.9-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.12-green.svg)](CHANGELOG.md)
 
 ## Demos
 
@@ -95,6 +95,9 @@ pwt list                        # List worktrees with git status
 pwt editor                      # Open editor in current worktree
 pwt build                       # Run build command
 pwt server                      # Start dev server (auto port allocation)
+pwt gateway up --port 5999      # Start stable project gateway daemon
+pwt gateway use feat/user-auth  # Route gateway to a worktree server
+pwt servers                     # Show active project servers
 pwt ai                          # Start AI coding assistant
 ```
 
@@ -162,14 +165,84 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 |---------|-------------|
 | `init` | Initialize project in current repo |
 | `add <branch>` | Create worktree from branch (`-e` editor, `-a` AI) |
+| `track <remote-branch>` | Create worktree tracking an existing remote branch |
+| `adopt [path]` | Register an existing worktree and run setup |
 | `list` | List worktrees with git status (`--dirty`) |
 | `cd <worktree>` | Navigate to worktree (`@` main, `-` previous, `--select`) |
 | `project` | List all configured projects |
 | `<project> cd <wt>` | Jump to worktree in another project |
 | `editor` | Open editor in current worktree |
 | `server` | Start dev server (from Pwtfile) |
+| `gateway` | Stable project URL that routes to a worktree server |
+| `servers` | Show active servers, gateway target, and background jobs |
 | `ai` | Start AI coding assistant |
 | `remove <worktree>` | Remove worktree (`--with-branch`) |
+
+---
+
+## Existing Remote Branches
+
+Use `track` when you want to edit an existing remote branch directly without applying your configured `branch_prefix`:
+
+```bash
+pwt track origin/team/PROJ-1234
+```
+
+This creates a worktree named `PROJ-1234`, a local branch named `team/PROJ-1234`, configures tracking to `origin/team/PROJ-1234`, allocates metadata/port, and runs normal setup hooks.
+
+Override the worktree name when the branch does not contain a clear ticket:
+
+```bash
+pwt track origin/team/fix-login-flow --name login-flow
+```
+
+Equivalent explicit `create` form:
+
+```bash
+pwt create PROJ-1234 --branch team/PROJ-1234 --from origin/team/PROJ-1234
+```
+
+If a worktree was already created with raw Git, adopt it into pwt:
+
+```bash
+pwt adopt /path/to/worktree
+# or, from inside it
+pwt setup
+```
+
+Adopted worktrees can live outside the configured `worktrees_dir`. pwt records
+their real path in metadata, allocates a port, runs normal setup hooks, and then
+includes them in `pwt list`, `pwt list --names`, `pwt cd`, `pwt use`,
+`pwt current`, and `pwt info`.
+
+---
+
+## Stable Gateway
+
+Each worktree keeps its own allocated port, but you can also run one stable
+project-scoped gateway URL and switch which worktree it targets:
+
+```bash
+pwt gateway up --port 5999
+pwt gateway use PROJ-1234
+open "$(pwt gateway url)"
+```
+
+`pwt gateway up` runs a small local proxy daemon for the current project.
+`pwt gateway use <worktree>` points new connections at that worktree's
+allocated server port. If the target port is not listening and the project
+Pwtfile defines `server()`, pwt starts it with `pwt server <worktree> --bg`
+before switching the gateway.
+
+Gateways are scoped by project:
+
+```bash
+pwt gateway down          # current project
+pwt backend gateway down  # explicit project/alias from anywhere
+```
+
+Use `pwt servers` to see the gateway, current target, running server jobs, and
+active ports. Add `--all` to include stopped worktrees.
 
 ---
 

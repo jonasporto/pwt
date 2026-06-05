@@ -19,7 +19,7 @@ help:
 	@echo "  make install        Install to $(PREFIX)"
 	@echo "  make update         Update existing installation (auto-detects PREFIX)"
 	@echo "  make uninstall      Remove from $(PREFIX)"
-	@echo "  make test           Run tests"
+	@echo "  make test           Run all tests in parallel"
 	@echo "  make test-fast      Run a smaller test subset"
 	@echo "  make lint           Check bash syntax"
 	@echo "  make clean          Clean temporary files"
@@ -120,12 +120,7 @@ uninstall:
 	@echo "Uninstalled successfully!"
 
 test:
-	@if command -v bats >/dev/null; then \
-		bats tests/; \
-	else \
-		echo "bats not installed. Install with: brew install bats-core"; \
-		exit 1; \
-	fi
+	@scripts/test.sh
 
 test-fast:
 	@if command -v bats >/dev/null; then \

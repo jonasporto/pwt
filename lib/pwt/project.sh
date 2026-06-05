@@ -53,8 +53,9 @@ cmd_config() {
             echo "Keys:"
             echo "  main_app       - Path to main project"
             echo "  worktrees_dir  - Path to worktrees directory"
-            echo "  branch_prefix  - Prefix for branches (e.g., gl/)"
+            echo "  branch_prefix  - Prefix for branches (e.g., user/)"
             echo "  base_port      - Base port for allocation (default: 5000)"
+            echo "  gateway_port   - Stable gateway proxy port"
             echo ""
             echo "Options:"
             echo "  -h, --help, help    Show this help"
@@ -71,6 +72,9 @@ cmd_config() {
             echo "  worktrees_dir: ${WORKTREES_DIR:-"(auto-detected)"}"
             echo "  branch_prefix: ${BRANCH_PREFIX:-"(none)"}"
             echo "  base_port:     ${BASE_PORT:-5000}"
+            local gateway_port
+            gateway_port=$(get_project_config "$CURRENT_PROJECT" "gateway_port" || true)
+            echo "  gateway_port:  ${gateway_port:-"(not set)"}"
             echo ""
             if [ -f "$config_file" ] && [ "$(cat "$config_file")" != "{}" ]; then
                 echo "Saved overrides ($config_file):"
@@ -79,7 +83,7 @@ cmd_config() {
                 echo "No saved overrides (using auto-detected values)."
             fi
             ;;
-        main_app|worktrees_dir|branch_prefix|base_port)
+        main_app|worktrees_dir|branch_prefix|base_port|gateway_port)
             if [ -z "$value" ]; then
                 # Show current value
                 local current=$(jq -r ".$key // empty" "$config_file" 2>/dev/null)
@@ -100,6 +104,7 @@ cmd_config() {
             echo "  worktrees_dir  - Path to worktrees directory"
             echo "  branch_prefix  - Prefix for branches (e.g., user/)"
             echo "  base_port      - Base port for allocation"
+            echo "  gateway_port   - Stable gateway proxy port"
             exit 1
             ;;
     esac
@@ -238,7 +243,7 @@ cmd_project() {
                 echo -e "${GREEN}✓ Cleared alias for $project${NC}"
             else
                 # Set alias - validate first
-                local reserved_commands="list create remove cd server test meta port project help version config init show set path alias"
+                local reserved_commands="list create remove cd server servers gateway test meta port project help version config init show set path alias"
                 for cmd in $reserved_commands; do
                     if [ "$new_alias" = "$cmd" ]; then
                         pwt_error "Error: '$new_alias' is a reserved command name"

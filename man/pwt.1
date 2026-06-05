@@ -67,7 +67,28 @@ Create from specific ref (tag, commit, branch)
 .TP
 .BR \-\-from\-current
 Create from current branch
+.TP
+.BR \-\-branch " " \fINAME\fR
+Use exact Git branch name while keeping the worktree name separate
+.TP
+.BR \-\-track " " \fIREMOTE\-BRANCH\fR
+Create a local branch tracking an existing remote branch without applying branch_prefix
 .RE
+.TP
+.B track \fIREMOTE\-BRANCH\fR [\fB\-\-name\fR \fINAME\fR]
+Create a pwt-managed worktree that tracks an existing remote branch. The local
+branch matches the remote branch name without applying branch_prefix. If
+\fB\-\-name\fR is omitted, pwt uses a ticket-like token such as PROJ-1234 when
+present, otherwise the last branch path segment.
+.TP
+.B adopt \fR[\fIPATH\fR]
+Register an existing git worktree with pwt, allocate metadata/port, and run
+standard setup hooks. Defaults to the current directory. Adopted worktrees may
+live outside the configured worktrees_dir; pwt records their real path and shows
+them in list, cd, use, current, and info commands.
+.TP
+.B setup \fR[\fIPATH\fR]
+Alias for adopt.
 .TP
 .B remove\fR|\fBrm \fINAME\fR
 Remove a worktree and clean up resources
@@ -131,6 +152,27 @@ Go to previous worktree
 .B server\fR|\fBs \fR[\fINAME\fR]
 Start development server for worktree (runs Pwtfile server command)
 .TP
+.B gateway up \fR[\fB\-\-port\fR \fIPORT\fR]
+Start the project-scoped gateway proxy daemon. If a port is provided, it is
+saved as the project's gateway_port.
+.TP
+.B gateway down
+Stop the gateway proxy daemon for the current project. From outside a project,
+use \fBpwt \fIPROJECT\fB gateway down\fR.
+.TP
+.B gateway use \fINAME\fR|\fB@\fR [\fB\-\-\fR \fISERVER_ARGS\fR...]
+Route new gateway connections to the selected worktree's allocated server
+port. If the target port is not listening and the project Pwtfile defines
+server(), pwt starts it in the background first.
+.TP
+.B gateway status \fR[\fB\-\-json\fR]
+Show gateway port, daemon status, and current target.
+.TP
+.B servers \fR[\fB\-\-all\fR] [\fB\-\-json\fR]
+Show project server status, including gateway target, current worktree,
+listening ports, and background server jobs. By default shows active entries;
+\fB\-\-all\fR includes stopped worktrees.
+.TP
 .B run \fINAME\fR \fICOMMAND\fR...
 Run command in specific worktree context
 .TP
@@ -149,7 +191,8 @@ Start AI tool (Claude Code, Cursor, etc.) in worktree
 .SS Information
 .TP
 .B info \fINAME\fR
-Show detailed worktree information
+Show detailed worktree information, including branch, tracking target, port,
+server status, directory, mode, description, created timestamp, and dirty files
 .TP
 .B port \fINAME\fR
 Get allocated port for worktree
@@ -286,7 +329,7 @@ Configuration is stored in \fB~/.pwt/\fR:
 
 .TP
 .B ~/.pwt/projects/\fINAME\fR/config.json
-Project configuration (path, worktrees_dir, branch_prefix, base_port)
+Project configuration (path, worktrees_dir, branch_prefix, base_port, gateway_port)
 .TP
 .B ~/.pwt/projects/\fINAME\fR/metadata.json
 Worktree metadata (ports, branches, descriptions)
@@ -304,6 +347,12 @@ Clone and initialize:
 .TP
 Create worktree from current branch:
 .B pwt create feature-auth --from-current
+.TP
+Track an existing remote branch:
+.B pwt track origin/team/PROJ-123
+.TP
+Create named worktree with exact branch:
+.B pwt create PROJ-123 --branch team/PROJ-123 --from origin/team/PROJ-123
 .TP
 Create worktree with description:
 .B pwt create PROJ-123 main "Add user authentication"

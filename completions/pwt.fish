@@ -38,6 +38,9 @@ end
 complete -c pwt -n __pwt_needs_command -a init -d 'Initialize project'
 complete -c pwt -n __pwt_needs_command -a create -d 'Create new worktree'
 complete -c pwt -n __pwt_needs_command -a add -d 'Create new worktree (alias)'
+complete -c pwt -n __pwt_needs_command -a track -d 'Create worktree tracking remote branch'
+complete -c pwt -n __pwt_needs_command -a adopt -d 'Register existing worktree and run setup'
+complete -c pwt -n __pwt_needs_command -a setup -d 'Register current worktree and run setup'
 complete -c pwt -n __pwt_needs_command -a list -d 'List worktrees'
 complete -c pwt -n __pwt_needs_command -a ls -d 'List worktrees'
 complete -c pwt -n __pwt_needs_command -a tree -d 'Visual tree view'
@@ -51,6 +54,8 @@ complete -c pwt -n __pwt_needs_command -a remove -d 'Remove worktree'
 complete -c pwt -n __pwt_needs_command -a rm -d 'Remove worktree'
 complete -c pwt -n __pwt_needs_command -a server -d 'Start development server'
 complete -c pwt -n __pwt_needs_command -a s -d 'Start development server'
+complete -c pwt -n __pwt_needs_command -a gateway -d 'Stable gateway to a worktree server'
+complete -c pwt -n __pwt_needs_command -a servers -d 'Show project server status'
 complete -c pwt -n __pwt_needs_command -a run -d 'Run command in worktree'
 complete -c pwt -n __pwt_needs_command -a for-each -d 'Run in all worktrees'
 complete -c pwt -n __pwt_needs_command -a editor -d 'Open in editor'
@@ -90,6 +95,7 @@ complete -c pwt -n '__pwt_using_command cd' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command use' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command server' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command s' -a '(__pwt_worktrees)' -d 'Worktree'
+complete -c pwt -n '__pwt_using_command gateway' -a 'init up down start stop restart status use url logs help' -d 'Action'
 complete -c pwt -n '__pwt_using_command info' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command show' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command port' -a '(__pwt_worktrees)' -d 'Worktree'
@@ -120,7 +126,19 @@ complete -c pwt -n '__pwt_using_command create' -s e -l editor -d 'Open editor a
 complete -c pwt -n '__pwt_using_command create' -s a -l ai -d 'Start AI after'
 complete -c pwt -n '__pwt_using_command create' -l from -d 'Create from ref'
 complete -c pwt -n '__pwt_using_command create' -l from-current -d 'Create from current branch'
+complete -c pwt -n '__pwt_using_command create' -l branch -d 'Use exact Git branch name'
+complete -c pwt -n '__pwt_using_command create' -l track -d 'Track existing remote branch'
+complete -c pwt -n '__pwt_using_command create' -l track-existing -d 'Track existing remote branch'
 complete -c pwt -n '__pwt_using_command add' -a '(__pwt_branches)' -d 'Branch'
+
+# Track/adopt commands
+complete -c pwt -n '__pwt_using_command track' -a '(__pwt_branches)' -d 'Remote branch'
+complete -c pwt -n '__pwt_using_command track' -l name -d 'Override worktree name'
+complete -c pwt -n '__pwt_using_command track' -l dry-run -s n -d 'Show what would be created'
+complete -c pwt -n '__pwt_using_command track' -s e -l editor -d 'Open editor after'
+complete -c pwt -n '__pwt_using_command track' -s a -l ai -d 'Start AI after'
+complete -c pwt -n '__pwt_using_command adopt' -a '(__fish_complete_directories)' -d 'Path'
+complete -c pwt -n '__pwt_using_command setup' -a '(__fish_complete_directories)' -d 'Path'
 
 # Meta subcommands
 complete -c pwt -n '__pwt_using_command meta' -a 'list show set import' -d 'Action'
@@ -136,10 +154,14 @@ complete -c pwt -n '__pwt_using_command plugin' -a 'list install remove create p
 complete -c pwt -n '__pwt_using_command claude-setup' -a 'install vars format preview test toggle help' -d 'Action'
 
 # Config keys
-complete -c pwt -n '__pwt_using_command config' -a 'main_app worktrees_dir branch_prefix base_port' -d 'Config key'
+complete -c pwt -n '__pwt_using_command config' -a 'main_app worktrees_dir branch_prefix base_port gateway_port' -d 'Config key'
 
 # Jobs subcommands
 complete -c pwt -n '__pwt_using_command jobs' -a 'list logs stop clean help' -d 'Action'
+complete -c pwt -n '__pwt_using_command servers' -l all -s a -d 'Show stopped worktrees'
+complete -c pwt -n '__pwt_using_command servers' -l json -d 'Output JSON'
+complete -c pwt -n '__pwt_using_command gateway' -l port -s p -d 'Gateway port'
+complete -c pwt -n '__pwt_using_command gateway' -l json -d 'Output JSON'
 
 # Global flags
 complete -c pwt -l project -d 'Specify project' -a '(__pwt_projects)'

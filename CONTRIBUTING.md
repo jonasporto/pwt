@@ -27,7 +27,7 @@ Once your issue is approved:
 1. Fork the repository
 2. Create a branch for your changes
 3. Make your changes
-4. Run tests: `bats tests/`
+4. Run tests: `make test`
 5. Open a PR referencing the issue (e.g., `Fixes #123`)
 
 **Note:** PRs without a linked issue will be automatically closed.
@@ -54,8 +54,11 @@ brew install bats-core
 # Install BATS (Linux)
 sudo apt-get install bats
 
-# Run all tests
-bats tests/
+# Run all tests in parallel by file
+make test
+
+# Run all tests serially, matching plain BATS behavior
+scripts/test.sh --serial
 
 # Run specific test file
 bats tests/commands.bats

@@ -1,6 +1,6 @@
 {
   "name": "@jonasporto/pwt",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Power Worktrees - Git worktree manager for multiple projects",
   "main": "bin/pwt",
   "bin": {
@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "postinstall": "echo 'pwt installed! Run: pwt --help'",
-    "test": "bats tests/"
+    "test": "scripts/test.sh"
   },
   "repository": {
     "type": "git",

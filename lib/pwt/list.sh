@@ -26,6 +26,33 @@ _PWT_LIST_LOADED=1
 # List helper functions
 # ============================================
 
+git_status_counts() {
+    local dir="$1"
+    local staged=0
+    local modified=0
+    local untracked=0
+    local entries=0
+    local line
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        entries=$((entries + 1))
+
+        if [[ "$line" == \?\?* ]]; then
+            untracked=$((untracked + 1))
+            continue
+        fi
+
+        local index_status="${line:0:1}"
+        local worktree_status="${line:1:1}"
+
+        [ "$index_status" != " " ] && staged=$((staged + 1))
+        [ "$worktree_status" != " " ] && modified=$((modified + 1))
+    done < <(git -C "$dir" status --porcelain 2>/dev/null)
+
+    echo "$staged $modified $untracked $entries"
+}
+
 # Check port status for a worktree
 # Arguments: port [worktree_dir]
 # Returns: colored text with status
@@ -146,6 +173,32 @@ check_merge_status() {
     fi
 }
 
+list_worktree_entries() {
+    local project="${1:-${CURRENT_PROJECT:-unknown}}"
+    local worktrees_dir="${2:-$WORKTREES_DIR}"
+    local seen=""
+    local dir name path
+
+    if [ -d "$worktrees_dir" ] && [ "$(ls -A "$worktrees_dir" 2>/dev/null)" ]; then
+        for dir in "$worktrees_dir"/*/; do
+            [ -d "$dir" ] || continue
+            name=$(basename "$dir")
+            path="${dir%/}"
+            printf '%s\t%s\n' "$name" "$path"
+            seen="${seen}|${name}|"
+        done
+    fi
+
+    if [ -f "$METADATA_FILE" ]; then
+        while IFS=$'\t' read -r name path; do
+            [ -n "$name" ] && [ -n "$path" ] && [ -d "$path" ] || continue
+            [[ "$seen" == *"|$name|"* ]] && continue
+            printf '%s\t%s\n' "$name" "$path"
+            seen="${seen}|${name}|"
+        done < <(jq -r --arg project "$project" '.[$project] // {} | to_entries[] | [.key, (.value.path // "")] | @tsv' "$METADATA_FILE" 2>/dev/null)
+    fi
+}
+
 # ============================================
 # List commands
 # ============================================
@@ -156,11 +209,8 @@ cmd_list_porcelain() {
     local show_dirty_only="${1:-false}"
     local worktrees_json="[]"
 
-    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
-        for dir in "$WORKTREES_DIR"/*/; do
-            [ -d "$dir" ] || continue
-
-            local name=$(basename "$dir")
+    while IFS=$'\t' read -r name dir; do
+            [ -n "$name" ] && [ -d "$dir" ] || continue
             local port=$(get_metadata "$name" "port")
             local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
             local commit=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "?")
@@ -198,8 +248,7 @@ cmd_list_porcelain() {
 
             # Append to array
             worktrees_json=$(echo "$worktrees_json" | jq --argjson wt "$wt_json" '. + [$wt]')
-        done
-    fi
+    done < <(list_worktree_entries)
 
     # Output final JSON with proper escaping
     jq -n \
@@ -223,7 +272,7 @@ cmd_list() {
     while [ $# -gt 0 ]; do
         case "$1" in
             -h|--help)
-                echo "Usage: pwt list [options]"
+                echo "Usage: pwt list|ls [options]"
                 echo ""
                 echo "List all worktrees for the current project."
                 echo ""
@@ -426,10 +475,8 @@ cmd_list_compact() {
 
     # Worktrees
     local has_merged=false
-    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
-        for dir in "$WORKTREES_DIR"/*/; do
-            [ -d "$dir" ] || continue
-            local name=$(basename "$dir")
+    while IFS=$'\t' read -r name dir; do
+            [ -n "$name" ] && [ -d "$dir" ] || continue
 
             # Git info
             local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
@@ -494,8 +541,7 @@ cmd_list_compact() {
             [ -z "$meta" ] && meta="·"
 
             print_table_row "$marker" "$name" "$branch" "$hash" "$base" "${status:-·}" "${main_div:-·}" "${remote_div:-·}" "$age" "$meta"
-        done
-    fi
+    done < <(list_worktree_entries)
 
     echo ""
 
@@ -516,13 +562,10 @@ cmd_list_names() {
     echo "@/"
 
     # Output worktree names with trailing /
-    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
-        for dir in "$WORKTREES_DIR"/*/; do
-            [ -d "$dir" ] || continue
-            local name=$(basename "$dir")
-            echo "$name/"
-        done
-    fi
+    while IFS=$'\t' read -r name dir; do
+        [ -n "$name" ] && [ -d "$dir" ] || continue
+        echo "$name/"
+    done < <(list_worktree_entries)
 }
 
 # Statusline for shell prompts
@@ -535,7 +578,7 @@ cmd_list_statusline() {
 
     if [ -n "${PWT_WORKTREE:-}" ]; then
         worktree="$PWT_WORKTREE"
-        dir="$WORKTREES_DIR/$worktree"
+        dir=$(get_worktree_path "$worktree" 2>/dev/null || echo "$WORKTREES_DIR/$worktree")
     else
         # Try to detect from PWD
         if [[ "$PWD" == *"-worktrees/"* ]]; then
@@ -637,10 +680,10 @@ cmd_list_verbose() {
     # Worktrees
     local has_port_issues=false
     local has_merged=false
-    if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
-        for dir in "$WORKTREES_DIR"/*/; do
-            if [ -d "$dir" ]; then
-                local name=$(basename "$dir")
+    local found_worktrees=false
+    while IFS=$'\t' read -r name dir; do
+            [ -n "$name" ] && [ -d "$dir" ] || continue
+            found_worktrees=true
 
                 # Get port from metadata first, fallback to extracting from name
                 local port=$(get_metadata "$name" "port")
@@ -769,9 +812,8 @@ cmd_list_verbose() {
                     has_merged=true
                 fi
                 echo ""
-            fi
-        done
-    else
+    done < <(list_worktree_entries)
+    if [ "$found_worktrees" = false ]; then
         echo -e "  ${YELLOW}(no worktrees created)${NC}"
         echo ""
     fi
@@ -882,16 +924,17 @@ cmd_tree() {
         fi
 
         # Worktrees
-        if [ -d "$worktrees_dir" ] && [ "$(ls -A "$worktrees_dir" 2>/dev/null)" ]; then
-            local wt_dirs=("$worktrees_dir"/*/)
-            local wt_count=${#wt_dirs[@]}
+        local tree_entries
+        tree_entries=$(list_worktree_entries "$project" "$worktrees_dir")
+        if [ -n "$tree_entries" ]; then
+            local wt_count
+            wt_count=$(printf '%s\n' "$tree_entries" | wc -l | tr -d ' ')
             local i=0
 
-            for dir in "${wt_dirs[@]}"; do
-                [ -d "$dir" ] || continue
+            while IFS=$'\t' read -r name dir; do
+                [ -n "$name" ] && [ -d "$dir" ] || continue
                 i=$((i + 1))
 
-                local name=$(basename "$dir")
                 local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
                 local desc=$(get_metadata "$name" "description" 2>/dev/null)
                 local port=$(get_metadata "$name" "port" 2>/dev/null)
@@ -940,7 +983,7 @@ cmd_tree() {
                     echo -e "│  ├─ $branch$port_text"
                     echo -e "│  └─ status:$status_text${status_text:- ${GREEN}clean${NC}}"
                 fi
-            done
+            done <<< "$tree_entries"
         else
             echo -e "└─ ${DIM}(no worktrees)${NC}"
         fi

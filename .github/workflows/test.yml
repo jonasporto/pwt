@@ -84,8 +84,7 @@ jobs:
         run: chmod +x bin/pwt
 
       - name: Run tests
-        run: bats tests/*.bats || echo "BATS exited with $? (known Ubuntu issue)"
-        continue-on-error: true
+        run: make test
 
   shellcheck:
     needs: should-run

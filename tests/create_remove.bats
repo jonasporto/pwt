@@ -32,6 +32,21 @@ teardown() {
     teardown_test_env
 }
 
+create_remote_branch() {
+    local remote_branch="$1"
+    local remote_repo="$TEST_TEMP_DIR/origin.git"
+
+    if [ ! -d "$remote_repo" ]; then
+        git init --bare -q "$remote_repo"
+        git remote add origin "$remote_repo"
+        git push -q origin HEAD:master
+    fi
+
+    git branch "$remote_branch" HEAD
+    git push -q origin "$remote_branch"
+    git branch -D "$remote_branch"
+}
+
 # ============================================
 # pwt create - basic functionality
 # ============================================
@@ -135,6 +150,147 @@ teardown() {
     cd "$TEST_WORKTREES/TEST-DESC"
     local branch=$(git branch --show-current)
     [[ "$branch" == *"add-new-feature"* ]] || [[ "$branch" == *"TEST-DESC"* ]]
+}
+
+@test "pwt create --track-existing creates local branch tracking remote without branch prefix" {
+    cd "$TEST_REPO"
+    create_remote_branch "team/PROJ-19292"
+
+    run "$PWT_BIN" create --track-existing origin/team/PROJ-19292
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/PROJ-19292" ]
+
+    local branch=$(git -C "$TEST_WORKTREES/PROJ-19292" branch --show-current)
+    [ "$branch" = "team/PROJ-19292" ]
+
+    local upstream=$(git -C "$TEST_WORKTREES/PROJ-19292" rev-parse --abbrev-ref --symbolic-full-name "@{u}")
+    [ "$upstream" = "origin/team/PROJ-19292" ]
+
+    local meta_branch=$(jq -r '.["test-project"]["PROJ-19292"].branch' "$PWT_DIR/meta.json")
+    [ "$meta_branch" = "team/PROJ-19292" ]
+}
+
+@test "pwt create separates worktree name from exact branch name" {
+    cd "$TEST_REPO"
+    create_remote_branch "team/PROJ-19293"
+
+    run "$PWT_BIN" create PROJ-19293 --branch team/PROJ-19293 --from origin/team/PROJ-19293
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/PROJ-19293" ]
+
+    local branch=$(git -C "$TEST_WORKTREES/PROJ-19293" branch --show-current)
+    [ "$branch" = "team/PROJ-19293" ]
+
+    local upstream=$(git -C "$TEST_WORKTREES/PROJ-19293" rev-parse --abbrev-ref --symbolic-full-name "@{u}")
+    [ "$upstream" = "origin/team/PROJ-19293" ]
+}
+
+@test "pwt track infers ticket worktree name and tracks remote branch" {
+    cd "$TEST_REPO"
+    create_remote_branch "team/PROJ-19294-review"
+
+    run "$PWT_BIN" track origin/team/PROJ-19294-review
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/PROJ-19294" ]
+
+    local branch=$(git -C "$TEST_WORKTREES/PROJ-19294" branch --show-current)
+    [ "$branch" = "team/PROJ-19294-review" ]
+
+    local upstream=$(git -C "$TEST_WORKTREES/PROJ-19294" rev-parse --abbrev-ref --symbolic-full-name "@{u}")
+    [ "$upstream" = "origin/team/PROJ-19294-review" ]
+}
+
+@test "pwt track --name overrides inferred worktree name" {
+    cd "$TEST_REPO"
+    create_remote_branch "team/fix-login-flow"
+
+    run "$PWT_BIN" track origin/team/fix-login-flow --name login-flow
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/login-flow" ]
+
+    local branch=$(git -C "$TEST_WORKTREES/login-flow" branch --show-current)
+    [ "$branch" = "team/fix-login-flow" ]
+}
+
+@test "pwt create --from remote branch suggests pwt track for direct remote editing" {
+    cd "$TEST_REPO"
+    create_remote_branch "team/PROJ-19295"
+
+    run "$PWT_BIN" create PROJ-19295 --from origin/team/PROJ-19295 --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Remote branch detected"* ]]
+    [[ "$output" == *"pwt track origin/team/PROJ-19295"* ]]
+    [[ "$output" == *"Raw 'git worktree add' skips project setup"* ]]
+    [[ "$output" == *"local config"* ]]
+}
+
+@test "pwt adopt registers existing worktree and runs setup hooks" {
+    cd "$TEST_REPO"
+    cat > Pwtfile <<'EOF'
+setup() {
+    set -u
+    mkdir -p log tmp
+    echo "$PWT_WORKTREE|$PWT_BRANCH|$PWT_PORT" > .pwt-setup-marker
+}
+EOF
+    git add Pwtfile
+    git commit -q -m "Add Pwtfile"
+
+    git worktree add -q -b team/PROJ-19296 "$TEST_WORKTREES/PROJ-19296" HEAD
+
+    run "$PWT_BIN" adopt "$TEST_WORKTREES/PROJ-19296"
+    [ "$status" -eq 0 ]
+
+    [ -f "$TEST_WORKTREES/PROJ-19296/.pwt-setup-marker" ]
+    [[ "$(cat "$TEST_WORKTREES/PROJ-19296/.pwt-setup-marker")" == PROJ-19296\|team/PROJ-19296\|* ]]
+    [ -d "$TEST_WORKTREES/PROJ-19296/log" ]
+    [ -d "$TEST_WORKTREES/PROJ-19296/tmp" ]
+
+    local port=$(jq -r '.["test-project"]["PROJ-19296"].port' "$PWT_DIR/meta.json")
+    [[ "$port" =~ ^[0-9]+$ ]]
+}
+
+@test "pwt adopt supports worktrees outside configured worktrees_dir" {
+    cd "$TEST_REPO"
+    local external_dir="$TEST_TEMP_DIR/external/PROJ-19297"
+    mkdir -p "$(dirname "$external_dir")"
+    git worktree add -q -b team/PROJ-19297 "$external_dir" HEAD
+    local expected_dir=$(cd "$external_dir" && pwd -P)
+
+    run "$PWT_BIN" adopt "$external_dir"
+    [ "$status" -eq 0 ]
+
+    local meta_path=$(jq -r '.["test-project"]["PROJ-19297"].path' "$PWT_DIR/meta.json")
+    [ "$meta_path" = "$expected_dir" ]
+
+    run "$PWT_BIN" info PROJ-19297
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Directory:"* ]]
+    [[ "$output" == *"$expected_dir"* ]]
+    [[ "$output" == *"Mode:"* ]]
+
+    run "$PWT_BIN" cd PROJ-19297
+    [ "$status" -eq 0 ]
+    [ "$output" = "$expected_dir" ]
+
+    run "$PWT_BIN" list --names
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PROJ-19297/"* ]]
+
+    run "$PWT_BIN" use PROJ-19297
+    [ "$status" -eq 0 ]
+    local current_target=$(readlink "$PWT_DIR/projects/test-project/current")
+    [ "$current_target" = "$expected_dir" ]
+
+    run "$PWT_BIN" current --path --resolved
+    [ "$status" -eq 0 ]
+    [ "$output" = "$expected_dir" ]
+
+    rm -f "$PWT_DIR/projects/test-project/current"
+    cd "$expected_dir"
+    run "$PWT_BIN" current --name
+    [ "$status" -eq 0 ]
+    [ "$output" = "PROJ-19297" ]
 }
 
 # ============================================

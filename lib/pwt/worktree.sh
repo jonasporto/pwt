@@ -18,6 +18,75 @@
 [[ -n "${_PWT_WORKTREE_LOADED:-}" ]] && return 0
 _PWT_WORKTREE_LOADED=1
 
+_pwt_local_branch_for_remote() {
+    local remote_ref="$1"
+    remote_ref="${remote_ref#refs/remotes/}"
+    echo "${remote_ref#*/}"
+}
+
+_pwt_track_worktree_name() {
+    local branch="$1"
+
+    if [[ "$branch" =~ ([A-Z][A-Z0-9]+-[0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+
+    extract_worktree_name "$branch"
+}
+
+_pwt_fetch_remote_ref() {
+    local remote_ref="$1"
+    local remote="${remote_ref%%/*}"
+    local remote_branch="${remote_ref#*/}"
+
+    if [ -n "$remote" ] && [ "$remote" != "$remote_branch" ]; then
+        echo -e "${BLUE}Updating reference:${NC} $remote_ref"
+        git fetch "$remote" "$remote_branch" --quiet 2>/dev/null || true
+    fi
+}
+
+_pwt_set_tracking_if_remote() {
+    local worktree_dir="$1"
+    local local_branch="$2"
+    local remote_ref="$3"
+
+    [ -n "$remote_ref" ] || return 0
+    [[ "$remote_ref" == */* ]] || return 0
+
+    local remote_local_branch=$(_pwt_local_branch_for_remote "$remote_ref")
+    [ "$local_branch" = "$remote_local_branch" ] || return 0
+
+    if git -C "$worktree_dir" rev-parse --verify --quiet "$remote_ref^{commit}" >/dev/null 2>&1; then
+        git -C "$worktree_dir" branch --set-upstream-to="$remote_ref" "$local_branch" >/dev/null 2>&1 || true
+        echo -e "  ${GREEN}✓ Tracking:${NC} $remote_ref"
+    fi
+}
+
+_pwt_run_standard_setup() {
+    local worktree_name="$1"
+    local worktree_dir="$2"
+    local final_branch="$3"
+    local port="$4"
+    local final_base="$5"
+    local final_desc="$6"
+
+    export PWT_WORKTREE="$worktree_name"
+    export PWT_WORKTREE_PATH="$worktree_dir"
+    export PWT_BRANCH="$final_branch"
+    export PWT_PORT="$port"
+    export PWT_TICKET="$worktree_name"
+    export PWT_BASE="$final_base"
+    export PWT_DESC="$final_desc"
+    export PWT_PROJECT="$CURRENT_PROJECT"
+    export MAIN_APP="$MAIN_APP"
+
+    run_pwtfile "setup"
+    run_hook "post-create"
+    set_current_worktree "$worktree_name" 2>/dev/null || true
+    clear_list_cache
+}
+
 cmd_create() {
     local branch=""
     local base_ref=""
@@ -27,6 +96,8 @@ cmd_create() {
     local start_ai=false
     local from_current=false
     local use_clone=false
+    local explicit_branch=""
+    local track_existing_ref=""
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -48,7 +119,27 @@ cmd_create() {
                 shift
                 ;;
             --from)
+                if [ -z "${2:-}" ]; then
+                    pwt_error "Error: --from requires a ref"
+                    exit 1
+                fi
                 base_ref="$2"
+                shift 2
+                ;;
+            --branch)
+                if [ -z "${2:-}" ]; then
+                    pwt_error "Error: --branch requires a branch name"
+                    exit 1
+                fi
+                explicit_branch="$2"
+                shift 2
+                ;;
+            --track|--track-existing)
+                if [ -z "${2:-}" ]; then
+                    pwt_error "Error: $1 requires a remote ref"
+                    exit 1
+                fi
+                track_existing_ref="$2"
                 shift 2
                 ;;
             --from-current)
@@ -72,6 +163,10 @@ cmd_create() {
                 echo "Options:"
                 echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
                 echo "  --from-current    Create from current branch"
+                echo "  --branch <name>   Use exact Git branch name (directory still uses <branch>)"
+                echo "  --track <remote/ref>"
+                echo "  --track-existing <remote/ref>"
+                echo "                    Create local branch tracking an existing remote branch"
                 echo "  --clone           Use git clone instead of worktree"
                 echo "  -e, --editor      Open in editor after creation"
                 echo "  -a, --ai          Start AI assistant after creation"
@@ -82,6 +177,9 @@ cmd_create() {
                 echo "  pwt create TICKET-1234                        # no description"
                 echo "  pwt create TICKET-1234 \"auth login bug\"       # with description"
                 echo "  pwt create TICKET-1234 develop \"auth login\"   # custom base + description"
+                echo "  pwt create --track origin/team/TICKET-1234"
+                echo "  pwt track origin/team/TICKET-1234"
+                echo "  pwt create TICKET-1234 --branch team/TICKET-1234 --from origin/team/TICKET-1234"
                 return 0
                 ;;
             -*)
@@ -126,6 +224,20 @@ cmd_create() {
         fi
     fi
 
+    if [ -n "$track_existing_ref" ]; then
+        if [ -n "$explicit_branch" ]; then
+            pwt_error "Error: --track-existing already derives the local branch; do not combine with --branch"
+            exit 1
+        fi
+        explicit_branch=$(_pwt_local_branch_for_remote "$track_existing_ref")
+        base_ref="$track_existing_ref"
+        if [ -z "$branch" ]; then
+            branch="$explicit_branch"
+        fi
+    elif [ -z "$branch" ] && [ -n "$explicit_branch" ]; then
+        branch="$explicit_branch"
+    fi
+
     if [ -z "$branch" ]; then
         pwt_error "Error: Branch/ticket not specified"
         echo "Usage: pwt create <branch> [base-ref] [description...] [options]"
@@ -137,6 +249,10 @@ cmd_create() {
         echo "  -a, --ai          Start AI tool after creating"
         echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
         echo "  --from-current    Create from current branch"
+        echo "  --branch <name>   Use exact Git branch name"
+        echo "  --track <remote/ref>"
+        echo "  --track-existing <remote/ref>"
+        echo "                    Create local branch tracking an existing remote branch"
         echo "  --                Everything after is the description"
         echo ""
         echo "Examples:"
@@ -146,6 +262,9 @@ cmd_create() {
         echo "  pwt create PROJ-123 master add auth flow        # works too"
         echo "  pwt create PROJ-123 --from v1.2.3 -- hotfix for bug"
         echo "  pwt create hotfix --from-current"
+        echo "  pwt create --track origin/team/PROJ-123"
+        echo "  pwt track origin/team/PROJ-123"
+        echo "  pwt create PROJ-123 --branch team/PROJ-123 --from origin/team/PROJ-123"
         echo "  pwt create PROJ-123 master -e -a"
         exit 1
     fi
@@ -153,8 +272,18 @@ cmd_create() {
     # Ensure worktrees_dir exists
     mkdir -p "$WORKTREES_DIR"
 
-    pwt_debug "Creating worktree: branch=$branch, base=${base_ref:-default}, from_current=${from_current:-false}"
+    pwt_debug "Creating worktree: branch=$branch, git_branch=${explicit_branch:-default}, base=${base_ref:-default}, from_current=${from_current:-false}"
     pwt_debug "Options: dry_run=${dry_run:-false}, open_editor=${open_editor:-false}, start_ai=${start_ai:-false}"
+
+    if [ -n "$base_ref" ] && [ -z "$explicit_branch" ] && [ -z "$track_existing_ref" ] && [[ "$base_ref" == */* ]]; then
+        local suggested_local=$(_pwt_local_branch_for_remote "$base_ref")
+        local suggested_name=$(_pwt_track_worktree_name "$suggested_local")
+        echo -e "${YELLOW}Remote branch detected:${NC} $base_ref"
+        echo -e "  To edit that branch directly: ${DIM}pwt track $base_ref${NC}"
+        echo -e "  Equivalent explicit form:     ${DIM}pwt create $suggested_name --branch $suggested_local --from $base_ref${NC}"
+        echo -e "  Current command will create a new prefixed branch from that ref."
+        echo ""
+    fi
 
     # Extract worktree name from branch (removes path prefix, sanitizes)
     local worktree_name=$(extract_worktree_name "$branch")
@@ -194,7 +323,9 @@ cmd_create() {
     if [ -n "$base_ref" ]; then
         # Base ref provided: create new branch from it
         # Format: [prefix]ticket-name or [prefix]ticket-name-description-slug
-        if [ -n "$description" ]; then
+        if [ -n "$explicit_branch" ]; then
+            new_branch_name="$explicit_branch"
+        elif [ -n "$description" ]; then
             # Convert description to slug: lowercase, spaces -> hyphens, remove special chars
             local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
             new_branch_name="${BRANCH_PREFIX}${worktree_name}-${slug}"
@@ -203,7 +334,15 @@ cmd_create() {
         fi
 
         # Fetch base ref if remote
-        if [[ "$base_ref" == origin/* ]] || [[ "$base_ref" == "master" ]] || [[ "$base_ref" == "main" ]]; then
+        if [ -n "$track_existing_ref" ]; then
+            _pwt_fetch_remote_ref "$track_existing_ref"
+            if ! git rev-parse --verify --quiet "$track_existing_ref^{commit}" >/dev/null 2>&1; then
+                release_metadata_lock
+                trap - EXIT
+                pwt_error "Error: Remote ref not found: $track_existing_ref"
+                exit $EXIT_NOT_FOUND
+            fi
+        elif [[ "$base_ref" == origin/* ]] || [[ "$base_ref" == "master" ]] || [[ "$base_ref" == "main" ]]; then
             local remote_ref="origin/${base_ref#origin/}"
             echo -e "${BLUE}Updating reference:${NC} $remote_ref"
             git fetch origin "${base_ref#origin/}" --quiet 2>/dev/null || true
@@ -220,7 +359,11 @@ cmd_create() {
         echo -e "  Dir:    $worktree_dir"
         echo ""
 
-        git_worktree_args=(-b "$new_branch_name" "$worktree_dir" "$base_ref")
+        if [ -n "$track_existing_ref" ] && git show-ref --verify --quiet "refs/heads/$new_branch_name"; then
+            git_worktree_args=("$worktree_dir" "$new_branch_name")
+        else
+            git_worktree_args=(-b "$new_branch_name" "$worktree_dir" "$base_ref")
+        fi
     else
         # No base ref: use existing branch
         local mode_label="worktree"
@@ -241,6 +384,8 @@ cmd_create() {
         local mode_str="worktree"
         [ "$use_clone" = true ] && mode_str="clone"
         echo -e "${YELLOW}[DRY-RUN] Would create $mode_str with above settings${NC}"
+        echo -e "${DIM}pwt setup hooks, metadata, port allocation, and local files run only when pwt creates/adopts the worktree.${NC}"
+        echo -e "${DIM}Raw 'git worktree add' skips project setup such as local config, generated files, and runtime directories.${NC}"
         echo ""
         echo "Run without --dry-run to create."
         exit 0
@@ -287,6 +432,8 @@ cmd_create() {
         git worktree add "${git_worktree_args[@]}"
     fi
 
+    _pwt_set_tracking_if_remote "$worktree_dir" "${new_branch_name:-$branch}" "$base_ref"
+
     # Save metadata
     local final_branch="${new_branch_name:-$branch}"
     local final_base="${base_ref:-master}"
@@ -301,23 +448,7 @@ cmd_create() {
     release_metadata_lock
     trap - EXIT  # Clear the exit trap
 
-    # Set context for Pwtfile and hooks
-    export PWT_WORKTREE="$worktree_name"
-    export PWT_WORKTREE_PATH="$worktree_dir"
-    export PWT_BRANCH="$final_branch"
-    export PWT_PORT="$port"
-    export PWT_TICKET="$worktree_name"  # User can customize via Pwtfile
-    export PWT_BASE="$final_base"
-    export PWT_DESC="$final_desc"
-    export PWT_PROJECT="$CURRENT_PROJECT"
-    export MAIN_APP="$MAIN_APP"
-
-    # Run Pwtfile setup (if exists), then hook
-    run_pwtfile "setup"
-    run_hook "post-create"
-
-    # Auto-set as current worktree (non-fatal)
-    set_current_worktree "$worktree_name" 2>/dev/null || true
+    _pwt_run_standard_setup "$worktree_name" "$worktree_dir" "$final_branch" "$port" "$final_base" "$final_desc"
 
     local mode_label="Worktree"
     [ "$workspace_mode" = "clone" ] && mode_label="Clone" || true
@@ -347,6 +478,186 @@ cmd_create() {
     fi
 
     return 0
+}
+
+cmd_track() {
+    local remote_ref=""
+    local worktree_name=""
+    local passthrough=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --name)
+                if [ -z "${2:-}" ]; then
+                    pwt_error "Error: --name requires a worktree name"
+                    exit 1
+                fi
+                worktree_name="$2"
+                shift 2
+                ;;
+            -e|--editor|-a|--ai|-n|--dry-run|--clone)
+                passthrough+=("$1")
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: pwt track <remote-branch> [--name <worktree>] [options]"
+                echo ""
+                echo "Create a pwt-managed worktree that tracks an existing remote branch."
+                echo "The local branch matches the remote branch name without applying branch_prefix."
+                echo ""
+                echo "Arguments:"
+                echo "  remote-branch   Remote branch, e.g. origin/team/TICKET-1234"
+                echo ""
+                echo "Options:"
+                echo "  --name <name>   Override worktree directory/metadata name"
+                echo "  -e, --editor    Open editor after creation"
+                echo "  -a, --ai        Start AI assistant after creation"
+                echo "  -n, --dry-run   Show what would be done"
+                echo "  --clone         Use git clone instead of worktree"
+                echo "  -h, --help      Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  pwt track origin/team/PROJ-1234"
+                echo "  pwt track origin/team/fix-login-flow --name login-flow"
+                return 0
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+            *)
+                if [ -z "$remote_ref" ]; then
+                    remote_ref="$1"
+                else
+                    pwt_error "Error: Unexpected argument: $1"
+                    echo "Usage: pwt track <remote-branch> [--name <worktree>]"
+                    exit $EXIT_USAGE
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$remote_ref" ]; then
+        pwt_error "Error: Remote branch not specified"
+        echo "Usage: pwt track <remote-branch> [--name <worktree>]"
+        exit $EXIT_USAGE
+    fi
+
+    if [[ "$remote_ref" != */* ]]; then
+        pwt_error "Error: Expected remote branch like origin/feature"
+        exit $EXIT_USAGE
+    fi
+
+    local local_branch=$(_pwt_local_branch_for_remote "$remote_ref")
+    if [ -z "$worktree_name" ]; then
+        worktree_name=$(_pwt_track_worktree_name "$local_branch")
+    fi
+
+    if [ ${#passthrough[@]} -gt 0 ]; then
+        cmd_create "$worktree_name" --branch "$local_branch" --from "$remote_ref" "${passthrough[@]}"
+    else
+        cmd_create "$worktree_name" --branch "$local_branch" --from "$remote_ref"
+    fi
+}
+
+cmd_adopt() {
+    local worktree_dir="${1:-}"
+
+    if [[ "$worktree_dir" == "-h" || "$worktree_dir" == "--help" ]]; then
+        echo "Usage: pwt adopt [path]"
+        echo "       pwt setup [path]"
+        echo ""
+        echo "Register an existing git worktree with pwt and run standard setup."
+        echo ""
+        echo "Arguments:"
+        echo "  path       Existing worktree path (default: current directory)"
+        echo ""
+        echo "This allocates/records metadata, exports PWT_* context, runs Pwtfile setup,"
+        echo "runs the post-create hook, and sets the worktree as current."
+        return 0
+    fi
+
+    if [ -z "$worktree_dir" ]; then
+        worktree_dir=$(pwd -P)
+    fi
+
+    worktree_dir="${worktree_dir/#\~/$HOME}"
+    if [[ "$worktree_dir" != /* ]]; then
+        worktree_dir="$(pwd -P)/$worktree_dir"
+    fi
+
+    if [ ! -d "$worktree_dir" ]; then
+        pwt_error "Error: Path not found: $worktree_dir"
+        exit $EXIT_NOT_FOUND
+    fi
+
+    worktree_dir=$(cd "$worktree_dir" && pwd -P)
+    local main_resolved=$(cd "$MAIN_APP" && pwd -P)
+    if [ "$worktree_dir" = "$main_resolved" ]; then
+        pwt_error "Error: Refusing to adopt the main app as a worktree"
+        exit $EXIT_USAGE
+    fi
+
+    if ! git -C "$worktree_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        pwt_error "Error: Not a git worktree: $worktree_dir"
+        exit $EXIT_USAGE
+    fi
+
+    local worktree_name=$(basename "$worktree_dir")
+    local existing_path=$(get_metadata "$worktree_name" "path")
+    if [ -n "$existing_path" ] && [ -d "$existing_path" ]; then
+        local existing_resolved=$(cd "$existing_path" && pwd -P)
+        if [ "$existing_resolved" != "$worktree_dir" ]; then
+            pwt_error "Error: Metadata for '$worktree_name' already points to: $existing_resolved"
+            exit $EXIT_CONFLICT
+        fi
+    fi
+
+    read_port_base
+    if ! acquire_metadata_lock; then
+        pwt_error "Error: Could not acquire lock for port allocation"
+        exit 1
+    fi
+    trap 'release_metadata_lock' EXIT
+
+    local branch=$(git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "")
+    [ -n "$branch" ] || branch="detached"
+
+    local port=$(get_metadata "$worktree_name" "port")
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        port=$(next_available_port)
+    fi
+
+    local final_base=$(get_metadata "$worktree_name" "base")
+    [ -n "$final_base" ] || final_base="${DEFAULT_BRANCH:-master}"
+    local final_base_commit=$(git -C "$worktree_dir" merge-base HEAD "origin/${final_base#origin/}" 2>/dev/null || git -C "$worktree_dir" rev-parse HEAD 2>/dev/null)
+    local final_base_short=$(git -C "$worktree_dir" rev-parse --short "$final_base_commit" 2>/dev/null || echo "?")
+    local final_desc=$(get_metadata "$worktree_name" "description")
+
+    echo -e "${BLUE}Adopting worktree:${NC} $worktree_name"
+    echo -e "  Branch: $branch"
+    echo -e "  Port:   $port"
+    echo -e "  Dir:    $worktree_dir"
+    echo ""
+
+    save_metadata "$worktree_name" "$worktree_dir" "$branch" "$final_base" "$final_base_short" "$port" "$final_desc" "worktree"
+    echo -e "  ${GREEN}✓ Metadata saved${NC}"
+
+    release_metadata_lock
+    trap - EXIT
+
+    _pwt_run_standard_setup "$worktree_name" "$worktree_dir" "$branch" "$port" "$final_base" "$final_desc"
+
+    echo -e "\n${GREEN}✓ Worktree setup complete!${NC}"
+    echo ""
+    echo -e "${BLUE}Next steps:${NC}"
+    echo -e "  Navigate:    ${DIM}pwt cd ${worktree_name}${NC}  or  ${DIM}cd $worktree_dir${NC}"
+    echo -e "  Run server:  ${DIM}pwt server ${worktree_name}${NC}  (port ${port})"
+}
+
+cmd_setup() {
+    cmd_adopt "$@"
 }
 
 # ============================================

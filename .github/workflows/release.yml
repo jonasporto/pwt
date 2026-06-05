@@ -37,8 +37,7 @@ jobs:
         uses: bats-core/bats-action@3.0.0
 
       - name: Run tests
-        run: bats tests/ || echo "Tests exited with code $? - checking if all tests passed"
-        continue-on-error: true
+        run: make test
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -81,4 +80,3 @@ jobs:
           git add Formula/pwt.rb
           git commit -m "Update pwt to v${{ steps.version.outputs.VERSION }}" || echo "No changes"
           git push
-

@@ -93,6 +93,30 @@ teardown() {
     [[ "$output" == *"Usage"* ]]
 }
 
+@test "pwt track --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" track --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"track"* ]]
+}
+
+@test "pwt adopt --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" adopt --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"adopt"* ]]
+}
+
+@test "pwt setup --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" setup --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"setup"* ]]
+}
+
 @test "pwt list --help shows usage" {
     cd "$TEST_REPO"
     run "$PWT_BIN" list --help
@@ -162,6 +186,23 @@ teardown() {
     run "$PWT_BIN" open --help
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage"* ]]
+}
+
+@test "pwt gateway --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" gateway --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"up"* ]]
+    [[ "$output" == *"down"* ]]
+}
+
+@test "pwt servers --help shows usage" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" servers --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"--all"* ]]
 }
 
 @test "pwt alias --help shows usage" {

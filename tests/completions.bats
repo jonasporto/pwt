@@ -31,6 +31,9 @@ load test_helper
         "init"
         "create"
         "add"
+        "track"
+        "adopt"
+        "setup"
         "list"
         "ls"
         "tree"
@@ -43,6 +46,8 @@ load test_helper
         "remove"
         "rm"
         "server"
+        "gateway"
+        "servers"
         "repair"
         "fix"
         "auto-remove"
@@ -95,6 +100,8 @@ load test_helper
     [[ "$output" == *"list"* ]]
     [[ "$output" == *"remove"* ]]
     [[ "$output" == *"server"* ]]
+    [[ "$output" == *"gateway"* ]]
+    [[ "$output" == *"servers"* ]]
     [[ "$output" == *"status"* ]]
 }
 
@@ -121,7 +128,7 @@ load test_helper
     local completions_file="$PWD_DIR/completions/pwt.fish"
 
     # Check key commands are present
-    local commands=("create" "list" "remove" "server" "status" "cd" "use")
+    local commands=("create" "track" "adopt" "setup" "list" "remove" "server" "gateway" "servers" "status" "cd" "use")
 
     local missing=""
     for cmd in "${commands[@]}"; do

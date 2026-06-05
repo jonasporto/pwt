@@ -26,8 +26,14 @@ cd bats-core
 ## Running Tests
 
 ```bash
-# Run all tests
-bats tests/
+# Run all tests in parallel by file
+make test
+
+# Equivalent direct runner
+scripts/test.sh
+
+# Run all tests serially, matching plain BATS behavior
+scripts/test.sh --serial
 
 # Run a fast subset (also available as make target)
 make test-fast
@@ -41,6 +47,10 @@ bats -v tests/
 # Run with TAP output (for CI)
 bats --tap tests/
 ```
+
+`scripts/test.sh` still runs real BATS files against the real `bin/pwt`; it only
+parallelizes at the file level. Tests inside each `.bats` file remain serial, so
+stateful scenarios in one file keep their existing order.
 
 ## Test Structure
 
@@ -108,5 +118,5 @@ jobs:
           fi
 
       - name: Run tests
-        run: bats tests/
+        run: make test
 ```

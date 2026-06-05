@@ -8,6 +8,9 @@ _pwt_commands() {
         'init:Initialize project (from current repo or URL)'
         'create:Create new worktree'
         'add:Create new worktree (alias for create)'
+        'track:Create worktree tracking an existing remote branch'
+        'adopt:Register existing worktree and run setup'
+        'setup:Register current worktree and run setup'
         'list:List worktrees and status'
         'ls:List worktrees and status'
         'tree:Visual tree view of worktrees'
@@ -22,6 +25,8 @@ _pwt_commands() {
         'rm:Remove worktree'
         'server:Start development server'
         's:Start development server'
+        'gateway:Stable gateway to a worktree server'
+        'servers:Show project server status'
         'run:Run command in worktree'
         'for-each:Run command in all worktrees'
         'editor:Open worktree in editor'
@@ -171,8 +176,26 @@ _pwt_config_keys() {
         'worktrees_dir:Worktrees directory'
         'branch_prefix:Branch prefix (e.g. user/)'
         'base_port:Base port for allocation'
+        'gateway_port:Stable gateway proxy port'
     )
     _describe 'key' keys
+}
+
+_pwt_gateway_actions() {
+    local actions=(
+        'init:Configure gateway port'
+        'up:Start gateway proxy daemon'
+        'down:Stop gateway proxy'
+        'start:Alias for up'
+        'stop:Alias for down'
+        'restart:Restart gateway proxy'
+        'status:Show gateway status'
+        'use:Point gateway at a worktree'
+        'url:Print gateway URL'
+        'logs:Show gateway logs'
+        'help:Show help'
+    )
+    _describe 'action' actions
 }
 
 _pwt_meta_fields() {
@@ -251,6 +274,15 @@ _pwt() {
                             *) _message 'description' ;;
                         esac
                         ;;
+                    track)
+                        case $CURRENT in
+                            4) _pwt_branches ;;
+                            *) _arguments '--name[Override worktree name]:name:' '-e[Open editor]' '--editor[Open editor]' '-a[Start AI]' '--ai[Start AI]' '-n[Dry run]' '--dry-run[Dry run]' '--clone[Use clone mode]' ;;
+                        esac
+                        ;;
+                    adopt|setup)
+                        _files -/
+                        ;;
                     remove|rm)
                         _alternative \
                             "worktrees:worktree:_pwt_worktrees $_project" \
@@ -258,6 +290,18 @@ _pwt() {
                         ;;
                     cd|use|server|s|info|show|fix-port|port|editor|e|ai|open|current|repair|fix|step)
                         _pwt_worktrees "$_project"
+                        ;;
+                    gateway)
+                        case $CURRENT in
+                            4) _pwt_gateway_actions ;;
+                            5)
+                                case ${words[4]} in
+                                    use) _pwt_worktrees "$_project" ;;
+                                    init) _arguments '--port[Gateway port]:port:' ;;
+                                esac
+                                ;;
+                            *) _arguments '--port[Gateway port]:port:' '--json[JSON output]' '--all[Show all]' '-a[Show all]' ;;
+                        esac
                         ;;
                     run|for-each)
                         case $CURRENT in
@@ -273,6 +317,9 @@ _pwt() {
                             4|5) _pwt_worktrees "$_project" ;;
                             *) _message 'file patterns' ;;
                         esac
+                        ;;
+                    servers)
+                        _arguments '--all[Show stopped worktrees]' '-a[Show stopped worktrees]' '--json[JSON output]'
                         ;;
                     tree|status|doctor|list|ls)
                         # These commands have optional flags, no required args
@@ -340,6 +387,15 @@ _pwt() {
                             *) _message 'description' ;;
                         esac
                         ;;
+                    track)
+                        case $CURRENT in
+                            3) _pwt_branches ;;
+                            *) _arguments '--name[Override worktree name]:name:' '-e[Open editor]' '--editor[Open editor]' '-a[Start AI]' '--ai[Start AI]' '-n[Dry run]' '--dry-run[Dry run]' '--clone[Use clone mode]' ;;
+                        esac
+                        ;;
+                    adopt|setup)
+                        _files -/
+                        ;;
                     remove|rm)
                         _alternative \
                             'worktrees:worktree:_pwt_worktrees' \
@@ -347,6 +403,18 @@ _pwt() {
                         ;;
                     cd|use|server|s|info|show|fix-port|repair|fix|port|editor|e|ai|open|current)
                         _pwt_worktrees
+                        ;;
+                    gateway)
+                        case $CURRENT in
+                            3) _pwt_gateway_actions ;;
+                            4)
+                                case ${words[3]} in
+                                    use) _pwt_worktrees ;;
+                                    init) _arguments '--port[Gateway port]:port:' ;;
+                                esac
+                                ;;
+                            *) _arguments '--port[Gateway port]:port:' '--json[JSON output]' ;;
+                        esac
                         ;;
                     run|for-each)
                         case $CURRENT in
@@ -362,6 +430,9 @@ _pwt() {
                             3|4) _pwt_worktrees ;;
                             *) _message 'file patterns' ;;
                         esac
+                        ;;
+                    servers)
+                        _arguments '--all[Show stopped worktrees]' '-a[Show stopped worktrees]' '--json[JSON output]'
                         ;;
                     tree|status|doctor)
                         # These commands have optional flags, no required args

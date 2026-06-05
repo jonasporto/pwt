@@ -1,10 +1,11 @@
 # pwt - Power Worktrees bash completion
 # Install: source this file or add to /etc/bash_completion.d/
 
-_pwt_commands="init create add list ls tree status cd use current info show remove rm server s run for-each editor e ai open diff copy repair fix auto-remove cleanup restore fix-port doctor meta m project config port plugin claude-setup setup-shell shell-init steps step alias jobs help version"
+_pwt_commands="init create add track adopt setup list ls tree status cd use current info show remove rm server s gateway servers run for-each editor e ai open diff copy repair fix auto-remove cleanup restore fix-port doctor meta m project config port plugin claude-setup setup-shell shell-init steps step alias jobs help version"
 
 _pwt_meta_actions="list show set import"
 _pwt_project_actions="list init show set path alias"
+_pwt_gateway_actions="init up down start stop restart status use url logs help"
 _pwt_plugin_actions="list install remove create path help"
 _pwt_claude_actions="install vars format preview test toggle help"
 
@@ -60,11 +61,28 @@ _pwt() {
                 [[ "${words[i]}" != -* ]] && ((nargs++))
             done
             if [[ $nargs -le 2 ]]; then
-                COMPREPLY=($(compgen -W "$(_pwt_get_branches)" -- "$cur"))
+                local flags="--from --from-current --branch --track --track-existing --clone -e --editor -a --ai -n --dry-run"
+                COMPREPLY=($(compgen -W "$(_pwt_get_branches) $flags" -- "$cur"))
             fi
+            ;;
+        track)
+            local flags="--name --clone -e --editor -a --ai -n --dry-run"
+            COMPREPLY=($(compgen -W "$(_pwt_get_branches) $flags" -- "$cur"))
+            ;;
+        adopt|setup)
+            COMPREPLY=($(compgen -d -- "$cur"))
             ;;
         cd|use|server|s|info|show|port|editor|e|ai|open|repair|fix|fix-port)
             COMPREPLY=($(compgen -W "$(_pwt_get_worktrees)" -- "$cur"))
+            ;;
+        gateway)
+            if [[ "$prev" == "gateway" ]]; then
+                COMPREPLY=($(compgen -W "$_pwt_gateway_actions" -- "$cur"))
+            elif [[ "$prev" == "use" ]]; then
+                COMPREPLY=($(compgen -W "$(_pwt_get_worktrees)" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "--port --json -f --follow" -- "$cur"))
+            fi
             ;;
         remove|rm)
             local flags="--with-branch --force-branch --kill-port --kill-sidekiq --kill-all -y --yes"
@@ -106,13 +124,16 @@ _pwt() {
             fi
             ;;
         config)
-            local keys="main_app worktrees_dir branch_prefix base_port"
+            local keys="main_app worktrees_dir branch_prefix base_port gateway_port"
             COMPREPLY=($(compgen -W "$keys" -- "$cur"))
             ;;
         jobs)
             if [[ "$prev" == "jobs" ]]; then
                 COMPREPLY=($(compgen -W "list logs stop clean help" -- "$cur"))
             fi
+            ;;
+        servers)
+            COMPREPLY=($(compgen -W "--all --json -a" -- "$cur"))
             ;;
         list|ls|tree|status|doctor|pick|select|help|version)
             # These commands have optional flags, no required completions

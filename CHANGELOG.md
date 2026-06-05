@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-06-05
+
+### Added
+- `pwt track <remote-branch>` for creating a prepared worktree that tracks an
+  existing remote branch without applying `branch_prefix`.
+- `pwt adopt [path]` and `pwt setup [path]` for registering existing Git
+  worktrees with pwt metadata, ports, and setup hooks.
+- `pwt gateway` for a stable per-project local gateway URL that can route to
+  any worktree server.
+- `pwt servers` for project-wide visibility into gateway target, active ports,
+  current worktree, and background server jobs.
+- Parallel BATS runner via `scripts/test.sh` and `make test`.
+
+### Changed
+- Worktree path resolution now honors metadata paths so adopted worktrees can
+  live outside the configured `worktrees_dir`.
+- Shell completions, man page, and README now document tracking, adopting,
+  gateway, servers, and `gateway_port`.
+- CI and release workflows run the same `make test` command used locally.
+
+### Fixed
+- Gateway daemon startup now detaches reliably and verifies the gateway port is
+  listening before reporting success.
+- `pwt create --dry-run` now calls out that raw `git worktree add` skips pwt
+  setup hooks, metadata, port allocation, and local project files.
+
 ## [0.1.11] - 2026-03-20
 
 ### Added
@@ -111,7 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Test suite**: 530+ tests with BATS framework
 - **CI/CD**: GitHub Actions for automated testing
 
-[Unreleased]: https://github.com/jonasporto/pwt/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/jonasporto/pwt/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/jonasporto/pwt/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/jonasporto/pwt/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/jonasporto/pwt/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/jonasporto/pwt/compare/v0.1.0...v0.1.9

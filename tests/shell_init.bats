@@ -72,6 +72,57 @@ teardown() {
     [[ "$output" == *"TEST-WT"* ]]
 }
 
+@test "shell function pwt <worktree> changes directory" {
+    cd "$TEST_TEMP_DIR"
+
+    run bash -c "
+        export PWT_DIR='$PWT_DIR'
+        eval \"\$('$PWT_BIN' shell-init)\"
+        cd '$TEST_REPO'
+        pwt TEST-WT
+        pwd
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TEST-WT"* ]]
+}
+
+@test "shell function pwt <project> <worktree> changes directory" {
+    cd "$TEST_TEMP_DIR"
+
+    run bash -c "
+        export PWT_DIR='$PWT_DIR'
+        eval \"\$('$PWT_BIN' shell-init)\"
+        cd '$TEST_TEMP_DIR'
+        pwt test-project TEST-WT
+        pwd
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TEST-WT"* ]]
+}
+
+@test "shell function implicit cd does not override Pwtfile command" {
+    cd "$TEST_REPO"
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+same() {
+    echo "PWTCMD_SAME"
+}
+EOF
+    "$PWT_BIN" create same HEAD >/dev/null
+
+    run bash -c "
+        export PWT_DIR='$PWT_DIR'
+        eval \"\$('$PWT_BIN' shell-init)\"
+        cd '$TEST_REPO'
+        pwt same
+        pwd
+    "
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PWTCMD_SAME"* ]]
+    [[ "$output" == *"$TEST_REPO"* ]]
+    [[ "$output" != *"$TEST_WORKTREES/same"* ]]
+}
+
 @test "shell function cd @ changes to main app" {
     cd "$TEST_TEMP_DIR"
 

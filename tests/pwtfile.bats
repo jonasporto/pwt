@@ -123,6 +123,45 @@ EOF
     grep -q "TEARDOWN: TEST-TEARDOWN" "$teardown_log"
 }
 
+@test "pwt remove --kill-command delegates to Pwtfile command with kill args" {
+    cd "$TEST_REPO"
+
+    local kill_log="$TEST_TEMP_DIR/kill_delegate.log"
+
+    cat > "$TEST_REPO/Pwtfile" << EOF
+worker() {
+    echo "TARGET:\$PWT_KILL_TARGET" >> "$kill_log"
+    echo "ARGS:\$PWT_ARGS" >> "$kill_log"
+    echo "ARG1:\${1:-}" >> "$kill_log"
+    echo "WORKTREE:\$PWT_WORKTREE" >> "$kill_log"
+    echo "PORT:\$PWT_PORT" >> "$kill_log"
+}
+EOF
+
+    "$PWT_BIN" create TEST-KILL-WORKER HEAD
+
+    run "$PWT_BIN" remove TEST-KILL-WORKER --kill-worker -y
+    [ "$status" -eq 0 ]
+
+    [ -f "$kill_log" ]
+    grep -q "TARGET:worker" "$kill_log"
+    grep -q "ARGS:--kill" "$kill_log"
+    grep -q "ARG1:--kill" "$kill_log"
+    grep -q "WORKTREE:TEST-KILL-WORKER" "$kill_log"
+    grep -Eq "PORT:[0-9]+" "$kill_log"
+}
+
+@test "pwt remove --kill-command fails when Pwtfile command is missing" {
+    cd "$TEST_REPO"
+
+    "$PWT_BIN" create TEST-KILL-MISSING HEAD
+
+    run "$PWT_BIN" remove TEST-KILL-MISSING --kill-worker -y
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Pwtfile command 'worker' not found"* ]]
+    [ -d "$TEST_WORKTREES/TEST-KILL-MISSING" ]
+}
+
 # ============================================
 # Pwtfile helper functions
 # ============================================
@@ -329,6 +368,42 @@ EOF
     run "$PWT_BIN" argtest --foo bar --baz
     [ "$status" -eq 0 ]
     [[ "$output" == *"ARGS:--foo bar --baz"* ]]
+}
+
+@test "pwt <custom_cmd> receives params as positional args" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+argtest() {
+    echo "ARG1:${1:-}"
+    echo "ARG2:${2:-}"
+    echo "ARGS:$PWT_ARGS"
+}
+EOF
+
+    run "$PWT_BIN" argtest start --fast
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ARG1:start"* ]]
+    [[ "$output" == *"ARG2:--fast"* ]]
+    [[ "$output" == *"ARGS:start --fast"* ]]
+}
+
+@test "pwt <custom_cmd> positional params preserve glob literals" {
+    cd "$TEST_REPO"
+    touch glob-one glob-two
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+argtest() {
+    echo "COUNT:$#"
+    echo "ARG1:${1:-}"
+}
+EOF
+
+    run "$PWT_BIN" argtest "*"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"COUNT:1"* ]]
+    [[ "$output" == *"ARG1:*"* ]]
+    [[ "$output" != *"ARG1:Pwtfile"* ]]
 }
 
 @test "pwt <custom_cmd> PWT_ARGS is always defined (even when empty)" {

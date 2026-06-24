@@ -344,9 +344,26 @@ cmd_create() {
             fi
         elif [[ "$base_ref" == origin/* ]] || [[ "$base_ref" == "master" ]] || [[ "$base_ref" == "main" ]]; then
             local remote_ref="origin/${base_ref#origin/}"
-            echo -e "${BLUE}Updating reference:${NC} $remote_ref"
-            git fetch origin "${base_ref#origin/}" --quiet 2>/dev/null || true
-            base_ref="$remote_ref"
+            if git remote get-url origin >/dev/null 2>&1; then
+                echo -e "${BLUE}Updating reference:${NC} $remote_ref"
+                git fetch origin "${base_ref#origin/}" --quiet 2>/dev/null || true
+            fi
+            if git rev-parse --verify --quiet "$remote_ref^{commit}" >/dev/null 2>&1; then
+                base_ref="$remote_ref"
+            elif [[ "$base_ref" == origin/* ]]; then
+                release_metadata_lock
+                trap - EXIT
+                pwt_error "Error: Remote ref not found: $base_ref"
+                exit $EXIT_NOT_FOUND
+            elif git rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null 2>&1; then
+                # No usable origin/<base>: repos without a remote fall back to the local branch
+                echo -e "${YELLOW}No $remote_ref found, using local $base_ref${NC}"
+            else
+                release_metadata_lock
+                trap - EXIT
+                pwt_error "Error: Base ref not found: $base_ref (no local branch or $remote_ref)"
+                exit $EXIT_NOT_FOUND
+            fi
         fi
 
         local mode_label="worktree"
@@ -359,7 +376,19 @@ cmd_create() {
         echo -e "  Dir:    $worktree_dir"
         echo ""
 
-        if [ -n "$track_existing_ref" ] && git show-ref --verify --quiet "refs/heads/$new_branch_name"; then
+        if git show-ref --verify --quiet "refs/heads/$new_branch_name"; then
+            # Branch already exists locally: reuse it instead of failing on -b.
+            # (e.g. 'pwt create latest-master --branch master --from origin/master'
+            # with a local 'master' — common when tracking the default branch)
+            if [ -z "$track_existing_ref" ]; then
+                echo -e "${YELLOW}Branch '$new_branch_name' already exists — using it as-is${NC}"
+                local _behind
+                _behind=$(git rev-list --count "$new_branch_name..$base_ref" 2>/dev/null || echo "0")
+                if [ "${_behind:-0}" -gt 0 ]; then
+                    echo -e "${YELLOW}  Note: it is $_behind commit(s) behind $base_ref${NC}"
+                    echo -e "${DIM}  Update it after: pwt run $worktree_name git merge --ff-only $base_ref${NC}"
+                fi
+            fi
             git_worktree_args=("$worktree_dir" "$new_branch_name")
         else
             git_worktree_args=(-b "$new_branch_name" "$worktree_dir" "$base_ref")
@@ -566,15 +595,57 @@ cmd_adopt() {
 
     if [[ "$worktree_dir" == "-h" || "$worktree_dir" == "--help" ]]; then
         echo "Usage: pwt adopt [path]"
+        echo "       pwt adopt --all [dir]"
         echo "       pwt setup [path]"
         echo ""
         echo "Register an existing git worktree with pwt and run standard setup."
         echo ""
         echo "Arguments:"
-        echo "  path       Existing worktree path (default: current directory)"
+        echo "  path        Existing worktree path (default: current directory)"
+        echo "  --all [dir] Adopt every unregistered worktree in dir (default: worktrees_dir)"
         echo ""
         echo "This allocates/records metadata, exports PWT_* context, runs Pwtfile setup,"
         echo "runs the post-create hook, and sets the worktree as current."
+        return 0
+    fi
+
+    # Batch mode: adopt every unregistered git worktree in a directory
+    if [ "$worktree_dir" = "--all" ]; then
+        local scan_dir="${2:-$WORKTREES_DIR}"
+        scan_dir="${scan_dir/#\~/$HOME}"
+        if [ ! -d "$scan_dir" ]; then
+            pwt_error "Error: Directory not found: $scan_dir"
+            exit $EXIT_NOT_FOUND
+        fi
+
+        local adopted=0 skipped=0 failed=0
+        local dir name existing
+        for dir in "$scan_dir"/*/; do
+            [ -d "$dir" ] || continue
+            dir="${dir%/}"
+            name=$(basename "$dir")
+            if ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                continue
+            fi
+            existing=$(get_metadata "$name" "path" 2>/dev/null || true)
+            if [ -n "$existing" ]; then
+                skipped=$((skipped + 1))
+                continue
+            fi
+            echo -e "${BLUE}Adopting:${NC} $name"
+            # Subshell: each adopt exits on error; keep scanning the rest
+            if (cmd_adopt "$dir") >/dev/null 2>&1; then
+                adopted=$((adopted + 1))
+                echo -e "  ${GREEN}✓ $name adopted${NC}"
+            else
+                failed=$((failed + 1))
+                echo -e "  ${RED}✗ $name failed (run 'pwt adopt $dir' for details)${NC}"
+            fi
+        done
+
+        echo ""
+        echo -e "${GREEN}Adopted: $adopted${NC}  Skipped (already registered): $skipped  Failed: $failed"
+        [ "$failed" -eq 0 ] || exit 1
         return 0
     fi
 
@@ -925,7 +996,7 @@ cmd_remove() {
     local with_branch=false
     local force_branch=false
     local kill_port=false
-    local kill_sidekiq=false
+    local kill_delegations=""
     local auto_yes=false
 
     # Parse arguments
@@ -944,13 +1015,19 @@ cmd_remove() {
                 kill_port=true
                 shift
                 ;;
-            --kill-sidekiq)
-                kill_sidekiq=true
-                shift
-                ;;
             --kill-all)
                 kill_port=true
-                kill_sidekiq=true
+                kill_delegations="${kill_delegations}${kill_delegations:+ }server"
+                shift
+                ;;
+            --kill-*)
+                local kill_target="${1#--kill-}"
+                kill_target="${kill_target//-/_}"
+                if [ -z "$kill_target" ]; then
+                    pwt_error "Error: Missing command name for --kill-<command>"
+                    exit 1
+                fi
+                kill_delegations="${kill_delegations}${kill_delegations:+ }$kill_target"
                 shift
                 ;;
             -y|--yes)
@@ -968,8 +1045,8 @@ cmd_remove() {
                 echo "  --with-branch     Also delete the branch (if merged)"
                 echo "  --force-branch    Force delete the branch (even if not merged)"
                 echo "  --kill-port       Kill processes using the port"
-                echo "  --kill-sidekiq    Kill Sidekiq processes"
-                echo "  --kill-all        Kill both port and Sidekiq processes"
+                echo "  --kill-<command>  Run Pwtfile <command> --kill before removal"
+                echo "  --kill-all        Run Pwtfile server --kill and kill port processes"
                 echo "  -y, --yes         Skip confirmation prompts"
                 echo "  -h, --help        Show this help"
                 echo ""
@@ -1048,6 +1125,47 @@ cmd_remove() {
         fi
     fi
 
+    # Set context early so opt-in cleanup hooks can inspect the target worktree.
+    local branch=$(get_metadata "$name" "branch")
+    local base=$(get_metadata "$name" "base")
+    local desc=$(get_metadata "$name" "description")
+    export PWT_WORKTREE="$name"
+    export PWT_WORKTREE_PATH="$worktree_dir"
+    export PWT_BRANCH="$branch"
+    export PWT_PORT="$port"
+    export PWT_TICKET="$name"  # User can customize via Pwtfile
+    export PWT_BASE="$base"
+    export PWT_DESC="$desc"
+    export PWT_PROJECT="$CURRENT_PROJECT"
+    export MAIN_APP="$MAIN_APP"
+
+    local kill_target
+    for kill_target in $kill_delegations; do
+        if ! [[ "$kill_target" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            pwt_error "Error: Invalid Pwtfile kill delegation: $kill_target"
+            exit 1
+        fi
+        if ! has_pwtfile_command "$kill_target"; then
+            pwt_error "Error: Pwtfile command '$kill_target' not found for --kill-$kill_target"
+            exit 1
+        fi
+
+        local old_pwt_args="${PWT_ARGS:-}"
+        local old_pwt_argc="${PWT_ARGC:-0}"
+        local old_pwt_kill_target="${PWT_KILL_TARGET:-}"
+
+        export PWT_ARGS="--kill"
+        export PWT_ARGC=1
+        export PWT_KILL_TARGET="$kill_target"
+        PWT_ARGV=("--kill")
+        run_pwtfile "$kill_target"
+
+        export PWT_ARGS="$old_pwt_args"
+        export PWT_ARGC="$old_pwt_argc"
+        export PWT_KILL_TARGET="$old_pwt_kill_target"
+        PWT_ARGV=()
+    done
+
     # Detect processes on port (generic - no framework-specific checks)
     local port_pids=""
     local port_info=""
@@ -1063,7 +1181,7 @@ cmd_remove() {
 
     # Handle blocking processes
     if [ -n "$port_pids" ]; then
-        if [ "$kill_port" = true ] || [ "$kill_sidekiq" = true ]; then
+        if [ "$kill_port" = true ] || [ -n "$kill_delegations" ]; then
             echo -e "${YELLOW}Processes on port $port:${NC}"
             echo -e "$port_info"
             if [ "$auto_yes" = true ] || confirm_action "Kill these processes?"; then
@@ -1127,31 +1245,25 @@ cmd_remove() {
         fi
     fi
 
-    # Get metadata for hooks/Pwtfile
-    local branch=$(get_metadata "$name" "branch")
-    local base=$(get_metadata "$name" "base")
-    local desc=$(get_metadata "$name" "description")
-    # Set context for Pwtfile and hooks
-    export PWT_WORKTREE="$name"
-    export PWT_WORKTREE_PATH="$worktree_dir"
-    export PWT_BRANCH="$branch"
-    export PWT_PORT="$port"
-    export PWT_TICKET="$name"  # User can customize via Pwtfile
-    export PWT_BASE="$base"
-    export PWT_DESC="$desc"
-    export PWT_PROJECT="$CURRENT_PROJECT"
-    export MAIN_APP="$MAIN_APP"
-
     # Run Pwtfile teardown (if exists), then hook
     # (Pwtfile handles project-specific cleanup like databases)
     run_pwtfile "teardown"
     run_hook "pre-remove"
 
-    # Clear current symlink if removing the current worktree
+    # Removing the current worktree: fall back to the previous one (or main)
+    # so the stable 'current' path keeps working for prompts/editors.
     local current_wt=$(get_current_from_symlink 2>/dev/null)
     if [ "$name" = "$current_wt" ]; then
-        clear_current_symlink
-        echo -e "  ${CYAN}Cleared current symlink${NC}"
+        local fallback_wt=$(get_previous 2>/dev/null)
+        if [ -z "$fallback_wt" ] || [ "$fallback_wt" = "$name" ] || ! get_worktree_path "$fallback_wt" >/dev/null 2>&1; then
+            fallback_wt="@"
+        fi
+        if set_current_worktree "$fallback_wt" 2>/dev/null; then
+            echo -e "  ${CYAN}current → $fallback_wt (was $name)${NC}"
+        else
+            clear_current_symlink
+            echo -e "  ${CYAN}Cleared current symlink${NC}"
+        fi
     fi
 
     # Get workspace mode (clone or worktree)
@@ -1160,7 +1272,7 @@ cmd_remove() {
 
     # SAFETY: Backup uncommitted changes before removing
     if [ "$has_changes" = true ] && [ -d "$worktree_dir" ]; then
-        local backup_dir="$HOME/.pwt/trash"
+        local backup_dir="$PWT_DIR/trash"
         local timestamp=$(date +%Y%m%d_%H%M%S)
         local backup_name="${name}_${timestamp}"
 

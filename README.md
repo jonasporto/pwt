@@ -85,6 +85,7 @@ See [INSTALL.md](INSTALL.md) for shell setup and troubleshooting.
 cd ~/projects/myapp
 pwt init                        # Initialize project
 pwt add feat/user-auth          # Create worktree from branch
+pwt feat/user-auth              # Jump to a worktree
 pwt cd --select                 # Interactive worktree picker
 pwt list                        # List worktrees with git status
 ```
@@ -110,7 +111,7 @@ pwt ai                          # Start AI coding assistant
 pwt project
 
 # Jump to a worktree in another project
-pwt backend cd security-patch
+pwt backend security-patch
 
 # Quick switch to another project's main
 pwt backend
@@ -127,19 +128,39 @@ pwt backend server
 Project-specific hooks.
 Think *Makefile*, but for worktree lifecycle.
 
+`pwt` core stays project-agnostic: it manages worktrees, metadata, port
+allocation, navigation, background job bookkeeping, and delegation. Project
+details such as dependency installation, databases, asset watchers, queues,
+tests, and cleanup commands belong in the Pwtfile.
+
 ```bash
 # Pwtfile
 PORT_BASE=5001
 
 setup() {
-    pwtfile_copy ".env"
-    pwtfile_symlink "node_modules"
-    bundle install
+    pwtfile_copy ".env.local"
+    pwtfile_symlink ".cache"
+    ./scripts/setup
 }
 
 server() {
-    PORT="$PWT_PORT" npm start
+    case "${1:-start}" in
+        start) exec env PORT="$PWT_PORT" ./scripts/dev ;;
+        stop) ./scripts/dev-stop ;;
+    esac
 }
+```
+
+Command params are available as `$1`, `$2`, etc. and as raw `$PWT_ARGS`.
+Remove cleanup can delegate to any Pwtfile command with `--kill-<command>`;
+for example, `pwt remove FEATURE --kill-worker` calls `worker --kill`.
+
+Pwtfile commands can be called with progressively less context:
+
+```bash
+pwt <project> <worktree> <command> [args...]  # From anywhere
+pwt <worktree> <command> [args...]            # From inside the project
+pwt <command> [args...]                       # From inside the worktree
 ```
 
 **Variables:** `$PWT_PORT`, `$PWT_WORKTREE`, `$PWT_BRANCH`, `$PWT_PROJECT`, `$MAIN_APP`
@@ -170,7 +191,8 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | `list` | List worktrees with git status (`--dirty`) |
 | `cd <worktree>` | Navigate to worktree (`@` main, `-` previous, `--select`) |
 | `project` | List all configured projects |
-| `<project> cd <wt>` | Jump to worktree in another project |
+| `<worktree>` | Navigate to worktree inside the current project |
+| `<project> <worktree>` | Jump to worktree in another project |
 | `editor` | Open editor in current worktree |
 | `server` | Start dev server (from Pwtfile) |
 | `gateway` | Stable project URL that routes to a worktree server |
@@ -241,7 +263,7 @@ hostname or IP:
 
 ```bash
 pwt config gateway_host 127.0.0.1
-pwt gateway up --port 5999 --host passare.localhost
+pwt gateway up --port 5999 --host app.localhost
 ```
 
 Custom hosts must resolve to loopback and may need to be allowed by the app's

@@ -82,7 +82,7 @@ _gateway_set_port() {
     [ -f "$config_file" ] || echo "{}" > "$config_file"
     local tmp_file
     tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg port "$port" '.gateway_port = $port' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+    jq --arg port "$port" '.gateway_port = $port' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
 }
 
 _gateway_set_host() {
@@ -192,6 +192,13 @@ _gateway_start() {
     if _gateway_is_running; then
         return 0
     fi
+    # Our gateway is not running, so anything listening on the port is another
+    # process — spawning would EADDRINUSE and traffic would hit the wrong server.
+    if _gateway_port_listening "$port"; then
+        pwt_error "Error: Gateway port $port is already in use by another process"
+        echo "  Find the owner with: lsof -i :$port" >&2
+        return $EXIT_ERROR
+    fi
     if ! command -v node >/dev/null 2>&1; then
         pwt_error "Error: node is required for pwt gateway"
         return $EXIT_DEPENDENCY
@@ -236,20 +243,27 @@ NODE
     fi
     echo "$pid" > "$pid_file"
 
-    sleep 0.5
-    if ! kill -0 "$pid" 2>/dev/null; then
-        rm -f "$pid_file"
-        pwt_error "Error: Gateway failed to start"
-        tail -20 "$log_file" 2>/dev/null || true
-        return $EXIT_ERROR
-    fi
-    if ! _gateway_wait_for_port "$port"; then
-        kill -TERM "$pid" 2>/dev/null || true
-        rm -f "$pid_file"
-        pwt_error "Error: Gateway did not start listening on port $port"
-        tail -20 "$log_file" 2>/dev/null || true
-        return $EXIT_ERROR
-    fi
+    # Poll until the proxy listens or the process dies — no fixed sleep, so
+    # 'gateway up'/'gateway use' return as soon as the port is live (~50-100ms)
+    local waited_ms=0
+    local max_wait_ms=$(( ${PWT_GATEWAY_WAIT_SECONDS:-30} * 1000 ))
+    while ! _gateway_port_listening "$port"; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$pid_file"
+            pwt_error "Error: Gateway failed to start"
+            tail -20 "$log_file" 2>/dev/null || true
+            return $EXIT_ERROR
+        fi
+        if [ "$waited_ms" -ge "$max_wait_ms" ]; then
+            kill -TERM "$pid" 2>/dev/null || true
+            rm -f "$pid_file"
+            pwt_error "Error: Gateway did not start listening on port $port"
+            tail -20 "$log_file" 2>/dev/null || true
+            return $EXIT_ERROR
+        fi
+        sleep 0.05
+        waited_ms=$((waited_ms + 50))
+    done
 }
 
 _gateway_stop() {
@@ -263,7 +277,12 @@ _gateway_stop() {
     local pid
     pid=$(cat "$pid_file")
     kill -TERM "$pid" 2>/dev/null || true
-    sleep 0.5
+    # Poll up to 0.5s for graceful exit before escalating to SIGKILL
+    local tries=10
+    while [ "$tries" -gt 0 ] && kill -0 "$pid" 2>/dev/null; do
+        sleep 0.05
+        tries=$((tries - 1))
+    done
     if kill -0 "$pid" 2>/dev/null; then
         kill -9 "$pid" 2>/dev/null || true
     fi
@@ -307,14 +326,14 @@ _gateway_resolve_target() {
 _gateway_wait_for_port() {
     local port="$1"
     local seconds="${PWT_GATEWAY_WAIT_SECONDS:-30}"
-    local attempts=$((seconds * 5))
+    local attempts=$((seconds * 20))
     [ "$attempts" -lt 1 ] && attempts=1
 
     while [ "$attempts" -gt 0 ]; do
         if _gateway_port_listening "$port"; then
             return 0
         fi
-        sleep 0.2
+        sleep 0.05
         attempts=$((attempts - 1))
     done
     return 1
@@ -377,7 +396,12 @@ _gateway_use() {
 
     if ! _gateway_port_listening "$port"; then
         if has_pwtfile_command "server"; then
-            echo "Starting server for $name on port $port..."
+            if [ "${#server_args[@]}" -gt 0 ]; then
+                echo "Starting server for $name on port $port (flags: ${server_args[*]})..."
+            else
+                echo "Starting server for $name on port $port with DEFAULT flags"
+                echo "  (pass Pwtfile flags through: pwt gateway use $name -- --worker)"
+            fi
             local old_bg="$PWT_BG"
             local old_no_input="$PWT_NO_INPUT"
             PWT_BG=true
@@ -405,8 +429,8 @@ _gateway_use() {
         fi
     fi
 
+    _gateway_start "$gateway_port" || return $?
     _gateway_save_target "$name" "$path" "$port" "$branch"
-    _gateway_start "$gateway_port"
 
     echo "Gateway target: $name -> 127.0.0.1:$port"
     echo "Gateway URL:    $(_gateway_url "$gateway_port")"
@@ -505,6 +529,25 @@ _servers_print_row() {
     printf "%-24s %-8s %-10s %-18s %s\n" "$name" "${port:-"-"}" "$listening" "$job_status" "$markers"
     [ -n "$branch" ] && printf "  branch: %s\n" "$branch"
     printf "  path:   %s\n" "$path"
+
+    # Other running jobs for this worktree (workers, custom commands)
+    load_module jobs
+    local extra_jobs=""
+    local json_file
+    for json_file in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.json; do
+        [ -f "$json_file" ] || continue
+        local j_wt j_cmd j_id j_status
+        j_wt=$(jq -r '.worktree // empty' "$json_file" 2>/dev/null)
+        j_cmd=$(jq -r '.command // empty' "$json_file" 2>/dev/null)
+        j_id=$(jq -r '.id // empty' "$json_file" 2>/dev/null)
+        j_status=$(jq -r '.status // empty' "$json_file" 2>/dev/null)
+        [ "$j_wt" = "$name" ] && [ "$j_cmd" != "server" ] || continue
+        if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
+            extra_jobs="${extra_jobs:+$extra_jobs, }$j_cmd ($j_id)"
+        fi
+    done
+    [ -n "$extra_jobs" ] && printf "  jobs:   %s\n" "$extra_jobs"
+    return 0
 }
 
 cmd_servers() {
@@ -668,6 +711,16 @@ cmd_gateway() {
             if ! [[ "$port" =~ ^[0-9]+$ ]]; then
                 pwt_error "Error: gateway init requires --port <port>"
                 return $EXIT_USAGE
+            fi
+            # Refuse a port already owned by another process (unless it's this
+            # project's own gateway already listening there)
+            if _gateway_port_listening "$port"; then
+                local cur_port=$(_gateway_port 2>/dev/null || echo "")
+                if ! { _gateway_is_running && [ "$cur_port" = "$port" ]; }; then
+                    pwt_error "Error: Port $port is already in use by another process"
+                    echo "  Pick a free port, or find the owner with: lsof -i :$port" >&2
+                    return $EXIT_USAGE
+                fi
             fi
             _gateway_set_port "$port" || return $?
             if [ -n "$host" ]; then

@@ -2412,6 +2412,14 @@ cmd_status() {
         esac
     done
 
+    # The TUI needs a real terminal: without one we'd leak alt-screen escapes
+    # into pipes and fail reading /dev/tty (breaks scripts and agents).
+    if [ ! -t 1 ] || [ ! -r /dev/tty ]; then
+        pwt_error "Error: 'pwt status' is an interactive TUI and requires a terminal"
+        echo "  For machine-readable output use: pwt list --porcelain" >&2
+        exit 1
+    fi
+
     STATUS_SHOW_ALL=$show_all
 
     # Set initial view based on flags

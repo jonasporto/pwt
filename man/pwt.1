@@ -103,6 +103,9 @@ Force delete the branch (even if not merged)
 .BR \-\-kill\-port
 Kill processes using the port
 .TP
+.BR \-\-kill\-\fICOMMAND\fR
+Run Pwtfile COMMAND --kill before removal, then clear the allocated port
+.TP
 .BR \-y ", " \-\-yes
 Skip confirmation prompts
 .RE
@@ -289,6 +292,10 @@ Create new plugin template
 .SH PWTFILE
 A Pwtfile is a bash script in your project root that defines custom commands. Available functions:
 
+The pwt core stays project-agnostic: it manages worktrees, metadata, ports,
+navigation, jobs, and delegation. Project-specific dependencies, databases,
+workers, tests, and cleanup belong in Pwtfile commands.
+
 .TP
 .B server()
 Start development server. Receives $PWT_PORT, $PWT_WORKTREE, etc.
@@ -304,6 +311,20 @@ Run before worktree removal
 .TP
 .I custom_command()
 Any function becomes available as \fBpwt custom_command\fR
+
+.SS Command Forms
+.TP
+.B pwt \fIPROJECT WORKTREE COMMAND\fR [args...]
+Run a Pwtfile command for a worktree from anywhere.
+.TP
+.B pwt \fIWORKTREE COMMAND\fR [args...]
+Run a Pwtfile command for a worktree from inside the project.
+.TP
+.B pwt \fICOMMAND\fR [args...]
+Run a Pwtfile command from inside the current worktree.
+.PP
+Command arguments are passed as positional shell arguments (\fB$1\fR,
+\fB$2\fR, ...) and as raw \fB$PWT_ARGS\fR.
 
 .SS Available Variables
 .TP
@@ -324,6 +345,9 @@ Project name
 .TP
 .B $PWT_ARGS
 Arguments passed to command
+.TP
+.B $PWT_KILL_TARGET
+Delegated command name from \fBremove --kill-\fICOMMAND\fR
 
 .SH CONFIGURATION
 Configuration is stored in \fB~/.pwt/\fR:
@@ -362,7 +386,7 @@ Start server:
 .B pwt server my-feature
 .TP
 Run command in all worktrees:
-.B pwt for-each npm test
+.B pwt for-each ./scripts/test
 .TP
 Remove merged worktrees:
 .B pwt auto-remove main

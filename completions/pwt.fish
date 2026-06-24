@@ -115,6 +115,7 @@ complete -c pwt -n '__pwt_using_command remove' -a '(__pwt_worktrees)' -d 'Workt
 complete -c pwt -n '__pwt_using_command remove' -l with-branch -d 'Also delete branch'
 complete -c pwt -n '__pwt_using_command remove' -l force-branch -d 'Force delete branch'
 complete -c pwt -n '__pwt_using_command remove' -l kill-port -d 'Kill port processes'
+complete -c pwt -n '__pwt_using_command remove' -l kill-server -d 'Run Pwtfile server --kill, then clear the port'
 complete -c pwt -n '__pwt_using_command remove' -l kill-all -d 'Kill all processes'
 complete -c pwt -n '__pwt_using_command remove' -s y -l yes -d 'Skip confirmation'
 complete -c pwt -n '__pwt_using_command rm' -a '(__pwt_worktrees)' -d 'Worktree'

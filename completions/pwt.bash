@@ -85,7 +85,7 @@ _pwt() {
             fi
             ;;
         remove|rm)
-            local flags="--with-branch --force-branch --kill-port --kill-sidekiq --kill-all -y --yes"
+            local flags="--with-branch --force-branch --kill-port --kill-server --kill-all -y --yes"
             COMPREPLY=($(compgen -W "$(_pwt_get_worktrees) $flags" -- "$cur"))
             ;;
         run|for-each)

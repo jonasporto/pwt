@@ -75,16 +75,16 @@ PWTEOF
 
     cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
 mycmd() {
-    local sidekiq=$(pwt_arg --sidekiq)
-    echo "SIDEKIQ=${sidekiq}" > "$PWT_WORKTREE_PATH/.result"
+    local worker=$(pwt_arg --worker)
+    echo "WORKER=${worker}" > "$PWT_WORKTREE_PATH/.result"
 }
 PWTEOF
 
     "$PWT_BIN" create TEST-ARG3 HEAD
     cd "$TEST_WORKTREES/TEST-ARG3"
-    "$PWT_BIN" mycmd --sidekiq
+    "$PWT_BIN" mycmd --worker
 
-    grep -q "SIDEKIQ=true" "$TEST_WORKTREES/TEST-ARG3/.result"
+    grep -q "WORKER=true" "$TEST_WORKTREES/TEST-ARG3/.result"
 }
 
 @test "pwt_arg returns true for boolean flag followed by another flag" {
@@ -92,18 +92,18 @@ PWTEOF
 
     cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
 mycmd() {
-    local sidekiq=$(pwt_arg --sidekiq)
+    local worker=$(pwt_arg --worker)
     local env=$(pwt_arg -e)
-    echo "SIDEKIQ=${sidekiq}" > "$PWT_WORKTREE_PATH/.result"
+    echo "WORKER=${worker}" > "$PWT_WORKTREE_PATH/.result"
     echo "ENV=${env}" >> "$PWT_WORKTREE_PATH/.result"
 }
 PWTEOF
 
     "$PWT_BIN" create TEST-ARG4 HEAD
     cd "$TEST_WORKTREES/TEST-ARG4"
-    "$PWT_BIN" mycmd --sidekiq -e staging
+    "$PWT_BIN" mycmd --worker -e staging
 
-    grep -q "SIDEKIQ=true" "$TEST_WORKTREES/TEST-ARG4/.result"
+    grep -q "WORKER=true" "$TEST_WORKTREES/TEST-ARG4/.result"
     grep -q "ENV=staging" "$TEST_WORKTREES/TEST-ARG4/.result"
 }
 
@@ -119,7 +119,7 @@ PWTEOF
 
     "$PWT_BIN" create TEST-ARG5 HEAD
     cd "$TEST_WORKTREES/TEST-ARG5"
-    "$PWT_BIN" mycmd --sidekiq
+    "$PWT_BIN" mycmd --worker
 
     grep -q "PORT=$" "$TEST_WORKTREES/TEST-ARG5/.result"
 }

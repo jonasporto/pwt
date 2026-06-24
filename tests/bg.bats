@@ -230,7 +230,7 @@ EOF
     [ -f "$log_file" ]
 
     # Wait for output to appear
-    sleep 1
+    wait_for "grep -q LOG_OUTPUT_TEST \"$log_file\"" 3
     grep -q "LOG_OUTPUT_TEST" "$log_file"
 
     # Clean up
@@ -252,14 +252,13 @@ EOF
     "$PWT_BIN" create TEST-BGARGS HEAD
 
     cd "$TEST_WORKTREES/TEST-BGARGS"
-    run "$PWT_BIN" server --bg --sidekiq
+    run "$PWT_BIN" server --bg --worker
     [ "$status" -eq 0 ]
 
-    # Wait for output
-    sleep 1
     local log_file
     log_file=$(echo "$output" | grep -o '"log":"[^"]*"' | head -1 | sed 's/"log":"//;s/"//')
-    # PWT_ARGS should contain --sidekiq but NOT --bg
+    # PWT_ARGS should contain --worker but NOT --bg
+    wait_for "grep -q BGARGS: \"$log_file\"" 3
     grep -q "BGARGS:" "$log_file"
     ! grep -q "\-\-bg" "$log_file"
 

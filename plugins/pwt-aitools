@@ -67,8 +67,8 @@ cmd_topology() {
                 echo "Usage: pwt aitools topology [ai_tool] [--json]"
                 echo ""
                 echo "Analyze Pwtfile to show project topology:"
-                echo "  - [SHARED] services (postgres, redis, solr)"
-                echo "  - [PER-WT] per-worktree services (rails, vite)"
+                echo "  - [SHARED] services (database, cache, search)"
+                echo "  - [PER-WT] per-worktree services (web server, asset watcher)"
                 echo "  - [WARN] potential risks"
                 echo ""
                 echo "Arguments:"
@@ -193,8 +193,8 @@ Keep the diagram clean and readable."
 CONTEXT: Multiple worktrees run simultaneously, each with its own port.
 
 FROM THE PWTFILE, identify:
-1. [SHARED] - services shared across worktrees (e.g., postgres, redis, solr)
-2. [PER-WT] - services each worktree runs its own (e.g., rails, vite)
+1. [SHARED] - services shared across worktrees (e.g., database, cache, search)
+2. [PER-WT] - services each worktree runs its own (e.g., web server, asset watcher)
 3. [WARN] - potential risks (namespace collisions, shared state)
 
 $format_instruction

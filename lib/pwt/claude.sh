@@ -475,7 +475,7 @@ if [ -n "$worktree" ] && [ -f "$PWT_META" ]; then
   fi
 fi
 
-# Fallback: Rails pid file
+# Fallback: common web server pid file
 if [ -z "$server" ] && [ -f "$cwd/tmp/pids/server.pid" ]; then
   pid=$(cat "$cwd/tmp/pids/server.pid" 2>/dev/null)
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then

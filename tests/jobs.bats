@@ -116,8 +116,7 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"Stopped"* ]]
 
-    # Process should be gone (give it a moment)
-    sleep 1
+    wait_for "! kill -0 $pid" 3
     ! kill -0 "$pid" 2>/dev/null
 }
 
@@ -186,7 +185,7 @@ EOF
     [ -n "$job_id" ]
 
     # Wait for output to appear
-    sleep 1
+    wait_for "grep -q LOG_LINE_1 \"$PWT_DIR/jobs/$job_id.log\"" 3 || true
 
     run "$PWT_BIN" jobs logs "$job_id"
     [ "$status" -eq 0 ]

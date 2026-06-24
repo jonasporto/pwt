@@ -64,6 +64,34 @@ teardown() {
     [ "$output" = "$TEST_WORKTREES/wt-one" ]
 }
 
+@test "pwt <worktree> without command outputs worktree path" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" wt-one
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-one" ]
+}
+
+@test "pwt <term> without command uses cd search behavior" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" wt
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Multiple matches for 'wt'"* ]]
+    [[ "$output" == *"wt-one"* ]]
+    [[ "$output" == *"wt-two"* ]]
+    [[ "$output" != *"Unknown command"* ]]
+}
+
+@test "pwt <missing-worktree> without command reports worktree not found" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" missing-worktree
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Worktree not found: missing-worktree"* ]]
+    [[ "$output" != *"Unknown command"* ]]
+}
+
 @test "pwt cd <worktree>/ outputs worktree path (trailing slash from completion)" {
     cd "$TEST_REPO"
     run "$PWT_BIN" cd wt-one/
@@ -140,6 +168,14 @@ teardown() {
 @test "pwt <project> cd <worktree> works from outside project" {
     cd "$HOME"
     run "$PWT_BIN" test-repo cd wt-one
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-one" ]
+}
+
+@test "pwt <project> <worktree> without command outputs worktree path" {
+    cd "$HOME"
+    run "$PWT_BIN" test-repo wt-one
 
     [ "$status" -eq 0 ]
     [ "$output" = "$TEST_WORKTREES/wt-one" ]
@@ -330,12 +366,34 @@ EOF
     [ "$output" = "$TEST_REPO" ]
 }
 
+@test "pwt <project> @ outputs main app path" {
+    cd "$HOME"
+    run "$PWT_BIN" test-repo @
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_REPO" ]
+}
+
 @test "pwt <alias> without command outputs main app path" {
     cd "$HOME"
     run "$PWT_BIN" tr
 
     [ "$status" -eq 0 ]
     [ "$output" = "$TEST_REPO" ]
+}
+
+@test "implicit worktree cd does not override native commands" {
+    cd "$TEST_REPO"
+    git branch test/list 2>/dev/null || true
+    mkdir -p "$TEST_WORKTREES/list"
+    git worktree add "$TEST_WORKTREES/list" test/list 2>/dev/null || true
+
+    run "$PWT_BIN" list --names
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wt-one/"* ]]
+    [[ "$output" == *"list/"* ]]
+    [ "$output" != "$TEST_WORKTREES/list" ]
 }
 
 @test "pwt <project> --help shows help" {

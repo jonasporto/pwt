@@ -57,6 +57,7 @@ cmd_config() {
             echo "  base_port      - Base port for allocation (default: 5000)"
             echo "  gateway_port   - Stable gateway proxy port"
             echo "  gateway_host   - Public gateway URL host"
+            echo "  workspace_link - Stable symlink kept pointing at the current worktree (for editors)"
             echo ""
             echo "Options:"
             echo "  -h, --help, help    Show this help"
@@ -87,7 +88,7 @@ cmd_config() {
                 echo "No saved overrides (using auto-detected values)."
             fi
             ;;
-        main_app|worktrees_dir|branch_prefix|base_port|gateway_port|gateway_host)
+        main_app|worktrees_dir|branch_prefix|base_port|gateway_port|gateway_host|workspace_link)
             if [ -z "$value" ]; then
                 # Show current value
                 local current=$(jq -r ".$key // empty" "$config_file" 2>/dev/null)
@@ -106,7 +107,7 @@ cmd_config() {
                 # Set value (create tmp in same dir for atomic mv)
                 local tmp_file
                 tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-                jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+                jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
                 echo -e "${GREEN}✓ Set $key = $value${NC}"
             fi
             ;;
@@ -120,6 +121,7 @@ cmd_config() {
             echo "  base_port      - Base port for allocation"
             echo "  gateway_port   - Stable gateway proxy port"
             echo "  gateway_host   - Public gateway URL host"
+            echo "  workspace_link - Stable symlink kept pointing at the current worktree (for editors)"
             exit 1
             ;;
     esac
@@ -216,7 +218,7 @@ cmd_project() {
             # Create tmp in same dir for atomic mv
             local tmp_file
             tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-            jq --arg key "$arg3" --arg value "$arg4" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+            jq --arg key "$arg3" --arg value "$arg4" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
             echo -e "${GREEN}✓ Updated $project.$arg3 = $arg4${NC}"
             ;;
         path)
@@ -254,7 +256,7 @@ cmd_project() {
                 # Clear alias
                 local tmp_file
                 tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-                jq 'del(.alias)' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+                jq 'del(.alias)' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
                 echo -e "${GREEN}✓ Cleared alias for $project${NC}"
             else
                 # Set alias - validate first

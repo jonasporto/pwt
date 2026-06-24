@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`pwt_arg` helper**: Extract flags from `PWT_ARGS` inside Pwtfiles
-  - `pwt_arg -p` → value, `pwt_arg --sidekiq` → `"true"`, `pwt_arg --port=5002` → `"5002"`
+  - `pwt_arg -p` -> value, `pwt_arg --worker` -> `"true"`, `pwt_arg --port=5002` -> `"5002"`
   - Returns exit 1 when flag not found (use `|| true` for optional flags)
   - Works with `set -u` strict mode
 - **Server on main app (`@`)**: `pwt server` now works from the main app directory
@@ -111,7 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extracted `get_worktree_port()` helper to deduplicate port lookup with legacy fallback
 - New `lib/pwt/jobs.sh` module for background job state management
 - `_strip_pwt_execution_flags()` helper strips --bg/--no-input from PWT_ARGS
-- Fixed `cmd_server` dispatch to pass all args (was losing flags like --sidekiq)
+- Fixed `cmd_server` dispatch to pass all args (was losing flags like --worker)
 
 ## [0.1.9] - 2026-02-03
 

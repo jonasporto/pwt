@@ -336,3 +336,66 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"PROJ_ARG: TEST-PROJ-ARG"* ]]
 }
+
+@test "pwt <project> <worktree> server passes Pwtfile params" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+server() {
+    echo "SERVER_PARAM_WT:$PWT_WORKTREE"
+    echo "SERVER_PARAM_1:${1:-}"
+    echo "SERVER_PARAM_ARGS:$PWT_ARGS"
+}
+EOF
+
+    "$PWT_BIN" create TEST-PROJ-SERVER-PARAM HEAD
+
+    cd "$TEST_TEMP_DIR"
+    run "$PWT_BIN" test-project TEST-PROJ-SERVER-PARAM server stop
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SERVER_PARAM_WT:TEST-PROJ-SERVER-PARAM"* ]]
+    [[ "$output" == *"SERVER_PARAM_1:stop"* ]]
+    [[ "$output" == *"SERVER_PARAM_ARGS:stop"* ]]
+}
+
+@test "pwt <worktree> server passes Pwtfile params inside project" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+server() {
+    echo "SERVER_PARAM_WT:$PWT_WORKTREE"
+    echo "SERVER_PARAM_1:${1:-}"
+    echo "SERVER_PARAM_ARGS:$PWT_ARGS"
+}
+EOF
+
+    "$PWT_BIN" create TEST-WT-SERVER-PARAM HEAD
+
+    run "$PWT_BIN" TEST-WT-SERVER-PARAM server stop
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SERVER_PARAM_WT:TEST-WT-SERVER-PARAM"* ]]
+    [[ "$output" == *"SERVER_PARAM_1:stop"* ]]
+    [[ "$output" == *"SERVER_PARAM_ARGS:stop"* ]]
+    [[ "$output" != *"Starting server"* ]]
+}
+
+@test "pwt server passes Pwtfile params inside worktree" {
+    cd "$TEST_REPO"
+
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+server() {
+    echo "SERVER_PARAM_WT:$PWT_WORKTREE"
+    echo "SERVER_PARAM_1:${1:-}"
+    echo "SERVER_PARAM_ARGS:$PWT_ARGS"
+}
+EOF
+
+    "$PWT_BIN" create TEST-IN-WT-SERVER-PARAM HEAD
+    cd "$TEST_WORKTREES/TEST-IN-WT-SERVER-PARAM"
+
+    run "$PWT_BIN" server stop
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SERVER_PARAM_WT:TEST-IN-WT-SERVER-PARAM"* ]]
+    [[ "$output" == *"SERVER_PARAM_1:stop"* ]]
+    [[ "$output" == *"SERVER_PARAM_ARGS:stop"* ]]
+}

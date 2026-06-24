@@ -82,3 +82,20 @@ assert_failure() {
         return 1
     fi
 }
+
+# Poll a condition instead of fixed sleeps (keeps tests fast)
+# Usage: wait_for "<command>" [timeout_seconds]
+wait_for() {
+    local cmd="$1"
+    local timeout="${2:-5}"
+    local tries
+    tries=$(awk "BEGIN { print int($timeout / 0.05) }")
+    while [ "$tries" -gt 0 ]; do
+        if eval "$cmd" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.05
+        tries=$((tries - 1))
+    done
+    return 1
+}

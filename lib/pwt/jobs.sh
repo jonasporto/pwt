@@ -117,15 +117,24 @@ _stop_job() {
         return 0
     fi
 
+    # Wait (polling) for the pid to exit, up to ~1s
+    _wait_pid_gone() {
+        local p="$1" tries=20
+        while [ "$tries" -gt 0 ] && kill -0 "$p" 2>/dev/null; do
+            sleep 0.05
+            tries=$((tries - 1))
+        done
+    }
+
     # Try killing process group first, then individual pid
     if [ -n "$pgid" ] && [ "$pgid" != "$pid" ]; then
         kill -TERM -- "-$pgid" 2>/dev/null || true
-        sleep 1
+        _wait_pid_gone "$pid"
     fi
 
     if kill -0 "$pid" 2>/dev/null; then
         kill -TERM "$pid" 2>/dev/null || true
-        sleep 1
+        _wait_pid_gone "$pid"
     fi
 
     # Force kill if still running
@@ -211,6 +220,84 @@ _tail_job_log() {
     else
         tail -50 "$log"
     fi
+}
+
+# Command: pwt logs [worktree] [-f]
+# Worktree-centric log viewing: picks the worktree's server job (or the most
+# recent job) so nobody needs to hunt for a job id first.
+cmd_logs() {
+    local follow="false" target="" arg
+    for arg in "$@"; do
+        case "$arg" in
+            -f|--follow) follow="true" ;;
+            -h|--help)
+                echo "Usage: pwt logs [worktree] [-f]"
+                echo ""
+                echo "Show background-job logs for a worktree: the running server job if"
+                echo "any, otherwise the most recent job. Defaults to the worktree you"
+                echo "are in (or the current symlink)."
+                echo ""
+                echo "For a specific job: pwt jobs logs <job-id> [-f]"
+                return 0
+                ;;
+            *) [ -z "$target" ] && target="$arg" ;;
+        esac
+    done
+    _init_jobs_dir
+
+    # Resolve worktree: argument → pwd → current symlink
+    if [ -z "$target" ]; then
+        local cur_dir=$(pwd -P)
+        local resolved_wt_dir=""
+        if [ -n "$WORKTREES_DIR" ] && [ -d "$WORKTREES_DIR" ]; then
+            resolved_wt_dir=$(cd "$WORKTREES_DIR" && pwd -P)
+        fi
+        if [ -n "$resolved_wt_dir" ] && [[ "$cur_dir" == "$resolved_wt_dir"/* ]]; then
+            target="${cur_dir#$resolved_wt_dir/}"
+            target="${target%%/*}"
+        else
+            target=$(get_current_from_symlink 2>/dev/null || echo "")
+        fi
+    fi
+    target="${target%/}"
+    if [ -z "$target" ]; then
+        pwt_error "Error: No worktree specified or detected"
+        echo "Usage: pwt logs [worktree] [-f]" >&2
+        return $EXIT_USAGE
+    fi
+
+    # Pick a job: running server > most recent running > most recent overall
+    local pick="" pick_running="" pick_server="" running_list=""
+    local json_file j_wt j_cmd j_id j_status
+    for json_file in $(ls -t "$PWT_JOBS_DIR"/*.json 2>/dev/null); do
+        [ -f "$json_file" ] || continue
+        j_wt=$(jq -r '.worktree // empty' "$json_file" 2>/dev/null)
+        [ "$j_wt" = "$target" ] || continue
+        j_cmd=$(jq -r '.command // empty' "$json_file" 2>/dev/null)
+        j_id=$(jq -r '.id // empty' "$json_file" 2>/dev/null)
+        j_status=$(jq -r '.status // empty' "$json_file" 2>/dev/null)
+        [ -z "$pick" ] && pick="$j_id"
+        if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
+            [ -z "$pick_running" ] && pick_running="$j_id"
+            if [ "$j_cmd" = "server" ] && [ -z "$pick_server" ]; then
+                pick_server="$j_id"
+            fi
+            running_list="${running_list:+$running_list, }$j_cmd ($j_id)"
+        fi
+    done
+
+    local job="${pick_server:-${pick_running:-$pick}}"
+    if [ -z "$job" ]; then
+        pwt_error "No jobs found for worktree: $target"
+        echo "Start one with: pwt server $target --bg" >&2
+        return $EXIT_NOT_FOUND
+    fi
+
+    echo -e "${BLUE}Logs:${NC} $job" >&2
+    if [ -n "$running_list" ] && [[ "$running_list" == *,* ]]; then
+        echo -e "${DIM}Running for $target: $running_list — pwt jobs logs <id> for a specific one${NC}" >&2
+    fi
+    _tail_job_log "$job" "$follow"
 }
 
 # List all jobs with formatted output

@@ -473,11 +473,18 @@ cmd_list_compact() {
     # Prefetch remote refs once (performance: avoids N fetches in loop)
     prefetch_remote_refs
 
-    # Worktrees
+    # Worktrees — each row needs ~8 git calls, so rows are computed in parallel
+    # batches and emitted in order from per-row temp files.
     local has_merged=false
+    local row_dir
+    row_dir=$(mktemp -d "${TMPDIR:-/tmp}/pwt-list.XXXXXX")
+    local row_idx=0
+    local jobs_in_batch=0
+    local max_jobs=4
     while IFS=$'\t' read -r name dir; do
             [ -n "$name" ] && [ -d "$dir" ] || continue
-
+            row_idx=$((row_idx + 1))
+            (
             # Git info
             local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
             local hash=$(get_short_hash "$dir")
@@ -488,9 +495,9 @@ cmd_list_compact() {
             local is_dirty=false
             [ -n "$status" ] && is_dirty=true
 
-            # Skip if --dirty and not dirty
+            # Skip if --dirty and not dirty (exit: row runs in a subshell)
             if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
-                continue
+                exit 0
             fi
 
             # Divergence from main
@@ -514,7 +521,7 @@ cmd_list_compact() {
             # Check merge status for tips
             local merge_status=$(check_merge_status "$dir" "${DEFAULT_BRANCH:-master}" 2>/dev/null)
             if [[ "$merge_status" == *"merged"* ]] || [[ "$merge_status" == *"clean"* ]]; then
-                has_merged=true
+                touch "$row_dir/merged"
             fi
 
             # Build meta string from metadata (includes port, description, custom fields)
@@ -540,8 +547,19 @@ cmd_list_compact() {
 
             [ -z "$meta" ] && meta="·"
 
-            print_table_row "$marker" "$name" "$branch" "$hash" "$base" "${status:-·}" "${main_div:-·}" "${remote_div:-·}" "$age" "$meta"
+            print_table_row "$marker" "$name" "$branch" "$hash" "$base" "${status:-·}" "${main_div:-·}" "${remote_div:-·}" "$age" "$meta" \
+                > "$row_dir/$(printf '%05d' "$row_idx").row"
+            ) &
+            jobs_in_batch=$((jobs_in_batch + 1))
+            if [ "$jobs_in_batch" -ge "$max_jobs" ]; then
+                wait
+                jobs_in_batch=0
+            fi
     done < <(list_worktree_entries)
+    wait
+    cat "$row_dir"/*.row 2>/dev/null || true
+    [ -f "$row_dir/merged" ] && has_merged=true
+    rm -rf "$row_dir"
 
     echo ""
 

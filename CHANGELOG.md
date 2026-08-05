@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-08-05
+
 ### Added
 - Worktree-first dispatch: `pwt <worktree>` with no command jumps straight to
   that worktree (implicit `cd`), and `pwt <worktree> <cmd>` runs the command

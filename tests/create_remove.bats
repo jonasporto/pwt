@@ -12,12 +12,17 @@ setup() {
     mkdir -p "$TEST_WORKTREES"
 
     # Create project config
+    # Randomized base_port: remove's port check uses lsof on machine-global
+    # TCP ports, so the default 5001 collides with real servers started by
+    # other test files running in parallel (same pattern as gateway.bats)
+    export TEST_BASE_PORT=$((44000 + RANDOM % 1000))
     mkdir -p "$PWT_DIR/projects/test-project"
     cat > "$PWT_DIR/projects/test-project/config.json" << EOF
 {
   "path": "$TEST_REPO",
   "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
+  "branch_prefix": "test/",
+  "base_port": "$TEST_BASE_PORT"
 }
 EOF
 

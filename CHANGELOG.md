@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Worktree-first dispatch: `pwt <worktree>` with no command jumps straight to
+  that worktree (implicit `cd`), and `pwt <worktree> <cmd>` runs the command
+  there.
+- `pwt logs [worktree] [-f]` for viewing background job logs.
+- `pwt self` (aliases: `pwt versions`, `pwt which`) to list installed pwt
+  versions and switch the active one (`pwt self use <local|npm|brew|path>`).
+- `--count N` for background commands: launches N indexed jobs
+  (`-1`..`-N`) with `PWT_JOB_INDEX` exported to the Pwtfile.
+- `pwt adopt --all [dir]` for bulk-adopting unregistered worktrees.
+- `post_use()` Pwtfile hook, run after `pwt use` (including `@`).
+- `workspace_link` project config: keeps a friendly stable symlink pointing at
+  the current worktree.
+- `pwt editor --pinned [worktree]` opens the stable current symlink instead of
+  the resolved worktree path.
+- Generic Pwtfile command delegation: `pwt <custom> --help` prints the
+  Pwtfile comment block instead of executing the function; `pwt server --help`
+  shows project flags documented in the Pwtfile.
+- `pwt info --porcelain` / `--json` structured output, including background
+  `jobs[]`; `pwt servers` shows per-worktree background jobs.
+- "Scripts/agents" section in `pwt help` (porcelain output, `--no-input`,
+  exit codes).
+
+### Changed
+- Startup is ~10x faster (~250ms → ~25ms): project detection now uses a
+  single-`jq` project index cached on disk (`$PWT_DIR/cache/project-index`).
+- `pwt ps1` no longer spawns git/jq per prompt.
+- `pwt list --refresh` computes rows in parallel batches.
+- Background/gateway operations poll at 50ms instead of fixed sleeps
+  (`--bg` grace configurable via `PWT_BG_GRACE_SECONDS`).
+- Guards that skip an already-running server now warn about ignored flags and
+  print the exact restart command.
+
+### Fixed
+- `pwt create X main` no longer rewrites the base to `origin/main` when no
+  remote exists; failed fetches are no longer silently swallowed.
+- `pwt create --branch X` reuses an existing local branch with a warning
+  (and shows how far behind the base it is) instead of failing.
+- `pwt copy` patterns containing `/` now match paths (e.g. `src/*.js`), and
+  `.git`/`node_modules` are pruned from the search.
+- `pwt run <name> <cmd>` errors when `<name>` is neither a worktree nor a
+  known command instead of silently running on the main app.
+- `pwt <custom> --bg` now daemonizes correctly (execution-flag stripping no
+  longer happens in a subshell).
+- `pwt editor` no longer crashes with `EDITOR: unbound variable`.
+- `pwt status` without a TTY aborts cleanly instead of leaking alt-screen
+  escapes and crashing on `/dev/tty`.
+- `pwt discover` normalizes paths (`pwd -P`), so `/tmp` vs `/private/tmp` no
+  longer marks configured projects as unconfigured.
+- Removing the current worktree now falls back to the previous worktree (or
+  `@`) instead of leaving a dangling `current` symlink.
+- `pwt gateway init --port` validates the port is free; `gateway use` no
+  longer records a new target when the daemon failed to start.
+- Trash directory honors `PWT_DIR` instead of hardcoding `~/.pwt/trash`.
+- Shell wrappers no longer print `_pwt_is_project: command not found` noise.
+- Implicit cd never treats flags as worktree names (`pwt --version` and
+  hyphenated typos no longer fall into a surprise fzf picker) and never opens
+  fzf from the shell-wrapper probe.
+- `pwt server <arg>` probes worktree names without saving navigation state or
+  opening fzf, so positional Pwtfile args can't hang in a hidden picker.
+- One malformed `config.json` no longer breaks project/alias resolution for
+  every other project (index rebuild skips just the broken one).
+- `pwt alias <name>` invalidates the project-index cache, so the new alias
+  works immediately.
+- `pwt self use` resolves file-level symlinks and refuses to point
+  `~/.local/bin/pwt` at itself (previously bricked every pwt invocation with
+  "too many levels of symbolic links" when run through the managed link).
+- `pwt list` no longer silently drops the row of a corrupted worktree.
+
 ## [0.1.13] - 2026-06-05
 
 ### Added

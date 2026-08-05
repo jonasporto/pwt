@@ -11,11 +11,16 @@ setup() {
     export TEST_WORKTREES="$TEST_TEMP_DIR/worktrees"
     mkdir -p "$TEST_WORKTREES"
 
+    # Randomized base_port: TCP ports are machine-global, so a real server
+    # started here on the default 5001 collides with port checks in other
+    # test files running in parallel (same pattern as gateway.bats)
+    export TEST_BASE_PORT=$((43000 + RANDOM % 1000))
     mkdir -p "$PWT_DIR/projects/test-project"
     cat > "$PWT_DIR/projects/test-project/config.json" << EOF
 {
   "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES"
+  "worktrees_dir": "$TEST_WORKTREES",
+  "base_port": "$TEST_BASE_PORT"
 }
 EOF
     cd "$TEST_REPO"
@@ -372,4 +377,54 @@ PWTEOF
     [ "$status" -ne 0 ]
     [[ "$output" == *"No jobs found"* ]]
     [[ "$output" == *"pwt server LOGS-2 --bg"* ]]
+}
+
+# ============================================
+# Review fixes (2026-08): implicit-cd flag guard, corrupted config
+# tolerance, self-use symlink loop guard
+# ============================================
+
+@test "implicit cd rejects flags (never hijacks pwt --version)" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" _implicit-cd --version
+    [ "$status" -ne 0 ]
+    run "$PWT_BIN" _implicit-cd -q
+    [ "$status" -ne 0 ]
+}
+
+@test "implicit cd still resolves bare - to previous worktree" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create IMPL-PREV-1 HEAD
+    "$PWT_BIN" create IMPL-PREV-2 HEAD
+    "$PWT_BIN" use IMPL-PREV-1
+    "$PWT_BIN" use IMPL-PREV-2
+    run "$PWT_BIN" _implicit-cd -
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"IMPL-PREV-1"* ]]
+}
+
+@test "corrupted sibling config.json does not break project resolution" {
+    mkdir -p "$PWT_DIR/projects/broken-project"
+    echo '{NOT VALID JSON' > "$PWT_DIR/projects/broken-project/config.json"
+    rm -f "$PWT_DIR/cache/project-index"
+
+    cd "$HOME"
+    run "$PWT_BIN" test-project list --names
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Unknown command"* ]]
+}
+
+@test "self use local through the managed symlink does not create a loop" {
+    "$PWT_BIN" self use local
+    local link="$HOME/.local/bin/pwt"
+    [ -L "$link" ]
+
+    # Run 'self use local' THROUGH the symlink it manages: before the fix
+    # this produced a self-referential link and every pwt call died with
+    # "too many levels of symbolic links"
+    run "$link" self use local
+    [ "$status" -eq 0 ]
+    run "$link" version
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pwt version"* ]]
 }

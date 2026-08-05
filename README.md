@@ -197,6 +197,8 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | `server` | Start dev server (from Pwtfile) |
 | `gateway` | Stable project URL that routes to a worktree server |
 | `servers` | Show active servers, gateway target, and background jobs |
+| `logs [worktree]` | Show background job logs (`-f` to follow) |
+| `self` | List installed pwt versions / switch active (`self use <target>`) |
 | `ai` | Start AI coding assistant |
 | `remove <worktree>` | Remove worktree (`--with-branch`) |
 

@@ -540,7 +540,10 @@ cmd_list_compact() {
                 fi
                 # Fallback to commit message
                 if [ -z "$desc" ]; then
-                    desc=$(git -C "$dir" log --oneline --no-merges -1 --format=%s 2>/dev/null | head -c 40)
+                    # || true: a corrupted worktree makes git exit 128, and under
+                    # set -eo pipefail that would kill the row subshell before
+                    # print_table_row — the row would silently vanish from list
+                    desc=$(git -C "$dir" log --oneline --no-merges -1 --format=%s 2>/dev/null | head -c 40) || true
                 fi
                 [ -n "$desc" ] && meta="$meta description=$desc"
             fi
@@ -549,7 +552,7 @@ cmd_list_compact() {
 
             print_table_row "$marker" "$name" "$branch" "$hash" "$base" "${status:-·}" "${main_div:-·}" "${remote_div:-·}" "$age" "$meta" \
                 > "$row_dir/$(printf '%05d' "$row_idx").row"
-            ) &
+            ) </dev/null &
             jobs_in_batch=$((jobs_in_batch + 1))
             if [ "$jobs_in_batch" -ge "$max_jobs" ]; then
                 wait

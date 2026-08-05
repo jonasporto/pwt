@@ -830,16 +830,12 @@ EOF
     # Remove with -y (should create backup)
     run "$PWT_BIN" remove "$wt_name" -y
 
-    # Check backup was created
-    local backup_dir="$HOME/.pwt/trash"
-    if [ -d "$backup_dir" ]; then
-        # Should have untracked backup
-        local found_backup=$(find "$backup_dir" -maxdepth 2 -name "*${wt_name}*" 2>/dev/null | head -1)
-        [ -n "$found_backup" ]
-
-        # Cleanup
-        rm -rf "$backup_dir"/*"${wt_name}"* 2>/dev/null || true
-    fi
+    # Check backup was created under $PWT_DIR/trash (A4: trash honors PWT_DIR;
+    # this used to check $HOME/.pwt/trash behind an if-guard, silently passing)
+    local backup_dir="$PWT_DIR/trash"
+    [ -d "$backup_dir" ]
+    local found_backup=$(find "$backup_dir" -maxdepth 2 -name "*${wt_name}*" 2>/dev/null | head -1)
+    [ -n "$found_backup" ]
 }
 
 @test "pwt auto-remove requires --execute non-interactively" {

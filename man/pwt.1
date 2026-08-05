@@ -177,6 +177,15 @@ Show project server status, including gateway target, current worktree,
 listening ports, and background server jobs. By default shows active entries;
 \fB\-\-all\fR includes stopped worktrees.
 .TP
+.B logs \fR[\fINAME\fR] [\fIJOB\fR] [\fB\-f\fR]
+Show logs from a worktree's background jobs. Without a job id, picks the
+server job (or the most recent job). \fB\-f\fR follows the log.
+.TP
+.B self \fR[\fBuse\fR \fITARGET\fR]
+List installed pwt versions (aliases: \fBversions\fR, \fBwhich\fR). With
+\fBuse\fR, point \fI~/.local/bin/pwt\fR at \fBlocal\fR, \fBnpm\fR,
+\fBbrew\fR, a path, or a worktree of pwt's own repository.
+.TP
 .B run \fINAME\fR \fICOMMAND\fR...
 Run command in specific worktree context
 .TP

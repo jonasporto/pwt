@@ -287,7 +287,7 @@ cmd_project() {
                 # Set alias
                 local tmp_file
                 tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-                jq --arg alias "$new_alias" '.alias = $alias' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+                jq --arg alias "$new_alias" '.alias = $alias' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
                 echo -e "${GREEN}✓ Set alias '$new_alias' for $project${NC}"
             fi
             ;;

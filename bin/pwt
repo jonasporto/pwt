@@ -611,6 +611,33 @@ build_project_index() {
     # NOTE: fields are joined with the ASCII unit separator (US, 0x1f), not tabs:
     # tab is IFS whitespace in bash, so `read` would collapse empty fields.
 
+    # jq aborts the whole batch on the first malformed config.json, which
+    # would leave EVERY project unresolvable. Fall back to one jq per file so
+    # only the broken project drops out. (Rebuilds happen on cache misses
+    # only, so the extra spawns don't hit normal startup.)
+    if [ -z "$_PWT_PROJECT_INDEX" ] && [ "${#configs[@]}" -gt 0 ]; then
+        local cfg row
+        for cfg in "${configs[@]}"; do
+            row=$(jq -r '
+                input_filename as $f |
+                [
+                    ($f | split("/")[-2]),
+                    (.path // .main_app // ""),
+                    (.worktrees_dir // ""),
+                    (.branch_prefix // ""),
+                    ((.base_port // "") | tostring),
+                    (.remote // ""),
+                    (([.alias // empty] + (.aliases // [])) | join(","))
+                ] | join("")
+            ' "$cfg" 2>/dev/null) || row=""
+            if [ -z "$row" ]; then
+                pwt_debug "Skipping invalid project config: $cfg"
+                continue
+            fi
+            _PWT_PROJECT_INDEX+="${_PWT_PROJECT_INDEX:+$'\n'}$row"
+        done
+    fi
+
     if [ -n "$_PWT_PROJECT_INDEX" ]; then
         mkdir -p "$PWT_DIR/cache"
         printf '%s\n' "$_PWT_PROJECT_INDEX" > "$cache_file.tmp.$$" 2>/dev/null \
@@ -2745,7 +2772,9 @@ cmd_server() {
     if [ -n "$arg" ] && [ "$arg" != "@" ]; then
         local candidate_path="$WORKTREES_DIR/$arg"
         if [ ! -d "$candidate_path" ]; then
-            local candidate_match=$(cmd_cd "$arg" 2>/dev/null)
+            # resolve_worktree_path, not cmd_cd: this is just a probe, so it
+            # must not save navigation state or fall into the fzf picker
+            local candidate_match=$(resolve_worktree_path "$arg" 2>/dev/null || true)
             if [ -z "$candidate_match" ] || [ ! -d "$candidate_match" ]; then
                 if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
                     arg_is_pwtfile_arg=true
@@ -2790,9 +2819,10 @@ cmd_server() {
             via_argument=true
         else
             worktree_path="$WORKTREES_DIR/$arg"
-            # Try partial match if not found
+            # Try partial match if not found (resolve_worktree_path: no
+            # navigation side effects, no interactive fzf fallback)
             if [ ! -d "$worktree_path" ]; then
-                local match=$(cmd_cd "$arg" 2>/dev/null)
+                local match=$(resolve_worktree_path "$arg" 2>/dev/null || true)
                 if [ -n "$match" ] && [ -d "$match" ]; then
                     worktree_path="$match"
                 fi
@@ -4347,7 +4377,7 @@ cmd_cd() {
         return 0
     elif [ ${#matches[@]} -gt 1 ]; then
         # Multiple matches: fallback to interactive select with query
-        if command -v fzf &>/dev/null && [ -t 0 ]; then
+        if command -v fzf &>/dev/null && [ -t 0 ] && [ "${_PWT_CD_NO_FZF:-false}" != true ]; then
             cmd_select --query "$target"
             return $?
         else
@@ -4360,7 +4390,7 @@ cmd_cd() {
     fi
 
     # No matches: try fzf fuzzy search as last resort (only if interactive)
-    if command -v fzf &>/dev/null && [ -t 0 ]; then
+    if command -v fzf &>/dev/null && [ -t 0 ] && [ "${_PWT_CD_NO_FZF:-false}" != true ]; then
         cmd_select --query "$target"
         return $?
     fi
@@ -4519,6 +4549,11 @@ cmd_implicit_cd() {
     [ $# -eq 1 ] || return 1
 
     local target="${1%/}"
+    # Flags are never worktrees (bare "-" = previous worktree stays valid);
+    # without this, "pwt --version" or "pwt -q" would fall through to cd
+    case "$target" in
+        -?*) return 1 ;;
+    esac
     case "$target" in
         init|discover|create|add|track|adopt|setup|list|ls|tree|status|info|show|current|use|ps1|remove|rm|server|s|gateway|servers|repair|fix|auto-remove|cleanup|restore|fix-port|meta|m|alias|config|cd|_cd|run|editor|e|editor:*|ai|ai:*|open|diff|copy|cp|for-each|steps|step|doctor|self|versions|which|logs|jobs|select|_select|shell-init|setup-shell|claude-setup|project|port|version|help|-h|--help|plugin)
             return 1
@@ -4534,7 +4569,9 @@ cmd_implicit_cd() {
     fi
 
     _implicit_cd_target_candidate "$target" || return 1
-    cmd_cd "$target"
+    # No fzf fallback here: the shell wrapper calls this in a command
+    # substitution with a live tty, so a typo would pop a surprise picker
+    _PWT_CD_NO_FZF=true cmd_cd "$target"
 }
 
 # Command: run
@@ -5521,10 +5558,14 @@ cmd_self() {
         return 0
     fi
 
-    # Where is THIS script really living?
+    # Where is THIS script really living? Must resolve the FILE symlink too:
+    # when invoked through ~/.local/bin/pwt (the very link `use` manages),
+    # resolving only the directory would make self_real == $LOCAL_BIN and
+    # `use local` would then write a self-referential symlink, bricking pwt
     local self_path="${BASH_SOURCE[0]:-$0}"
     local self_real
-    self_real=$(cd "$(dirname "$self_path")" 2>/dev/null && pwd -P)/$(basename "$self_path")
+    self_real=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "$self_path" 2>/dev/null)
+    [ -n "$self_real" ] || self_real=$(cd "$(dirname "$self_path")" 2>/dev/null && pwd -P)/$(basename "$self_path")
 
     # Describe one binary path: kind, version, details
     _self_describe() {
@@ -5641,6 +5682,17 @@ cmd_self() {
         if [ -z "$new_bin" ] || [ ! -e "$new_bin" ]; then
             pwt_error "Error: Could not find a pwt binary for target '$target'"
             return $EXIT_NOT_FOUND
+        fi
+
+        # Never let the managed link point at itself ("too many levels of
+        # symbolic links" would kill every subsequent pwt invocation)
+        if [ "$new_bin" = "$LOCAL_BIN" ]; then
+            pwt_error "Error: refusing to point ~/.local/bin/pwt at itself"
+            return $EXIT_USAGE
+        fi
+        if [ -e "$LOCAL_BIN" ] && [ "$new_bin" -ef "$LOCAL_BIN" ]; then
+            echo -e "${GREEN}✓${NC} ~/.local/bin/pwt already points at $new_bin"
+            return 0
         fi
 
         mkdir -p "$(dirname "$LOCAL_BIN")"

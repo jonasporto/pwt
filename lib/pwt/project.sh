@@ -325,20 +325,6 @@ cmd_project() {
                 ((warnings++))
             fi
 
-            # Check md-docs symlink in main app
-            local md_docs_link="$MAIN_APP/md-docs"
-            if [ -L "$md_docs_link" ]; then
-                if [ -d "$md_docs_link" ]; then
-                    echo -e "  ${GREEN}✓${NC} md-docs symlink valid"
-                else
-                    echo -e "  ${RED}✗${NC} md-docs symlink broken"
-                    ((errors++))
-                fi
-            else
-                echo -e "  ${YELLOW}!${NC} No md-docs symlink (optional)"
-                ((warnings++))
-            fi
-
             # Check .env exists in main app
             if [ -f "$MAIN_APP/.env" ]; then
                 echo -e "  ${GREEN}✓${NC} .env file found"

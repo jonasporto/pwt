@@ -2,6 +2,18 @@
 
 This file provides guidance for AI assistants working on the pwt codebase.
 
+## Public Repository Policy
+
+pwt is a public open-source project. Two hard rules:
+
+1. **No private context.** Never reference private/personal projects,
+   companies, tickets, internal tools, or environments in anything that
+   lands in this repo — code, comments, tests, docs, examples, or commit
+   messages. Keep every example generic.
+2. **No unauthorized publishing.** Never `git push`, `npm publish`, or
+   create a release without the maintainer's explicit authorization in the
+   current session.
+
 ## Project Overview
 
 `pwt` (Power Worktrees) is a bash tool for managing git worktrees across multiple projects. It provides:

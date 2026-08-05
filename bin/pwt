@@ -2206,6 +2206,7 @@ export PWT_PROJECT='${PWT_PROJECT:-}'
 export PWT_ARGS='${PWT_ARGS:-}'
 export PWT_AGENT='${PWT_AGENT:-0}'
 export PWT_JOB_INDEX='${_idx}'
+export PWT_KILL_TARGET='${PWT_KILL_TARGET:-}'
 export MAIN_APP='${MAIN_APP:-}'
 PWT_ARGC='${PWT_ARGC:-0}'
 PWT_ARGV=(${pwt_argv_literal})
@@ -6449,8 +6450,7 @@ Lifecycle Hooks:
   teardown()    Runs when worktree removed
 
 Custom Commands:
-  run_xxx()     Callable with "pwt xxx"
-  xxx()         Also works! Any function becomes "pwt xxx"
+  xxx()         Any function becomes "pwt xxx"
   params        Passed as "$1", "$2", ... and raw "$PWT_ARGS"
 
 Command Forms:

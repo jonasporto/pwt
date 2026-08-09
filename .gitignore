@@ -7,3 +7,6 @@ homebrew-pwt/
 
 # Test artifacts
 .bats-run-*
+
+# kcov output
+coverage/

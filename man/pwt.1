@@ -155,6 +155,18 @@ Go to previous worktree
 .B server\fR|\fBs \fR[\fINAME\fR]
 Start development server for worktree (runs Pwtfile server command)
 .TP
+.B server wait \fR[\fINAME\fR] [\fB\-\-log\-contains\fR \fISTR\fR] [\fB\-\-timeout\fR \fISECONDS\fR]
+Block until the worktree's server is ready: by default until its allocated
+port accepts TCP connections, or until \fISTR\fR appears in the server job's
+log. Exits 0 when ready, 3 when there is no port or job, 5 on timeout.
+Default timeout is 600 seconds.
+.TP
+.B jobs \fR[\fBlist\fR [\fB\-\-porcelain\fR]|\fBlogs\fR \fIID\fR|\fBwait\fR \fIID\fR|\fBstop\fR \fIID\fR|\fBclean\fR]
+Manage background jobs started with \fB\-\-bg\fR. \fBlist \-\-porcelain\fR
+emits JSON for scripts and Pwtfiles \(em prefer it over reading job files.
+\fBwait\fR blocks until the job's process is gone (exit 5 on timeout).
+\fBclean\fR removes stopped job records and their logs.
+.TP
 .B gateway up \fR[\fB\-\-port\fR \fIPORT\fR] [\fB\-\-host\fR \fIHOST\fR]
 Start the project-scoped gateway proxy daemon. If a port is provided, it is
 saved as the project's gateway_port. If a host is provided, it is saved as the
@@ -216,13 +228,15 @@ Show git diff between two worktrees
 .B doctor
 Check system health and configuration
 .TP
-.B status \fR[\fIOPTIONS\fR]
-Interactive TUI dashboard (like htop)
-.RS
+.B state \fR[\fB\-\-json\fR]
+Versioned snapshot of all pwt state (projects, worktrees with metadata,
+background jobs). See \fBdocs/state\-v2\-contract.md\fR.
 .TP
-.BR \-\-all
-Show all projects (global view)
-.RE
+.B state migrate \fR[\fB\-\-status\fR|\fB\-\-check\fR|\fB\-\-verify\fR]
+Inspect or apply state schema migrations. \fB\-\-check\fR is a read-only
+dry run reporting what would convert and what would be skipped. Migration
+also happens automatically on the first command after an upgrade.
+See \fBdocs/migrations/\fR.
 
 .SS Maintenance
 .TP
@@ -238,10 +252,11 @@ Resolve port conflict by allocating new port
 .B restore \fINAME\fR
 Recover backed up changes from trash
 
-.SS Interactive Selection (requires fzf)
+.SS Interactive Selection
 .TP
 .B select \fR[\fIOPTIONS\fR]
 Interactive worktree selector with preview, keybindings, and query support.
+Uses \fBfzf\fR when installed; otherwise falls back to a builtin picker.
 .RS
 .TP
 .BR \-q ", " \-\-query " " \fITEXT\fR

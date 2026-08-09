@@ -471,6 +471,7 @@ cmd_create() {
     local final_desc="${description:-}"
 
     save_metadata "$worktree_name" "$worktree_dir" "$final_branch" "$final_base" "$final_base_short" "$port" "$final_desc" "$workspace_mode"
+    events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "create" "branch=$final_branch port=$port"
     echo -e "  ${GREEN}✓ Metadata saved${NC}"
 
     # Release port allocation lock now that metadata is saved
@@ -713,6 +714,7 @@ cmd_adopt() {
     echo ""
 
     save_metadata "$worktree_name" "$worktree_dir" "$branch" "$final_base" "$final_base_short" "$port" "$final_desc" "worktree"
+    events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "adopt" "branch=$branch port=$port"
     echo -e "  ${GREEN}✓ Metadata saved${NC}"
 
     release_metadata_lock
@@ -1285,19 +1287,17 @@ cmd_remove() {
         local meta_desc=$(get_metadata "$name" "description" 2>/dev/null || echo "")
         local meta_project="$CURRENT_PROJECT"
 
-        cat > "$backup_dir/${backup_name}.json" << EOF
-{
-  "worktree": "$name",
-  "branch": "$meta_branch",
-  "base": "$meta_base",
-  "port": "$meta_port",
-  "description": "$meta_desc",
-  "project": "$meta_project",
-  "timestamp": "$timestamp",
-  "date": "$(date -r $(date +%s) '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')"
-}
-EOF
-        echo -e "  ${CYAN}✓ Metadata saved to ~/.pwt/trash/${backup_name}.json${NC}"
+        {
+            printf 'worktree=%s\n' "$(_state_escape "$name")"
+            printf 'branch=%s\n' "$(_state_escape "$meta_branch")"
+            printf 'base=%s\n' "$(_state_escape "$meta_base")"
+            printf 'port=%s\n' "$meta_port"
+            printf 'description=%s\n' "$(_state_escape "$meta_desc")"
+            printf 'project=%s\n' "$(_state_escape "$meta_project")"
+            printf 'timestamp=%s\n' "$timestamp"
+            printf 'date=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+        } > "$backup_dir/${backup_name}.trash"
+        echo -e "  ${CYAN}✓ Metadata saved to ~/.pwt/trash/${backup_name}.trash${NC}"
 
         # Try to stash tracked changes
         if git -C "$worktree_dir" stash push -m "pwt-backup-$timestamp" 2>/dev/null; then

@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwt state --json`: versioned snapshot of all state (projects, worktrees
+  with metadata, background jobs) for external consumers.
+- `pwt state migrate` (alias `pwt migrate`) with `--status`, `--check`
+  (read-only dry run), `--verify` and `--porcelain`. Migration process and
+  per-schema guides in `docs/migrations/`.
+- `pwt jobs wait <id|worktree>` and `pwt server wait [worktree]`
+  (`--log-contains`, `--timeout`): block until ready instead of poll loops.
+- `pwt jobs list --porcelain`: JSON job list, the supported way for scripts
+  and Pwtfiles to enumerate jobs.
+- Pwtfile `doctor()` hook: `pwt doctor` runs project-defined health checks.
+- `skills/pwt-cli/SKILL.md`: agent-facing CLI guide, kept in sync with help
+  and README by a rule in CLAUDE.md.
+- Exit codes 5 (timeout) and 6 (missing dependency).
+
+### Changed
+- **State format v2**: internal state moved from JSON to flat key=value files
+  (`state/<project>/<worktree>.meta`, `projects/<name>/config`,
+  `jobs/<id>.job`), plus an append-only `events.log`. `~/.pwt/state-version`
+  declares the schema; legacy state migrates automatically on first run and
+  originals are kept as `*.v1.bak`. See `docs/state-v2-contract.md`.
+- **`jq` is no longer a runtime dependency** (~132 call sites removed); it is
+  used only for the one-time v1 migration. Startup dropped from ~250ms to
+  ~25ms.
+- `fzf` is now optional: `pwt select` and `use --select` fall back to a
+  builtin picker.
+- Port detection falls back to `ss`, `fuser` and a bash `/dev/tcp` probe when
+  `lsof` is absent (previously it assumed the port was free).
+- `pwt open` uses `xdg-open`/`wslview` outside macOS.
+- `column -t` replaced by a pure-bash formatter (absent on slim Linux).
+
+### Fixed
+- Background daemons no longer inherit the caller's file descriptors, which
+  made any Linux caller capturing pwt's output block until the daemon exited.
+- `pwt server <arg>` inside a worktree reached through the project's `current`
+  symlink treated the argument as a worktree name (`pwt server stop` failed).
+- `pwt doctor` reported "Pwtfile: not found" for a Pwtfile declared in project
+  config, and now distinguishes "declared but missing".
+- Statusline installer used BSD-only `sed -i ''`, breaking `claude-setup` on
+  Linux.
+- Gateway returned an undefined `EXIT_DEPENDENCY`, crashing the error path
+  under `set -u` when node was absent.
+- `pwt shell-init` emitted a function pointing at the *installed* pwt instead
+  of the binary that generated it, silently mixing versions.
+
+### Removed
+- `pwt status` (the bash TUI dashboard). The command now exits with a pointer
+  to `list`/`tree`/`servers`.
+
 ## [0.1.14] - 2026-08-05
 
 ### Added
@@ -218,7 +267,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Test suite**: 530+ tests with BATS framework
 - **CI/CD**: GitHub Actions for automated testing
 
-[Unreleased]: https://github.com/jonasporto/pwt/compare/v0.1.13...HEAD
+[Unreleased]: https://github.com/jonasporto/pwt/compare/v0.1.14...HEAD
+[0.1.14]: https://github.com/jonasporto/pwt/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/jonasporto/pwt/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/jonasporto/pwt/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/jonasporto/pwt/compare/v0.1.10...v0.1.11

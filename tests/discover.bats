@@ -144,7 +144,7 @@ create_repo() {
     [[ "$output" == *"Configured: repo1"* ]] || [[ "$output" == *"✓"* ]]
 
     # Should now be configured
-    [ -f "$PWT_DIR/projects/repo1/config.json" ]
+    [ -f "$PWT_DIR/projects/repo1/config" ]
 }
 
 @test "pwt discover --init configures multiple repos" {
@@ -154,8 +154,8 @@ create_repo() {
     run "$PWT_BIN" discover "$PROJECTS_DIR" --init
     [ "$status" -eq 0 ]
 
-    [ -f "$PWT_DIR/projects/repo1/config.json" ]
-    [ -f "$PWT_DIR/projects/repo2/config.json" ]
+    [ -f "$PWT_DIR/projects/repo1/config" ]
+    [ -f "$PWT_DIR/projects/repo2/config" ]
 }
 
 @test "pwt init --discover works as alias" {

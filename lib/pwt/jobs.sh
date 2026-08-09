@@ -1,6 +1,7 @@
 #!/bin/bash
 # pwt jobs module - Background job management
 # Manages state for background Pwtfile executions (--bg flag)
+# Job records are key=value files: jobs/<id>.job (state contract v2)
 
 PWT_JOBS_DIR="${PWT_DIR}/jobs"
 
@@ -19,46 +20,139 @@ _generate_job_id() {
     echo "${worktree}-${cmd}-${ts}"
 }
 
-# Save job metadata as JSON
+# Path to a job record
+# Usage: _job_file <job_id>
+_job_file() {
+    echo "$PWT_JOBS_DIR/${1}.job"
+}
+
+# Save job metadata as key=value record
 # Usage: _save_job <id> <pid> <pgid> <command> <worktree> <project> <log_file>
 _save_job() {
     local id="$1" pid="$2" pgid="$3" cmd="$4" wt="$5" project="$6" log="$7"
     _init_jobs_dir
-    cat > "$PWT_JOBS_DIR/${id}.json" << EOF
-{
-  "id": "$id",
-  "pid": $pid,
-  "pgid": $pgid,
-  "command": "$cmd",
-  "worktree": "$wt",
-  "project": "$project",
-  "log": "$log",
-  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "status": "running"
-}
-EOF
+    local job_file="$PWT_JOBS_DIR/${id}.job"
+    local tmp="${job_file}.tmp.$$"
+    {
+        printf 'id=%s\n' "$(_state_escape "$id")"
+        printf 'pid=%s\n' "$pid"
+        printf 'pgid=%s\n' "$pgid"
+        printf 'command=%s\n' "$(_state_escape "$cmd")"
+        printf 'worktree=%s\n' "$(_state_escape "$wt")"
+        printf 'project=%s\n' "$(_state_escape "$project")"
+        printf 'log=%s\n' "$(_state_escape "$log")"
+        printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'status=running\n'
+    } > "$tmp" && mv "$tmp" "$job_file"
+    events_append "$project" "$wt" "job_start" "id=$id command=$cmd"
 }
 
 # Check if a job's process is still alive
 # Usage: _is_job_alive <job_id>
 _is_job_alive() {
     local id="$1"
-    local json="$PWT_JOBS_DIR/${id}.json"
-    [ -f "$json" ] || return 1
+    local job_file="$PWT_JOBS_DIR/${id}.job"
+    [ -f "$job_file" ] || return 1
     local pid
-    pid=$(grep -o '"pid": *[0-9]*' "$json" | grep -o '[0-9]*')
+    pid=$(state_get "$job_file" "pid")
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-# Mark a job as stopped in its JSON
+# Mark a job as stopped in its record (emits job_end on the transition)
 # Usage: _mark_job_stopped <job_id>
 _mark_job_stopped() {
     local id="$1"
-    local json="$PWT_JOBS_DIR/${id}.json"
-    [ -f "$json" ] || return 0
-    # Use a temp file for portable in-place edit
-    local tmp="${json}.tmp"
-    sed 's/"status": "running"/"status": "stopped"/' "$json" > "$tmp" && mv "$tmp" "$json"
+    local job_file="$PWT_JOBS_DIR/${id}.job"
+    [ -f "$job_file" ] || return 0
+    local status
+    status=$(state_get "$job_file" "status")
+    [ "$status" = "stopped" ] && return 0
+    state_set "$job_file" "status" "stopped"
+    local j_project j_wt j_cmd
+    j_project=$(state_get "$job_file" "project")
+    j_wt=$(state_get "$job_file" "worktree")
+    j_cmd=$(state_get "$job_file" "command")
+    events_append "$j_project" "$j_wt" "job_end" "id=$id command=$j_cmd"
+    # A stopped server job is the server going away
+    [ "$j_cmd" = "server" ] && events_append "$j_project" "$j_wt" "server_stop" "id=$id"
+    return 0
+}
+
+# Resolve a job id from an exact id or a worktree name.
+# For a worktree name: prefer the running server job, then any running job,
+# then the most recent job (mirrors the pick order used by cmd_logs).
+# Usage: _resolve_job_id <id-or-worktree>
+_resolve_job_id() {
+    local target="$1"
+    if [ -f "$PWT_JOBS_DIR/${target}.job" ]; then
+        echo "$target"
+        return 0
+    fi
+
+    local pick="" pick_running="" pick_server=""
+    local job_file j_wt j_cmd j_id j_status
+    for job_file in $(ls -t "$PWT_JOBS_DIR"/*.job 2>/dev/null); do
+        [ -f "$job_file" ] || continue
+        j_wt=$(state_get "$job_file" "worktree")
+        [ "$j_wt" = "$target" ] || continue
+        j_id=$(state_get "$job_file" "id")
+        j_cmd=$(state_get "$job_file" "command")
+        j_status=$(state_get "$job_file" "status")
+        [ -z "$pick" ] && pick="$j_id"
+        if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
+            [ -z "$pick_running" ] && pick_running="$j_id"
+            if [ "$j_cmd" = "server" ] && [ -z "$pick_server" ]; then
+                pick_server="$j_id"
+            fi
+        fi
+    done
+
+    local resolved="${pick_server:-${pick_running:-$pick}}"
+    [ -n "$resolved" ] || return 1
+    echo "$resolved"
+}
+
+# Block until a job's process exits (or --timeout elapses)
+# Usage: _wait_job <id-or-worktree> [timeout_seconds]
+# Exit: 0 job finished, EXIT_NOT_FOUND unknown job, EXIT_TIMEOUT still running
+_wait_job() {
+    local target="${1:-}"
+    local timeout="${2:-}"
+    _init_jobs_dir
+
+    if [ -z "$target" ]; then
+        pwt_error "Usage: pwt jobs wait <job-id|worktree> [--timeout <seconds>]"
+        return $EXIT_USAGE
+    fi
+    [ -z "$timeout" ] && timeout="${PWT_WAIT_TIMEOUT_DEFAULT:-600}"
+    if ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
+        pwt_error "Invalid --timeout value: $timeout (expected seconds as integer)"
+        return $EXIT_USAGE
+    fi
+
+    local id
+    if ! id=$(_resolve_job_id "$target"); then
+        pwt_error "Job not found: $target"
+        echo "List jobs with: pwt jobs" >&2
+        return $EXIT_NOT_FOUND
+    fi
+
+    # Poll every 0.5s; two ticks per second of budget
+    local ticks=$((timeout * 2))
+    while _is_job_alive "$id"; do
+        if [ "$ticks" -le 0 ]; then
+            pwt_error "Timeout: job still running after ${timeout}s: $id"
+            echo "Check it with: pwt jobs logs $id" >&2
+            return $EXIT_TIMEOUT
+        fi
+        sleep 0.5
+        ticks=$((ticks - 1))
+    done
+
+    _mark_job_stopped "$id"
+    local final_status
+    final_status=$(state_get "$PWT_JOBS_DIR/${id}.job" "status")
+    echo "$id ${final_status:-stopped}"
 }
 
 # Check for duplicate running job (same worktree + command)
@@ -68,14 +162,14 @@ check_duplicate_job() {
     local wt="$1"
     local cmd="$2"
     _init_jobs_dir
-    local json_file
-    for json_file in "$PWT_JOBS_DIR"/*.json; do
-        [ -f "$json_file" ] || continue
+    local job_file
+    for job_file in "$PWT_JOBS_DIR"/*.job; do
+        [ -f "$job_file" ] || continue
         local j_wt j_cmd j_id j_status
-        j_wt=$(grep -o '"worktree": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
-        j_cmd=$(grep -o '"command": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
-        j_status=$(grep -o '"status": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
-        j_id=$(grep -o '"id": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
+        j_wt=$(state_get "$job_file" "worktree")
+        j_cmd=$(state_get "$job_file" "command")
+        j_status=$(state_get "$job_file" "status")
+        j_id=$(state_get "$job_file" "id")
 
         if [ "$j_wt" = "$wt" ] && [ "$j_cmd" = "$cmd" ] && [ "$j_status" = "running" ]; then
             # Verify process is actually running
@@ -101,15 +195,15 @@ _stop_job() {
         return $EXIT_USAGE
     fi
 
-    local json="$PWT_JOBS_DIR/${id}.json"
-    if [ ! -f "$json" ]; then
+    local job_file="$PWT_JOBS_DIR/${id}.job"
+    if [ ! -f "$job_file" ]; then
         pwt_error "Job not found: $id"
         return $EXIT_NOT_FOUND
     fi
 
     local pid pgid
-    pid=$(grep -o '"pid": *[0-9]*' "$json" | grep -o '[0-9]*')
-    pgid=$(grep -o '"pgid": *[0-9]*' "$json" | grep -o '[0-9]*')
+    pid=$(state_get "$job_file" "pid")
+    pgid=$(state_get "$job_file" "pgid")
 
     if ! kill -0 "$pid" 2>/dev/null; then
         echo "Job already stopped: $id"
@@ -150,12 +244,12 @@ _stop_job() {
 _stop_all_jobs() {
     _init_jobs_dir
     local count=0
-    local json_file
-    for json_file in "$PWT_JOBS_DIR"/*.json; do
-        [ -f "$json_file" ] || continue
+    local job_file
+    for job_file in "$PWT_JOBS_DIR"/*.job; do
+        [ -f "$job_file" ] || continue
         local j_id j_status
-        j_id=$(grep -o '"id": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
-        j_status=$(grep -o '"status": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
+        j_id=$(state_get "$job_file" "id")
+        j_status=$(state_get "$job_file" "status")
         if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
             _stop_job "$j_id"
             count=$((count + 1))
@@ -172,18 +266,18 @@ _stop_all_jobs() {
 _clean_jobs() {
     _init_jobs_dir
     local count=0
-    local json_file
-    for json_file in "$PWT_JOBS_DIR"/*.json; do
-        [ -f "$json_file" ] || continue
+    local job_file
+    for job_file in "$PWT_JOBS_DIR"/*.job; do
+        [ -f "$job_file" ] || continue
         local j_id j_status
-        j_id=$(grep -o '"id": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
-        j_status=$(grep -o '"status": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
+        j_id=$(state_get "$job_file" "id")
+        j_status=$(state_get "$job_file" "status")
 
         if [ "$j_status" = "running" ] && ! _is_job_alive "$j_id"; then
             _mark_job_stopped "$j_id"
             count=$((count + 1))
         elif [ "$j_status" = "stopped" ]; then
-            rm -f "$json_file" "$PWT_JOBS_DIR/${j_id}.log"
+            rm -f "$job_file" "$PWT_JOBS_DIR/${j_id}.log"
             count=$((count + 1))
         fi
     done
@@ -201,14 +295,14 @@ _tail_job_log() {
         return $EXIT_USAGE
     fi
 
-    local json="$PWT_JOBS_DIR/${id}.json"
-    if [ ! -f "$json" ]; then
+    local job_file="$PWT_JOBS_DIR/${id}.job"
+    if [ ! -f "$job_file" ]; then
         pwt_error "Job not found: $id"
         return $EXIT_NOT_FOUND
     fi
 
     local log
-    log=$(grep -o '"log": *"[^"]*"' "$json" | sed 's/"log": *"//;s/"$//')
+    log=$(state_get "$job_file" "log")
 
     if [ ! -f "$log" ]; then
         pwt_error "Log file not found: $log"
@@ -268,14 +362,14 @@ cmd_logs() {
 
     # Pick a job: running server > most recent running > most recent overall
     local pick="" pick_running="" pick_server="" running_list=""
-    local json_file j_wt j_cmd j_id j_status
-    for json_file in $(ls -t "$PWT_JOBS_DIR"/*.json 2>/dev/null); do
-        [ -f "$json_file" ] || continue
-        j_wt=$(jq -r '.worktree // empty' "$json_file" 2>/dev/null)
+    local job_file j_wt j_cmd j_id j_status
+    for job_file in $(ls -t "$PWT_JOBS_DIR"/*.job 2>/dev/null); do
+        [ -f "$job_file" ] || continue
+        j_wt=$(state_get "$job_file" "worktree")
         [ "$j_wt" = "$target" ] || continue
-        j_cmd=$(jq -r '.command // empty' "$json_file" 2>/dev/null)
-        j_id=$(jq -r '.id // empty' "$json_file" 2>/dev/null)
-        j_status=$(jq -r '.status // empty' "$json_file" 2>/dev/null)
+        j_cmd=$(state_get "$job_file" "command")
+        j_id=$(state_get "$job_file" "id")
+        j_status=$(state_get "$job_file" "status")
         [ -z "$pick" ] && pick="$j_id"
         if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
             [ -z "$pick_running" ] && pick_running="$j_id"
@@ -301,13 +395,56 @@ cmd_logs() {
 }
 
 # List all jobs with formatted output
+# Machine-readable job list (JSON array). The supported way for scripts,
+# Pwtfiles and external consumers to enumerate jobs - reading the job files
+# directly couples callers to the on-disk format.
+_jobs_list_porcelain() {
+    _init_jobs_dir
+    local job_file first=true
+
+    printf '['
+    for job_file in "$PWT_JOBS_DIR"/*.job; do
+        [ -f "$job_file" ] || continue
+
+        local j_id j_cmd j_wt j_proj j_pid j_log j_started j_status
+        j_id=$(state_get "$job_file" "id")
+        j_cmd=$(state_get "$job_file" "command")
+        j_wt=$(state_get "$job_file" "worktree")
+        j_proj=$(state_get "$job_file" "project")
+        j_pid=$(state_get "$job_file" "pid")
+        j_log=$(state_get "$job_file" "log")
+        j_started=$(state_get "$job_file" "started_at")
+        j_status=$(state_get "$job_file" "status")
+
+        # Advisory status: reconcile with the actual process before reporting
+        if [ "$j_status" = "running" ] && ! _is_job_alive "$j_id"; then
+            j_status="dead"
+            _mark_job_stopped "$j_id"
+        fi
+
+        [ "$first" = true ] || printf ','
+        first=false
+        printf '\n  {"id":"%s","command":"%s","worktree":"%s","project":"%s","pid":%s,"log":"%s","started_at":"%s","status":"%s"}' \
+            "$(json_escape "$j_id")" \
+            "$(json_escape "$j_cmd")" \
+            "$(json_escape "$j_wt")" \
+            "$(json_escape "$j_proj")" \
+            "$(json_num_or_null "$j_pid")" \
+            "$(json_escape "$j_log")" \
+            "$(json_escape "$j_started")" \
+            "$(json_escape "$j_status")"
+    done
+    [ "$first" = true ] || printf '\n'
+    printf ']\n'
+}
+
 _jobs_list_formatted() {
     _init_jobs_dir
     local found=false
-    local json_file
+    local job_file
 
-    for json_file in "$PWT_JOBS_DIR"/*.json; do
-        [ -f "$json_file" ] || continue
+    for job_file in "$PWT_JOBS_DIR"/*.job; do
+        [ -f "$job_file" ] || continue
 
         if [ "$found" = false ]; then
             printf "%-35s %-10s %-10s %-8s %s\n" "JOB ID" "COMMAND" "WORKTREE" "PID" "STATUS"
@@ -316,11 +453,11 @@ _jobs_list_formatted() {
         fi
 
         local j_id j_cmd j_wt j_pid j_status
-        j_id=$(grep -o '"id": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
-        j_cmd=$(grep -o '"command": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
-        j_wt=$(grep -o '"worktree": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
-        j_pid=$(grep -o '"pid": *[0-9]*' "$json_file" | grep -o '[0-9]*')
-        j_status=$(grep -o '"status": *"[^"]*"' "$json_file" | sed 's/.*"\([^"]*\)"$/\1/')
+        j_id=$(state_get "$job_file" "id")
+        j_cmd=$(state_get "$job_file" "command")
+        j_wt=$(state_get "$job_file" "worktree")
+        j_pid=$(state_get "$job_file" "pid")
+        j_status=$(state_get "$job_file" "status")
 
         # Update status if process died
         if [ "$j_status" = "running" ] && ! _is_job_alive "$j_id"; then

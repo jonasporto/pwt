@@ -13,12 +13,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 
     # Add a commit
@@ -35,6 +33,11 @@ EOF
 echo "MOCK_OPEN: $1"
 EOF
     chmod +x "$TEST_TEMP_DIR/bin/open"
+
+    # open_path only honours open(1) on Darwin; on Linux it looks for
+    # xdg-open/wslview, so mock those too or the tests exercise nothing.
+    cp "$TEST_TEMP_DIR/bin/open" "$TEST_TEMP_DIR/bin/xdg-open"
+    chmod +x "$TEST_TEMP_DIR/bin/xdg-open"
 }
 
 teardown() {

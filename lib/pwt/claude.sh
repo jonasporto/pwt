@@ -21,7 +21,7 @@ cmd_claude_setup() {
     local action="${1:-install}"
     local claude_dir="$HOME/.claude"
     local script_file="$claude_dir/statusline-command.sh"
-    local config_file="$PWT_DIR/claude-statusline.json"
+    local config_file="$PWT_DIR/claude-statusline"
     local default_format='[{worktree}] {project} ({branch}) [{server}] {arrow}'
 
     case "$action" in
@@ -124,17 +124,14 @@ cmd_claude_setup() {
                     return 1
                 fi
 
-                local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config.json"
-                mkdir -p "$(dirname "$proj_config")"
-                [ ! -f "$proj_config" ] && echo '{}' > "$proj_config"
+                local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config"
 
                 if [ -n "$new_format" ]; then
-                    local tmp=$(mktemp)
-                    jq --arg fmt "$new_format" '.claude_format = $fmt' "$proj_config" > "$tmp" && mv "$tmp" "$proj_config"
+                    state_set "$proj_config" "claude_format" "$new_format"
                     echo -e "${GREEN}✓ Project format set for $CURRENT_PROJECT${NC}"
                     echo "  $new_format"
                 else
-                    local proj_format=$(jq -r '.claude_format // ""' "$proj_config" 2>/dev/null)
+                    local proj_format=$(state_get "$proj_config" "claude_format")
                     if [ -n "$proj_format" ]; then
                         echo "Project format ($CURRENT_PROJECT):"
                         echo "  $proj_format"
@@ -147,9 +144,7 @@ cmd_claude_setup() {
                 echo "Run 'pwt claude-setup install' to apply."
             elif [ -n "$new_format" ]; then
                 # Set global format
-                [ ! -f "$config_file" ] && echo '{}' > "$config_file"
-                local tmp=$(mktemp)
-                jq --arg fmt "$new_format" '.format = $fmt' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                state_set "$config_file" "format" "$new_format"
                 echo -e "${GREEN}✓ Global format set${NC}"
                 echo "  $new_format"
                 echo ""
@@ -159,16 +154,16 @@ cmd_claude_setup() {
                 echo "Global format:"
                 local current_format="$default_format"
                 if [ -f "$config_file" ]; then
-                    current_format=$(jq -r '.format // ""' "$config_file")
+                    current_format=$(state_get "$config_file" "format")
                     [ -z "$current_format" ] && current_format="$default_format"
                 fi
                 echo "  $current_format"
 
                 # Show project format if inside a project
                 if [ -n "$CURRENT_PROJECT" ]; then
-                    local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config.json"
+                    local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config"
                     if [ -f "$proj_config" ]; then
-                        local proj_format=$(jq -r '.claude_format // ""' "$proj_config" 2>/dev/null)
+                        local proj_format=$(state_get "$proj_config" "claude_format")
                         if [ -n "$proj_format" ]; then
                             echo ""
                             echo "Project format ($CURRENT_PROJECT):"
@@ -188,7 +183,7 @@ cmd_claude_setup() {
             # Generate preview with current directory
             local current_format="$default_format"
             if [ -f "$config_file" ]; then
-                current_format=$(jq -r '.format // ""' "$config_file")
+                current_format=$(state_get "$config_file" "format")
                 [ -z "$current_format" ] && current_format="$default_format"
             fi
 
@@ -209,9 +204,14 @@ cmd_claude_setup() {
             fi
 
             local port="" server=""
-            if [ -n "$worktree_name" ] && [ -f "$PWT_META_FILE" ]; then
-                port=$(jq -r --arg wt "$worktree_name" '.[] | .[$wt]? | select(.) | .port // empty' "$PWT_META_FILE" 2>/dev/null | head -1)
-                if [ -n "$port" ] && lsof -ti :$port -sTCP:LISTEN >/dev/null 2>&1; then
+            if [ -n "$worktree_name" ]; then
+                local _pmf
+                for _pmf in "$PWT_DIR/state"/*/"${worktree_name}.meta"; do
+                    [ -f "$_pmf" ] || continue
+                    port=$(state_get "$_pmf" "port")
+                    [ -n "$port" ] && break
+                done
+                if [ -n "$port" ] && ! is_port_free "$port"; then
                     server="localhost:$port"
                 fi
             fi
@@ -272,12 +272,11 @@ cmd_claude_setup() {
                 echo "Add to your shell to persist: ~/.zshrc or ~/.bashrc"
             else
                 # Global toggle
-                [ ! -f "$config_file" ] && echo '{}' > "$config_file"
-                local current=$(jq -r 'if has("enabled") then .enabled else true end' "$config_file")
+                local current=$(state_get "$config_file" "enabled")
+                [ -z "$current" ] && current="true"
                 local new_state="true"
                 [ "$current" = "true" ] && new_state="false"
-                local tmp=$(mktemp)
-                jq --argjson enabled "$new_state" '.enabled = $enabled' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                state_set "$config_file" "enabled" "$new_state"
                 if [ "$new_state" = "true" ]; then
                     echo -e "${GREEN}✓ Status line enabled (all sessions)${NC}"
                 else
@@ -294,9 +293,7 @@ cmd_claude_setup() {
                 echo -e "${GREEN}To enable for this session:${NC}"
                 echo "  unset PWT_STATUSLINE_OFF"
             else
-                [ ! -f "$config_file" ] && echo '{}' > "$config_file"
-                local tmp=$(mktemp)
-                jq '.enabled = true' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                state_set "$config_file" "enabled" "true"
                 echo -e "${GREEN}✓ Status line enabled (all sessions)${NC}"
                 echo "Run 'pwt claude-setup install' to apply."
             fi
@@ -309,9 +306,7 @@ cmd_claude_setup() {
                 echo -e "${YELLOW}To disable for this session:${NC}"
                 echo "  export PWT_STATUSLINE_OFF=1"
             else
-                [ ! -f "$config_file" ] && echo '{}' > "$config_file"
-                local tmp=$(mktemp)
-                jq '.enabled = false' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                state_set "$config_file" "enabled" "false"
                 echo -e "${YELLOW}✓ Status line disabled (all sessions)${NC}"
                 echo "Run 'pwt claude-setup install' to apply."
             fi
@@ -320,24 +315,22 @@ cmd_claude_setup() {
 
         pwt-only)
             local state="${2:-}"
-            [ ! -f "$config_file" ] && echo '{}' > "$config_file"
             if [ -z "$state" ]; then
                 # Show current state
-                local current=$(jq -r '.pwt_only // false' "$config_file")
+                local current=$(state_get "$config_file" "pwt_only")
+                [ -z "$current" ] && current="false"
                 if [ "$current" = "true" ]; then
                     echo "pwt-only: ${GREEN}on${NC} (status line only shows in pwt projects/worktrees)"
                 else
                     echo "pwt-only: ${YELLOW}off${NC} (status line shows everywhere)"
                 fi
             elif [ "$state" = "on" ]; then
-                local tmp=$(mktemp)
-                jq '.pwt_only = true' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                state_set "$config_file" "pwt_only" "true"
                 echo -e "${GREEN}✓ pwt-only enabled${NC}"
                 echo "Status line will only show in pwt projects/worktrees."
                 echo "Run 'pwt claude-setup install' to apply."
             elif [ "$state" = "off" ]; then
-                local tmp=$(mktemp)
-                jq '.pwt_only = false' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+                state_set "$config_file" "pwt_only" "false"
                 echo -e "${YELLOW}✓ pwt-only disabled${NC}"
                 echo "Status line will show in all directories."
                 echo "Run 'pwt claude-setup install' to apply."
@@ -364,7 +357,7 @@ cmd_claude_setup() {
     # Read config
     local format="$default_format"
     if [ -f "$config_file" ]; then
-        local cfg_format=$(jq -r '.format // ""' "$config_file")
+        local cfg_format=$(state_get "$config_file" "format")
         [ -n "$cfg_format" ] && format="$cfg_format"
     fi
 
@@ -382,14 +375,16 @@ PWT_DIR="${PWT_DIR:-$HOME/.pwt}"
 [ "${PWT_STATUSLINE_OFF:-}" = "1" ] && exit 0
 
 # Check if status line is enabled (global toggle)
-config_file="$PWT_DIR/claude-statusline.json"
+# pwt state v2: config files are flat key=value (no jq needed)
+config_file="$PWT_DIR/claude-statusline"
 if [ -f "$config_file" ]; then
-  enabled=$(jq -r 'if has("enabled") then .enabled else true end' "$config_file" 2>/dev/null)
+  enabled=$(sed -n 's/^enabled=//p' "$config_file" 2>/dev/null | head -1)
   [ "$enabled" = "false" ] && exit 0
 fi
 
 input=$(cat)
-cwd=$(echo "$input" | jq -r '.workspace.current_dir // empty')
+# Extract workspace.current_dir from Claude Code's JSON without jq
+cwd=$(printf '%s' "$input" | tr -d '\n' | sed -n 's/.*"current_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 [ -z "$cwd" ] && cwd=$(pwd)
 
 # Detect worktree and project
@@ -407,11 +402,11 @@ fi
 
 # Fallback: check against configured projects
 if [ "$is_pwt_context" = "false" ] && [ -d "$PWT_DIR/projects" ]; then
-  for proj_config in "$PWT_DIR/projects"/*/config.json; do
+  for proj_config in "$PWT_DIR/projects"/*/config; do
     [ -f "$proj_config" ] || continue
     proj_name=$(basename "$(dirname "$proj_config")")
-    proj_path=$(jq -r '.path // empty' "$proj_config" 2>/dev/null)
-    proj_wt_dir=$(jq -r '.worktrees_dir // empty' "$proj_config" 2>/dev/null)
+    proj_path=$(sed -n 's/^path=//p' "$proj_config" 2>/dev/null | head -1)
+    proj_wt_dir=$(sed -n 's/^worktrees_dir=//p' "$proj_config" 2>/dev/null | head -1)
 
     # Check if cwd is inside worktrees_dir
     if [ -n "$proj_wt_dir" ] && [[ "$cwd" == "$proj_wt_dir"/* ]]; then
@@ -440,20 +435,20 @@ fi
 
 # Check pwt-only mode: if enabled, only show status in pwt projects/worktrees
 if [ -f "$config_file" ]; then
-  pwt_only=$(jq -r '.pwt_only // false' "$config_file" 2>/dev/null)
+  pwt_only=$(sed -n 's/^pwt_only=//p' "$config_file" 2>/dev/null | head -1)
   [ "$pwt_only" = "true" ] && [ "$is_pwt_context" = "false" ] && exit 0
 fi
 
 # Check for format: global config first, then project-specific
 FORMAT="$DEFAULT_FORMAT"
-global_config="$PWT_DIR/claude-statusline.json"
+global_config="$PWT_DIR/claude-statusline"
 if [ -f "$global_config" ]; then
-  global_format=$(jq -r '.format // ""' "$global_config" 2>/dev/null)
+  global_format=$(sed -n 's/^format=//p' "$global_config" 2>/dev/null | head -1)
   [ -n "$global_format" ] && FORMAT="$global_format"
 fi
-project_config="$PWT_DIR/projects/$project/config.json"
+project_config="$PWT_DIR/projects/$project/config"
 if [ -f "$project_config" ]; then
-  proj_format=$(jq -r '.claude_format // ""' "$project_config" 2>/dev/null)
+  proj_format=$(sed -n 's/^claude_format=//p' "$project_config" 2>/dev/null | head -1)
   [ -n "$proj_format" ] && FORMAT="$proj_format"
 fi
 
@@ -463,12 +458,33 @@ if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
   branch=$(git -C "$cwd" branch --show-current 2>/dev/null)
 fi
 
-# Server port from pwt metadata
+# Is something listening on a TCP port? lsof is absent on slim Linux boxes,
+# so fall back to ss and finally to a bash /dev/tcp probe.
+_port_listening() {
+  _pl_port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti ":$_pl_port" -sTCP:LISTEN >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -lntH "sport = :$_pl_port" 2>/dev/null | grep -q . && return 0
+    return 1
+  fi
+  (exec 3<>"/dev/tcp/127.0.0.1/$_pl_port") 2>/dev/null || return 1
+  exec 3<&- 2>/dev/null || true
+  exec 3>&- 2>/dev/null || true
+  return 0
+}
+
+# Server port from pwt metadata (state v2: state/<project>/<worktree>.meta)
 port="" server=""
-PWT_META="${PWT_DIR:-$HOME/.pwt}/meta.json"
-if [ -n "$worktree" ] && [ -f "$PWT_META" ]; then
-  port=$(jq -r --arg wt "$worktree" '.[] | .[$wt]? | select(.) | .port // empty' "$PWT_META" 2>/dev/null | head -1)
-  if [ -n "$port" ] && lsof -ti :$port -sTCP:LISTEN >/dev/null 2>&1; then
+if [ -n "$worktree" ]; then
+  for _meta in "${PWT_DIR:-$HOME/.pwt}/state"/*/"${worktree}.meta"; do
+    [ -f "$_meta" ] || continue
+    port=$(sed -n 's/^port=//p' "$_meta" 2>/dev/null | head -1)
+    [ -n "$port" ] && break
+  done
+  if [ -n "$port" ] && _port_listening "$port"; then
     server="localhost:$port"
   else
     port=""
@@ -479,7 +495,11 @@ fi
 if [ -z "$server" ] && [ -f "$cwd/tmp/pids/server.pid" ]; then
   pid=$(cat "$cwd/tmp/pids/server.pid" 2>/dev/null)
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    port=$(lsof -Pan -p "$pid" -iTCP -sTCP:LISTEN 2>/dev/null | grep -oE ':\d+' | head -1 | tr -d ':')
+    if command -v lsof >/dev/null 2>&1; then
+      port=$(lsof -Pan -p "$pid" -iTCP -sTCP:LISTEN 2>/dev/null | grep -oE ':[0-9]+' | head -1 | tr -d ':')
+    elif command -v ss >/dev/null 2>&1; then
+      port=$(ss -lntpH 2>/dev/null | grep "pid=$pid," | grep -oE ':[0-9]+ ' | head -1 | tr -d ': ')
+    fi
     [ -n "$port" ] && server="localhost:$port"
   fi
 fi
@@ -605,7 +625,8 @@ echo -en "$output"
 STATUSLINE_EOF
 
     # Insert the actual format into the script
-    sed -i '' "s|__FORMAT_PLACEHOLDER__|$format|g" "$script_file"
+    # sed_inplace picks BSD/GNU syntax; bare `sed -i ''` fails on Linux
+    sed_inplace "s|__FORMAT_PLACEHOLDER__|$format|g" "$script_file"
 
     chmod +x "$script_file"
 

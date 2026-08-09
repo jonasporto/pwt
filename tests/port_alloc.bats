@@ -12,7 +12,7 @@ teardown() {
 }
 
 @test "next_available_port skips busy fallback port" {
-    source_pwt_functions next_available_port
+    source_pwt_functions next_available_port meta_ports _meta_read_key_var _state_unescape
 
     # Override port availability to force fallback skip
     is_port_pair_free() {
@@ -21,13 +21,13 @@ teardown() {
     }
 
     CURRENT_PROJECT="test-project"
-    METADATA_FILE="$PWT_DIR/meta.json"
     WORKTREES_DIR="$TEST_TEMP_DIR/worktrees"
     BASE_PORT=5000
     mkdir -p "$WORKTREES_DIR"
 
-    cat > "$METADATA_FILE" <<EOF_META
-{"test-project":{"wt1":{"port":5001}}}
+    mkdir -p "$PWT_DIR/state/test-project"
+    cat > "$PWT_DIR/state/test-project/wt1.meta" <<EOF_META
+port=5001
 EOF_META
 
     export PWT_PORT_MAX_ATTEMPTS=1

@@ -9,12 +9,10 @@ examples/
   tapes/
     01-quickstart.tape
     02-use-symlink.tape
-    03-status-tui.tape
   gifs/
     00-overview.gif
     01-quickstart.gif
     02-use-symlink.gif
-    03-status-tui.gif
   videos/
     00-overview.mp4
 ```
@@ -22,7 +20,7 @@ examples/
 ## Requirements
 
 - vhs (https://github.com/charmbracelet/vhs)
-- git, jq
+- git
 
 ## Record
 
@@ -31,7 +29,6 @@ Run from the repo root:
 ```
 vhs examples/tapes/01-quickstart.tape
 vhs examples/tapes/02-use-symlink.tape
-vhs examples/tapes/03-status-tui.tape
 ```
 
 The tapes use a temp HOME at /tmp/pwt-demo-home and delete it at the start.

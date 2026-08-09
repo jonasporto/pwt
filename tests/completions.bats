@@ -102,7 +102,6 @@ load test_helper
     [[ "$output" == *"server"* ]]
     [[ "$output" == *"gateway"* ]]
     [[ "$output" == *"servers"* ]]
-    [[ "$output" == *"status"* ]]
 }
 
 @test "bash completions have valid syntax" {
@@ -128,7 +127,7 @@ load test_helper
     local completions_file="$PWD_DIR/completions/pwt.fish"
 
     # Check key commands are present
-    local commands=("create" "track" "adopt" "setup" "list" "remove" "server" "gateway" "servers" "status" "cd" "use")
+    local commands=("create" "track" "adopt" "setup" "list" "remove" "server" "gateway" "servers" "cd" "use")
 
     local missing=""
     for cmd in "${commands[@]}"; do
@@ -273,11 +272,9 @@ load test_helper
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-comp"
-    cat > "$PWT_DIR/projects/test-comp/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_TEMP_DIR/worktrees"
-}
+    cat > "$PWT_DIR/projects/test-comp/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_TEMP_DIR/worktrees
 EOF
     mkdir -p "$TEST_TEMP_DIR/worktrees"
 

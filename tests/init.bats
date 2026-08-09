@@ -79,7 +79,7 @@ teardown() {
     "$PWT_BIN" init "$BARE_REPO"
 
     # Should create project config
-    [ -f "$PWT_DIR/projects/bare-repo/config.json" ]
+    [ -f "$PWT_DIR/projects/bare-repo/config" ]
 }
 
 @test "pwt init <url> shows usage instructions" {
@@ -109,10 +109,10 @@ teardown() {
     cd "$TEST_TEMP_DIR"
     "$PWT_BIN" init "$BARE_REPO"
 
-    local config="$PWT_DIR/projects/bare-repo/config.json"
+    local config="$PWT_DIR/projects/bare-repo/config"
     [ -f "$config" ]
 
-    local wt_dir=$(jq -r '.worktrees_dir' "$config")
+    local wt_dir=$(sed -n 's/^worktrees_dir=//p' "$config")
     [ -n "$wt_dir" ]
 }
 
@@ -120,8 +120,8 @@ teardown() {
     cd "$TEST_TEMP_DIR"
     "$PWT_BIN" init "$BARE_REPO"
 
-    local config="$PWT_DIR/projects/bare-repo/config.json"
-    local remote=$(jq -r '.remote' "$config")
+    local config="$PWT_DIR/projects/bare-repo/config"
+    local remote=$(sed -n 's/^remote=//p' "$config")
     [ "$remote" = "$BARE_REPO" ]
 }
 
@@ -133,7 +133,7 @@ teardown() {
     cd "$TEST_REPO"
     run "$PWT_BIN" custom-name init
     [ "$status" -eq 0 ]
-    [ -f "$PWT_DIR/projects/custom-name/config.json" ]
+    [ -f "$PWT_DIR/projects/custom-name/config" ]
     [[ "$output" == *"custom-name"* ]]
 }
 
@@ -142,15 +142,15 @@ teardown() {
     run "$PWT_BIN" my-project init "$BARE_REPO"
     [ "$status" -eq 0 ]
     [ -d "$TEST_TEMP_DIR/my-project" ]
-    [ -f "$PWT_DIR/projects/my-project/config.json" ]
+    [ -f "$PWT_DIR/projects/my-project/config" ]
 }
 
 @test "pwt <name> init <url> sets remote in config" {
     cd "$TEST_TEMP_DIR"
     "$PWT_BIN" named-proj init "$BARE_REPO"
 
-    local config="$PWT_DIR/projects/named-proj/config.json"
-    local remote=$(jq -r '.remote' "$config")
+    local config="$PWT_DIR/projects/named-proj/config"
+    local remote=$(sed -n 's/^remote=//p' "$config")
     [ "$remote" = "$BARE_REPO" ]
 }
 
@@ -158,8 +158,8 @@ teardown() {
     cd "$TEST_TEMP_DIR"
     "$PWT_BIN" path-test init "$BARE_REPO"
 
-    local config="$PWT_DIR/projects/path-test/config.json"
-    local path=$(jq -r '.path' "$config")
+    local config="$PWT_DIR/projects/path-test/config"
+    local path=$(sed -n 's/^path=//p' "$config")
     [ "$path" = "$TEST_TEMP_DIR/path-test" ]
 }
 

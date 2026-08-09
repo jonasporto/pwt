@@ -1,7 +1,7 @@
 # pwt - Power Worktrees bash completion
 # Install: source this file or add to /etc/bash_completion.d/
 
-_pwt_commands="init create add track adopt setup list ls tree status cd use current info show remove rm server s gateway servers run for-each editor e ai open diff copy repair fix auto-remove cleanup restore fix-port doctor meta m project config port plugin claude-setup setup-shell shell-init steps step alias jobs logs self versions help version"
+_pwt_commands="init create add track adopt setup list ls tree cd use current info show remove rm server s gateway servers run for-each editor e ai open diff copy repair fix auto-remove cleanup restore fix-port doctor state meta m project config port plugin claude-setup setup-shell shell-init steps step alias jobs logs self versions help version"
 
 _pwt_meta_actions="list show set import"
 _pwt_project_actions="list init show set path alias"
@@ -129,13 +129,19 @@ _pwt() {
             ;;
         jobs)
             if [[ "$prev" == "jobs" ]]; then
-                COMPREPLY=($(compgen -W "list logs stop clean help" -- "$cur"))
+                COMPREPLY=($(compgen -W "list logs wait stop clean help" -- "$cur"))
+            fi
+            ;;
+        server|s)
+            # 'wait' is a subcommand; other positions complete worktree names
+            if [[ "$prev" == "server" || "$prev" == "s" ]]; then
+                COMPREPLY=($(compgen -W "wait $(_pwt_get_worktrees)" -- "$cur"))
             fi
             ;;
         servers)
             COMPREPLY=($(compgen -W "--all --json -a" -- "$cur"))
             ;;
-        list|ls|tree|status|doctor|pick|select|help|version)
+        list|ls|tree|doctor|pick|select|help|version)
             # These commands have optional flags, no required completions
             ;;
     esac

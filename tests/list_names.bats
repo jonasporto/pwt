@@ -15,12 +15,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-repo"
-    cat > "$PWT_DIR/projects/test-repo/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 }
 
@@ -95,13 +93,11 @@ teardown() {
     cd "$TEST_REPO"
 
     # Add aliases array to the project config
-    cat > "$PWT_DIR/projects/test-repo/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/",
-  "aliases": ["tr", "testrepo"]
-}
+    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
+aliases=tr,testrepo
 EOF
 
     # Create a worktree
@@ -121,13 +117,11 @@ EOF
     cd "$TEST_REPO"
 
     # Add single alias string to the project config
-    cat > "$PWT_DIR/projects/test-repo/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/",
-  "alias": "myalias"
-}
+    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
+alias=myalias
 EOF
 
     # Create a worktree
@@ -165,13 +159,11 @@ EOF
     cd "$TEST_REPO"
 
     # Add alias to config
-    cat > "$PWT_DIR/projects/test-repo/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/",
-  "alias": "shortname"
-}
+    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
+alias=shortname
 EOF
 
     # Create a worktree
@@ -285,12 +277,10 @@ EOF
     local other_worktrees="$TEST_TEMP_DIR/other-worktrees"
     mkdir -p "$other_worktrees"
 
-    cat > "$PWT_DIR/projects/other-project/config.json" << EOF
-{
-  "path": "$other_repo",
-  "worktrees_dir": "$other_worktrees",
-  "branch_prefix": "feature/"
-}
+    cat > "$PWT_DIR/projects/other-project/config" << EOF
+path=$other_repo
+worktrees_dir=$other_worktrees
+branch_prefix=feature/
 EOF
 
     # Create a worktree in the other project
@@ -324,12 +314,10 @@ EOF
     local second_worktrees="$TEST_TEMP_DIR/second-worktrees"
     mkdir -p "$second_worktrees"
 
-    cat > "$PWT_DIR/projects/second-proj/config.json" << EOF
-{
-  "path": "$second_repo",
-  "worktrees_dir": "$second_worktrees",
-  "branch_prefix": "dev/"
-}
+    cat > "$PWT_DIR/projects/second-proj/config" << EOF
+path=$second_repo
+worktrees_dir=$second_worktrees
+branch_prefix=dev/
 EOF
 
     # Create a worktree

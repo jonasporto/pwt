@@ -13,12 +13,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 
     # Add a commit
@@ -31,10 +29,10 @@ EOF
 teardown() {
     # Kill any background processes we spawned
     if [ -d "$PWT_DIR/jobs" ]; then
-        for json in "$PWT_DIR/jobs"/*.json; do
-            [ -f "$json" ] || continue
+        for job in "$PWT_DIR/jobs"/*.job; do
+            [ -f "$job" ] || continue
             local pid
-            pid=$(grep -o '"pid": *[0-9]*' "$json" | grep -o '[0-9]*' || true)
+            pid=$(sed -n 's/^pid=//p' "$job" | head -1 || true)
             [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
         done
     fi
@@ -75,7 +73,7 @@ EOF
 
     # Clean up
     local job_id
-    job_id=$(ls "$PWT_DIR/jobs"/*.json 2>/dev/null | head -1 | xargs basename 2>/dev/null | sed 's/.json$//')
+    job_id=$(ls "$PWT_DIR/jobs"/*.job 2>/dev/null | head -1 | xargs basename 2>/dev/null | sed 's/.job$//')
     [ -n "$job_id" ] && "$PWT_BIN" jobs stop "$job_id" 2>/dev/null || true
 }
 
@@ -139,18 +137,16 @@ EOF
 @test "pwt jobs clean removes stale entries" {
     # Create a fake stale job entry
     mkdir -p "$PWT_DIR/jobs"
-    cat > "$PWT_DIR/jobs/stale-job-123.json" << EOF
-{
-  "id": "stale-job-123",
-  "pid": 999999,
-  "pgid": 999999,
-  "command": "server",
-  "worktree": "old-wt",
-  "project": "test",
-  "log": "$PWT_DIR/jobs/stale-job-123.log",
-  "started_at": "2024-01-01T00:00:00Z",
-  "status": "running"
-}
+    cat > "$PWT_DIR/jobs/stale-job-123.job" << EOF
+id=stale-job-123
+pid=999999
+pgid=999999
+command=server
+worktree=old-wt
+project=test
+log=$PWT_DIR/jobs/stale-job-123.log
+started_at=2024-01-01T00:00:00Z
+status=running
 EOF
     touch "$PWT_DIR/jobs/stale-job-123.log"
 
@@ -254,4 +250,25 @@ EOF
 
     # Clean up
     "$PWT_BIN" jobs stop "$first_job_id" 2>/dev/null || true
+}
+
+# Regression: the pid was interpolated raw, so a corrupt record emitted
+# "pid":abc - invalid JSON on the path blessed as the consumer API.
+@test "jobs list --porcelain emits null for a non-numeric pid" {
+    mkdir -p "$PWT_DIR/jobs"
+    cat > "$PWT_DIR/jobs/corrupt.job" << 'JOB'
+id=corrupt
+pid=abc
+command=server
+worktree=WT-1
+project=test-project
+log=/tmp/corrupt.log
+started_at=2026-01-01T00:00:00Z
+status=stopped
+JOB
+
+    run "$PWT_BIN" jobs list --porcelain
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"pid":null'* ]]
+    [[ "$output" != *'"pid":abc'* ]]
 }

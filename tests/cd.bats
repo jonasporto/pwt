@@ -14,13 +14,11 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-repo"
-    cat > "$PWT_DIR/projects/test-repo/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/",
-  "alias": "tr"
-}
+    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
+alias=tr
 EOF
 
     # Create a couple of worktrees for testing
@@ -238,12 +236,10 @@ teardown() {
     git commit -q -m "Initial commit"
 
     mkdir -p "$PWT_DIR/projects/other-repo"
-    cat > "$PWT_DIR/projects/other-repo/config.json" << EOF
-{
-  "path": "$other_repo",
-  "worktrees_dir": "$TEST_TEMP_DIR/other-worktrees",
-  "branch_prefix": "feat/"
-}
+    cat > "$PWT_DIR/projects/other-repo/config" << EOF
+path=$other_repo
+worktrees_dir=$TEST_TEMP_DIR/other-worktrees
+branch_prefix=feat/
 EOF
 
     # From inside other-repo, cd to test-repo's worktree

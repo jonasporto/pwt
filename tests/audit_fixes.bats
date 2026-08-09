@@ -16,12 +16,10 @@ setup() {
     # test files running in parallel (same pattern as gateway.bats)
     export TEST_BASE_PORT=$((43000 + RANDOM % 1000))
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "base_port": "$TEST_BASE_PORT"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+base_port=$TEST_BASE_PORT
 EOF
     cd "$TEST_REPO"
     git branch -m main 2>/dev/null || true
@@ -99,14 +97,13 @@ teardown() {
 }
 
 # ============================================
-# A6: status requires a TTY
+# A6: status was retired (the bash TUI moved to the pwt-ui project)
 # ============================================
 
-@test "status without a TTY fails cleanly with porcelain hint" {
+@test "status exits cleanly with a pointer to the replacements" {
     run "$PWT_BIN" status
     [ "$status" -eq 1 ]
-    [[ "$output" == *"requires a terminal"* ]]
-    [[ "$output" == *"list --porcelain"* ]]
+    [[ "$output" == *"pwt status was removed"* ]]
     # No alt-screen escape leak
     [[ "$output" != *$'\033[?1049h'* ]]
 }
@@ -146,10 +143,8 @@ teardown() {
 @test "project index ignores empty worktrees_dir when detecting project" {
     mkdir -p "$TEST_TEMP_DIR/partial-main"
     mkdir -p "$PWT_DIR/projects/partial-project"
-    cat > "$PWT_DIR/projects/partial-project/config.json" << EOF
-{
-  "path": "$TEST_TEMP_DIR/partial-main"
-}
+    cat > "$PWT_DIR/projects/partial-project/config" << EOF
+path=$TEST_TEMP_DIR/partial-main
 EOF
 
     cd "$HOME"
@@ -299,6 +294,11 @@ PWTEOF
 }
 
 @test "gateway use mentions default flags when auto-starting" {
+    # Needs node (gateway daemon) and python3 (the fixture server below);
+    # without the guard this hard-fails on minimal boxes instead of skipping
+    command -v node >/dev/null 2>&1 || skip "node is required for gateway tests"
+    command -v python3 >/dev/null 2>&1 || skip "python3 is required for this fixture server"
+
     cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
 server() {
     exec python3 -m http.server "$PWT_PORT"
@@ -403,9 +403,9 @@ PWTEOF
     [[ "$output" == *"IMPL-PREV-1"* ]]
 }
 
-@test "corrupted sibling config.json does not break project resolution" {
+@test "unreadable sibling config does not break project resolution" {
     mkdir -p "$PWT_DIR/projects/broken-project"
-    echo '{NOT VALID JSON' > "$PWT_DIR/projects/broken-project/config.json"
+    echo 'garbage without equals' > "$PWT_DIR/projects/broken-project/config"
     rm -f "$PWT_DIR/cache/project-index"
 
     cd "$HOME"

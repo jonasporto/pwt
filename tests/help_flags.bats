@@ -11,12 +11,10 @@ setup() {
     mkdir -p "$TEST_WORKTREES"
 
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 }
 

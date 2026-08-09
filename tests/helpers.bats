@@ -80,11 +80,14 @@ teardown() {
 }
 
 @test "require_cmd fails for missing command" {
-    source_pwt_function require_cmd
+    # pwt_error too: without it the assertion below matches bash's own
+    # "pwt_error: command not found" (which is localized) instead of pwt's
+    # message, so the test passes for the wrong reason on English systems.
+    source_pwt_functions pwt_error require_cmd
 
     run require_cmd nonexistent_command_xyz123
     [ "$status" -ne 0 ]
-    [[ "$output" == *"not found"* ]]
+    [[ "$output" == *"Required command not found: nonexistent_command_xyz123"* ]]
 }
 
 @test "require_cmd returns 1 for missing optional command" {

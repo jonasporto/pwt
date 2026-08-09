@@ -14,14 +14,12 @@ setup() {
     mkdir -p "$TEST_WORKTREES"
 
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/",
-  "base_port": "$TEST_BASE_PORT",
-  "alias": "tp"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
+base_port=$TEST_BASE_PORT
+alias=tp
 EOF
 
     cd "$TEST_REPO"
@@ -228,13 +226,11 @@ http.get({host: "127.0.0.1", port, path: "/"}, (res) => {
     git -C "$other_repo" commit -q -m "Initial commit"
 
     mkdir -p "$PWT_DIR/projects/other-project"
-    cat > "$PWT_DIR/projects/other-project/config.json" << EOF
-{
-  "path": "$other_repo",
-  "worktrees_dir": "$other_worktrees",
-  "branch_prefix": "other/",
-  "base_port": "$((TEST_BASE_PORT + 20))"
-}
+    cat > "$PWT_DIR/projects/other-project/config" << EOF
+path=$other_repo
+worktrees_dir=$other_worktrees
+branch_prefix=other/
+base_port=$((TEST_BASE_PORT + 20))
 EOF
 
     run "$PWT_BIN" test-project gateway up --port "$TEST_GATEWAY_PORT"

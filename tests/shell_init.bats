@@ -13,12 +13,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 
     # Add a commit
@@ -48,9 +46,10 @@ teardown() {
 
 @test "pwt shell-init can be sourced without error" {
     # Source the shell-init and verify it doesn't error
-    run bash -c "eval \"\$('$PWT_BIN' shell-init)\" && type pwt | head -1"
+    # `type -t` prints the bare word "function"; `type` alone is localized
+    run bash -c "eval \"\$('$PWT_BIN' shell-init)\" && type -t pwt"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"function"* ]] || [[ "$output" == *"pwt is"* ]]
+    [[ "$output" == "function" ]]
 }
 
 # ============================================

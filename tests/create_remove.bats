@@ -17,13 +17,11 @@ setup() {
     # other test files running in parallel (same pattern as gateway.bats)
     export TEST_BASE_PORT=$((44000 + RANDOM % 1000))
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/",
-  "base_port": "$TEST_BASE_PORT"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
+base_port=$TEST_BASE_PORT
 EOF
 
     # Add a second commit so we have something to branch from
@@ -137,11 +135,11 @@ create_remote_branch() {
     cd "$TEST_REPO"
     "$PWT_BIN" create TEST-PORT HEAD
 
-    # Check meta.json has port for this worktree
-    local meta_file="$PWT_DIR/meta.json"
+    # Check per-worktree meta file has port
+    local meta_file="$PWT_DIR/state/test-project/TEST-PORT.meta"
     [ -f "$meta_file" ]
 
-    local port=$(jq -r '.["test-project"]["TEST-PORT"].port' "$meta_file")
+    local port=$(sed -n 's/^port=//p' "$meta_file")
     [[ "$port" =~ ^[0-9]+$ ]]
 }
 
@@ -171,7 +169,7 @@ create_remote_branch() {
     local upstream=$(git -C "$TEST_WORKTREES/PROJ-19292" rev-parse --abbrev-ref --symbolic-full-name "@{u}")
     [ "$upstream" = "origin/team/PROJ-19292" ]
 
-    local meta_branch=$(jq -r '.["test-project"]["PROJ-19292"].branch' "$PWT_DIR/meta.json")
+    local meta_branch=$(sed -n 's/^branch=//p' "$PWT_DIR/state/test-project/PROJ-19292.meta")
     [ "$meta_branch" = "team/PROJ-19292" ]
 }
 
@@ -251,7 +249,7 @@ EOF
     [ -d "$TEST_WORKTREES/PROJ-19296/log" ]
     [ -d "$TEST_WORKTREES/PROJ-19296/tmp" ]
 
-    local port=$(jq -r '.["test-project"]["PROJ-19296"].port' "$PWT_DIR/meta.json")
+    local port=$(sed -n 's/^port=//p' "$PWT_DIR/state/test-project/PROJ-19296.meta")
     [[ "$port" =~ ^[0-9]+$ ]]
 }
 
@@ -265,7 +263,7 @@ EOF
     run "$PWT_BIN" adopt "$external_dir"
     [ "$status" -eq 0 ]
 
-    local meta_path=$(jq -r '.["test-project"]["PROJ-19297"].path' "$PWT_DIR/meta.json")
+    local meta_path=$(sed -n 's/^path=//p' "$PWT_DIR/state/test-project/PROJ-19297.meta")
     [ "$meta_path" = "$expected_dir" ]
 
     run "$PWT_BIN" info PROJ-19297
@@ -307,9 +305,8 @@ EOF
     "$PWT_BIN" create WT-001 HEAD
     "$PWT_BIN" create WT-002 HEAD
 
-    local meta_file="$PWT_DIR/meta.json"
-    local port1=$(jq -r '.["test-project"]["WT-001"].port' "$meta_file")
-    local port2=$(jq -r '.["test-project"]["WT-002"].port' "$meta_file")
+    local port1=$(sed -n 's/^port=//p' "$PWT_DIR/state/test-project/WT-001.meta")
+    local port2=$(sed -n 's/^port=//p' "$PWT_DIR/state/test-project/WT-002.meta")
 
     [ "$port1" != "$port2" ]
 }
@@ -359,15 +356,14 @@ EOF
     cd "$TEST_REPO"
     "$PWT_BIN" create TEST-META HEAD
 
-    local meta_file="$PWT_DIR/meta.json"
+    local meta_file="$PWT_DIR/state/test-project/TEST-META.meta"
     # Verify worktree exists in metadata
-    local port=$(jq -r '.["test-project"]["TEST-META"].port' "$meta_file")
+    local port=$(sed -n 's/^port=//p' "$meta_file")
     [[ "$port" =~ ^[0-9]+$ ]]
 
     "$PWT_BIN" remove TEST-META -y
     # Verify worktree removed from metadata
-    local removed=$(jq -r '.["test-project"]["TEST-META"] // "null"' "$meta_file")
-    [ "$removed" = "null" ]
+    [ ! -f "$meta_file" ]
 }
 
 @test "pwt remove detects worktree from PWT_WORKTREE env" {
@@ -441,7 +437,7 @@ EOF
     "$PWT_BIN" create TEST-CYCLE HEAD
     [ -d "$TEST_WORKTREES/TEST-CYCLE" ]
     # Verify in metadata
-    local port=$(jq -r '.["test-project"]["TEST-CYCLE"].port' "$PWT_DIR/meta.json")
+    local port=$(sed -n 's/^port=//p' "$PWT_DIR/state/test-project/TEST-CYCLE.meta")
     [[ "$port" =~ ^[0-9]+$ ]]
 
     # Verify it shows in list
@@ -452,8 +448,7 @@ EOF
     "$PWT_BIN" remove TEST-CYCLE -y
     [ ! -d "$TEST_WORKTREES/TEST-CYCLE" ]
     # Verify removed from metadata
-    local removed=$(jq -r '.["test-project"]["TEST-CYCLE"] // "null"' "$PWT_DIR/meta.json")
-    [ "$removed" = "null" ]
+    [ ! -f "$PWT_DIR/state/test-project/TEST-CYCLE.meta" ]
 
     # Verify it's gone from list
     run "$PWT_BIN" list --porcelain
@@ -560,17 +555,16 @@ EOF
     cd "$TEST_REPO"
     "$PWT_BIN" create TEST-SLASH-META HEAD
 
-    local meta_file="$PWT_DIR/meta.json"
+    local meta_file="$PWT_DIR/state/test-project/TEST-SLASH-META.meta"
     # Verify worktree exists in metadata
-    local port=$(jq -r '.["test-project"]["TEST-SLASH-META"].port' "$meta_file")
+    local port=$(sed -n 's/^port=//p' "$meta_file")
     [[ "$port" =~ ^[0-9]+$ ]]
 
     # Remove with trailing slash
     "$PWT_BIN" remove "TEST-SLASH-META/" -y
 
     # Verify worktree removed from metadata
-    local removed=$(jq -r '.["test-project"]["TEST-SLASH-META"] // "null"' "$meta_file")
-    [ "$removed" = "null" ]
+    [ ! -f "$meta_file" ]
 }
 
 @test "pwt remove with partial name matches worktree" {

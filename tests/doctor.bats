@@ -13,12 +13,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 
     # Add a commit
@@ -124,4 +122,79 @@ teardown() {
     run "$PWT_BIN" test-project doctor
     [ "$status" -eq 0 ]
     [[ "$output" == *"pwt doctor"* ]]
+}
+
+# ============================================
+# Pwtfile detection + project-defined checks
+# Regression: doctor consulted $PWTFILE, a variable never assigned anywhere,
+# so a Pwtfile declared in project config (living outside the repo) was
+# always reported as "not found".
+# ============================================
+
+@test "doctor finds a Pwtfile declared in project config" {
+    local ext_dir="$TEST_TEMP_DIR/external"
+    mkdir -p "$ext_dir"
+    cat > "$ext_dir/Pwtfile" << 'EOF'
+server() { echo "srv"; }
+EOF
+    printf 'pwtfile=%s\n' "$ext_dir/Pwtfile" >> "$PWT_DIR/projects/test-project/config"
+
+    cd "$TEST_REPO"
+    run "$PWT_BIN" doctor
+    [[ "$output" == *"Pwtfile: $ext_dir/Pwtfile"* ]]
+    [[ "$output" != *"Pwtfile: not found"* ]]
+}
+
+@test "doctor flags a Pwtfile declared but missing" {
+    printf 'pwtfile=%s\n' "$TEST_TEMP_DIR/nowhere/Pwtfile" >> "$PWT_DIR/projects/test-project/config"
+
+    cd "$TEST_REPO"
+    run "$PWT_BIN" doctor
+    [[ "$output" == *"declared but missing"* ]]
+}
+
+@test "doctor still reports optional when no Pwtfile exists" {
+    rm -f "$TEST_REPO/Pwtfile"
+    cd "$TEST_REPO"
+    run "$PWT_BIN" doctor
+    [[ "$output" == *"Pwtfile: not found (optional)"* ]]
+}
+
+@test "doctor runs the Pwtfile doctor() hook when defined" {
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+doctor() {
+    echo "PROJECT_CHECK_RAN"
+}
+EOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Project checks"* ]]
+    [[ "$output" == *"PROJECT_CHECK_RAN"* ]]
+}
+
+@test "doctor skips project checks when the Pwtfile has no doctor()" {
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+server() { echo "srv"; }
+EOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" doctor
+    [[ "$output" != *"Project checks"* ]]
+}
+
+# Regression: the hook ran in a pipeline, so under `set -e -o pipefail` a
+# failing health check aborted doctor - the checks after it never printed.
+@test "doctor continues past a Pwtfile doctor() that fails" {
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+doctor() {
+    echo "PROJECT_CHECK_RAN"
+    command -v definitely_not_installed_xyz123
+}
+EOF
+
+    cd "$TEST_REPO"
+    run "$PWT_BIN" doctor
+    [[ "$output" == *"PROJECT_CHECK_RAN"* ]]
+    # Everything after the hook must still run
+    [[ "$output" == *"All checks passed"* ]] || [[ "$output" == *"issue"* ]]
 }

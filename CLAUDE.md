@@ -47,6 +47,20 @@ bats tests/pwtfile.bats -f "PWT_ARGS"
 
 ## Development Conventions
 
+### CLI Surface Changes
+
+Any change to CLI commands or flags (new command/subcommand, new flag,
+changed semantics or exit codes) must update all of the following in the
+same commit:
+
+- `cmd_help` output in `bin/pwt` (brief help and relevant sections)
+- `README.md`
+- `skills/pwt-cli/SKILL.md` (the agent-facing CLI guide)
+- `man/pwt.1` (ships in `package.json` `files`, so it reaches every user)
+- `completions/{_pwt,pwt.bash,pwt.fish}` when the command or its
+  subcommands change
+- `CHANGELOG.md` under `## [Unreleased]`
+
 ### Environment Variables
 
 **CRITICAL:** All `PWT_*` variables must be exported with default values in `run_pwtfile()` to avoid "unbound variable" errors when Pwtfiles use `set -u` (strict mode).

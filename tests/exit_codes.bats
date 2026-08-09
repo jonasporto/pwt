@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for pwt exit codes
-# Exit codes: 0=success, 1=general error, 2=usage error, 3=not found, 4=conflict
+# Exit codes: 0=success, 1=general error, 2=usage error, 3=not found, 4=conflict, 5=timeout
 
 load test_helper
 
@@ -16,12 +16,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 }
 
@@ -97,6 +95,13 @@ teardown() {
     grep -q "EXIT_USAGE=2" "$PWT_BIN"
     grep -q "EXIT_NOT_FOUND=3" "$PWT_BIN"
     grep -q "EXIT_CONFLICT=4" "$PWT_BIN"
+    grep -q "EXIT_TIMEOUT=5" "$PWT_BIN"
+}
+
+@test "help documents all exit codes including timeout" {
+    run "$PWT_BIN" help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 timeout, 6 missing dep"* ]]
 }
 
 # ============================================

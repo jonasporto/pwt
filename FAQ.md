@@ -94,7 +94,7 @@ pwt remove TICKET-123 --with-branch
 pwt cd TICKET-123    # Go to worktree
 pwt cd -             # Go back (like cd -)
 pwt cd @             # Go to main app
-pwt select           # Interactive picker (requires fzf)
+pwt select           # Interactive picker (fzf if installed)
 ```
 
 ---
@@ -429,7 +429,9 @@ setup() {
 
 ## Can I jump between worktrees with a dropdown/picker?
 
-**Yes!** Use `pwt select` (requires [fzf](https://github.com/junegunn/fzf)):
+**Yes!** Use `pwt select`. With [fzf](https://github.com/junegunn/fzf)
+installed you get fuzzy search and a preview pane; without it, pwt falls back
+to a builtin picker.
 
 ```bash
 pwt select              # Interactive fuzzy picker

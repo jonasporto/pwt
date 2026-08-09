@@ -16,7 +16,6 @@ teardown() {
 # ============================================
 
 @test "all module files exist" {
-    [ -f "$PWT_LIB_DIR/status.sh" ]
     [ -f "$PWT_LIB_DIR/list.sh" ]
     [ -f "$PWT_LIB_DIR/worktree.sh" ]
     [ -f "$PWT_LIB_DIR/project.sh" ]
@@ -25,14 +24,14 @@ teardown() {
 }
 
 @test "all modules have source guards" {
-    for module in status list worktree project plugin claude; do
+    for module in list worktree project plugin claude; do
         run grep "_PWT_.*_LOADED" "$PWT_LIB_DIR/${module}.sh"
         [ "$status" -eq 0 ]
     done
 }
 
 @test "all modules have valid bash syntax" {
-    for module in status list worktree project plugin claude; do
+    for module in list worktree project plugin claude; do
         run bash -n "$PWT_LIB_DIR/${module}.sh"
         [ "$status" -eq 0 ]
     done
@@ -49,9 +48,6 @@ teardown() {
 
 @test "main script loads modules on demand" {
     # Check that modules are loaded via load_module
-    run grep 'load_module status' "$PWT_BIN"
-    [ "$status" -eq 0 ]
-
     run grep 'load_module list' "$PWT_BIN"
     [ "$status" -eq 0 ]
 
@@ -77,12 +73,10 @@ teardown() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_TEMP_DIR/worktrees",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_TEMP_DIR/worktrees
+branch_prefix=test/
 EOF
 
     run "$PWT_BIN" list
@@ -94,12 +88,10 @@ EOF
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_TEMP_DIR/worktrees",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_TEMP_DIR/worktrees
+branch_prefix=test/
 EOF
 
     run "$PWT_BIN" tree
@@ -122,10 +114,10 @@ EOF
     [[ "$output" == *"Usage: pwt claude-setup"* ]]
 }
 
-@test "status --help works (loads status module)" {
-    run "$PWT_BIN" status --help
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"Usage: pwt status"* ]]
+@test "status stub explains removal" {
+    run "$PWT_BIN" status
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"pwt status was removed"* ]]
 }
 
 # ============================================

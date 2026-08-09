@@ -13,13 +13,11 @@ setup() {
 
     # Create main project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/",
-  "aliases": ["tp", "test"]
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
+aliases=tp,test
 EOF
 
     # Create a second project for multi-project tests
@@ -35,13 +33,11 @@ EOF
     git commit -q -m "Initial commit"
 
     mkdir -p "$PWT_DIR/projects/other-project"
-    cat > "$PWT_DIR/projects/other-project/config.json" << EOF
-{
-  "path": "$TEST_REPO2",
-  "worktrees_dir": "$TEST_WORKTREES2",
-  "branch_prefix": "other/",
-  "aliases": ["op"]
-}
+    cat > "$PWT_DIR/projects/other-project/config" << EOF
+path=$TEST_REPO2
+worktrees_dir=$TEST_WORKTREES2
+branch_prefix=other/
+aliases=op
 EOF
 }
 

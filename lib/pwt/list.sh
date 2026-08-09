@@ -189,14 +189,12 @@ list_worktree_entries() {
         done
     fi
 
-    if [ -f "$METADATA_FILE" ]; then
-        while IFS=$'\t' read -r name path; do
-            [ -n "$name" ] && [ -n "$path" ] && [ -d "$path" ] || continue
-            [[ "$seen" == *"|$name|"* ]] && continue
-            printf '%s\t%s\n' "$name" "$path"
-            seen="${seen}|${name}|"
-        done < <(jq -r --arg project "$project" '.[$project] // {} | to_entries[] | [.key, (.value.path // "")] | @tsv' "$METADATA_FILE" 2>/dev/null)
-    fi
+    while IFS=$'\t' read -r name path; do
+        [ -n "$name" ] && [ -n "$path" ] && [ -d "$path" ] || continue
+        [[ "$seen" == *"|$name|"* ]] && continue
+        printf '%s\t%s\n' "$name" "$path"
+        seen="${seen}|${name}|"
+    done < <(meta_worktree_paths "$project")
 }
 
 # ============================================
@@ -204,10 +202,10 @@ list_worktree_entries() {
 # ============================================
 
 # Command: list (porcelain output)
-# Internal function for JSON output (uses jq for proper escaping)
+# Internal function for JSON output (pure bash, json_escape for escaping)
 cmd_list_porcelain() {
     local show_dirty_only="${1:-false}"
-    local worktrees_json="[]"
+    local worktrees_json=""
 
     while IFS=$'\t' read -r name dir; do
             [ -n "$name" ] && [ -d "$dir" ] || continue
@@ -233,30 +231,45 @@ cmd_list_porcelain() {
             local meta_base=$(get_metadata "$name" "base")
             local meta_desc=$(get_metadata "$name" "description")
 
-            # Build worktree JSON object with proper escaping via jq
-            local wt_json
-            wt_json=$(jq -n \
-                --arg name "$name" \
-                --arg path "$dir" \
-                --arg branch "$branch" \
-                --arg commit "$commit" \
-                --arg port "${port:-}" \
-                --argjson dirty "$is_dirty" \
-                --arg base "${meta_base:-}" \
-                --arg description "${meta_desc:-}" \
-                '{name: $name, path: $path, branch: $branch, commit: $commit, port: $port, dirty: $dirty, base: $base, description: $description}')
+            # Build worktree JSON object (jq pretty style: 2-space nesting)
+            # json_escape_var: zero forks per field (this loop is hot)
+            local wt_json _e_name _e_path _e_branch _e_commit _e_port _e_base _e_desc
+            json_escape_var _e_name "$name"
+            json_escape_var _e_path "$dir"
+            json_escape_var _e_branch "$branch"
+            json_escape_var _e_commit "$commit"
+            json_escape_var _e_port "${port:-}"
+            json_escape_var _e_base "${meta_base:-}"
+            json_escape_var _e_desc "${meta_desc:-}"
+            wt_json="    {
+      \"name\": \"$_e_name\",
+      \"path\": \"$_e_path\",
+      \"branch\": \"$_e_branch\",
+      \"commit\": \"$_e_commit\",
+      \"port\": \"$_e_port\",
+      \"dirty\": $is_dirty,
+      \"base\": \"$_e_base\",
+      \"description\": \"$_e_desc\"
+    }"
 
             # Append to array
-            worktrees_json=$(echo "$worktrees_json" | jq --argjson wt "$wt_json" '. + [$wt]')
+            worktrees_json+="${worktrees_json:+,
+}$wt_json"
     done < <(list_worktree_entries)
 
     # Output final JSON with proper escaping
-    jq -n \
-        --arg project "$CURRENT_PROJECT" \
-        --arg main_app "$MAIN_APP" \
-        --arg worktrees_dir "$WORKTREES_DIR" \
-        --argjson worktrees "$worktrees_json" \
-        '{project: $project, main_app: $main_app, worktrees_dir: $worktrees_dir, worktrees: $worktrees}'
+    echo "{"
+    echo "  \"project\": $(json_str "$CURRENT_PROJECT"),"
+    echo "  \"main_app\": $(json_str "$MAIN_APP"),"
+    echo "  \"worktrees_dir\": $(json_str "$WORKTREES_DIR"),"
+    if [ -z "$worktrees_json" ]; then
+        echo "  \"worktrees\": []"
+    else
+        echo "  \"worktrees\": ["
+        printf '%s\n' "$worktrees_json"
+        echo "  ]"
+    fi
+    echo "}"
 }
 
 # Command: list
@@ -908,14 +921,14 @@ cmd_tree() {
     _render_project_tree() {
         local project="$1"
         local project_dir="$PROJECTS_DIR/$project"
-        local config_file="$project_dir/config.json"
+        local config_file="$project_dir/config"
         local main_app=""
         local worktrees_dir=""
 
         # Try to get paths from config file first, fall back to global vars
         if [ -f "$config_file" ]; then
-            main_app=$(jq -r '.path // empty' "$config_file")
-            worktrees_dir=$(jq -r '.worktrees_dir // empty' "$config_file")
+            main_app=$(state_get "$config_file" "path")
+            worktrees_dir=$(state_get "$config_file" "worktrees_dir")
         fi
 
         # Fall back to global variables (for auto-detected projects)

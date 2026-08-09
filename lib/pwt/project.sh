@@ -29,15 +29,10 @@ cmd_config() {
     fi
 
     local config_dir="$PWT_PROJECTS_DIR/$CURRENT_PROJECT"
-    local config_file="$config_dir/config.json"
+    local config_file="$config_dir/config"
 
     # Create config dir if needed
     mkdir -p "$config_dir/hooks"
-
-    # Initialize config file if needed
-    if [ ! -f "$config_file" ]; then
-        echo "{}" > "$config_file"
-    fi
 
     case "$key" in
         -h|--help|help)
@@ -62,7 +57,7 @@ cmd_config() {
             echo "Options:"
             echo "  -h, --help, help    Show this help"
             echo ""
-            echo "Config location: ~/.pwt/projects/<project>/config.json"
+            echo "Config location: ~/.pwt/projects/<project>/config"
             return 0
             ;;
         ""|show)
@@ -81,9 +76,9 @@ cmd_config() {
             gateway_host=$(get_project_config "$CURRENT_PROJECT" "gateway_host" || true)
             echo "  gateway_host:  ${gateway_host:-localhost}"
             echo ""
-            if [ -f "$config_file" ] && [ "$(cat "$config_file")" != "{}" ]; then
+            if [ -s "$config_file" ]; then
                 echo "Saved overrides ($config_file):"
-                jq '.' "$config_file"
+                cat "$config_file"
             else
                 echo "No saved overrides (using auto-detected values)."
             fi
@@ -91,7 +86,7 @@ cmd_config() {
         main_app|worktrees_dir|branch_prefix|base_port|gateway_port|gateway_host|workspace_link)
             if [ -z "$value" ]; then
                 # Show current value
-                local current=$(jq -r ".$key // empty" "$config_file" 2>/dev/null)
+                local current=$(state_get "$config_file" "$key")
                 if [ "$key" = "gateway_host" ]; then
                     echo "${current:-"localhost"}"
                 else
@@ -104,10 +99,8 @@ cmd_config() {
                         return $EXIT_USAGE
                     fi
                 fi
-                # Set value (create tmp in same dir for atomic mv)
-                local tmp_file
-                tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-                jq --arg key "$key" --arg value "$value" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
+                # Set value (atomic tmp + mv inside state_set)
+                state_set "$config_file" "$key" "$value" && invalidate_project_index
                 echo -e "${GREEN}✓ Set $key = $value${NC}"
             fi
             ;;
@@ -146,12 +139,15 @@ cmd_project() {
                 for dir in "$PROJECTS_DIR"/*/; do
                     [ -d "$dir" ] || continue
                     local proj_name=$(basename "$dir")
-                    local config_file="$dir/config.json"
+                    local config_file="$dir/config"
                     if [ -f "$config_file" ]; then
-                        local main_app=$(jq -r '.main_app // .path // "(not set)"' "$config_file")
-                        local prefix=$(jq -r '.branch_prefix // "(not set)"' "$config_file")
+                        local main_app=$(state_get "$config_file" "main_app")
+                        [ -z "$main_app" ] && main_app=$(state_get "$config_file" "path")
+                        [ -z "$main_app" ] && main_app="(not set)"
+                        local prefix=$(state_get "$config_file" "branch_prefix")
+                        [ -z "$prefix" ] && prefix="(not set)"
                         # Get alias if set
-                        local proj_alias=$(jq -r '.alias // empty' "$config_file")
+                        local proj_alias=$(state_get "$config_file" "alias")
                         if [ -n "$proj_alias" ]; then
                             echo -e "  ${GREEN}$proj_name${NC} (${CYAN}$proj_alias${NC})"
                         else
@@ -181,7 +177,7 @@ cmd_project() {
             fi
             init_project "$project"
             echo ""
-            echo "Edit the config at: $PROJECTS_DIR/$project/config.json"
+            echo "Edit the config at: $PROJECTS_DIR/$project/config"
             echo "Add hooks in: $PROJECTS_DIR/$project/hooks/"
             ;;
         show)
@@ -190,7 +186,7 @@ cmd_project() {
                 echo "Usage: pwt project show <name>"
                 exit 1
             fi
-            local config_file="$PROJECTS_DIR/$project/config.json"
+            local config_file="$PROJECTS_DIR/$project/config"
             if [ ! -f "$config_file" ]; then
                 echo -e "${RED}Project not found: $project${NC}"
                 exit 1
@@ -198,7 +194,7 @@ cmd_project() {
             echo -e "${BLUE}Project: $project${NC}"
             echo ""
             echo "Config:"
-            jq '.' "$config_file"
+            cat "$config_file"
             echo ""
             echo "Hooks:"
             ls -la "$PROJECTS_DIR/$project/hooks/" 2>/dev/null || echo "  (none)"
@@ -209,16 +205,13 @@ cmd_project() {
                 echo "Usage: pwt project set <name> <key> <value>"
                 exit 1
             fi
-            local config_file="$PROJECTS_DIR/$project/config.json"
+            local config_file="$PROJECTS_DIR/$project/config"
             if [ ! -f "$config_file" ]; then
                 echo -e "${RED}Project not found: $project${NC}"
                 echo "Use: pwt project init $project"
                 exit 1
             fi
-            # Create tmp in same dir for atomic mv
-            local tmp_file
-            tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-            jq --arg key "$arg3" --arg value "$arg4" '.[$key] = $value' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
+            state_set "$config_file" "$arg3" "$arg4" && invalidate_project_index
             echo -e "${GREEN}✓ Updated $project.$arg3 = $arg4${NC}"
             ;;
         path)
@@ -238,7 +231,7 @@ cmd_project() {
                 exit 1
             fi
 
-            local config_file="$PROJECTS_DIR/$project/config.json"
+            local config_file="$PROJECTS_DIR/$project/config"
             if [ ! -f "$config_file" ]; then
                 echo -e "${RED}Project not found: $project${NC}"
                 exit 1
@@ -246,7 +239,7 @@ cmd_project() {
 
             if [ -z "$new_alias" ]; then
                 # Show current alias
-                local current=$(jq -r '.alias // empty' "$config_file")
+                local current=$(state_get "$config_file" "alias")
                 if [ -n "$current" ]; then
                     echo "$current"
                 else
@@ -254,9 +247,7 @@ cmd_project() {
                 fi
             elif [ "$new_alias" = "--clear" ]; then
                 # Clear alias
-                local tmp_file
-                tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-                jq 'del(.alias)' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
+                state_del "$config_file" "alias" && invalidate_project_index
                 echo -e "${GREEN}✓ Cleared alias for $project${NC}"
             else
                 # Set alias - validate first
@@ -268,26 +259,24 @@ cmd_project() {
                     fi
                 done
                 # Check if alias conflicts with existing project name
-                if [ -f "$PROJECTS_DIR/$new_alias/config.json" ]; then
+                if [ -f "$PROJECTS_DIR/$new_alias/config" ]; then
                     pwt_error "Error: '$new_alias' is already a project name"
                     exit 1
                 fi
                 # Check if alias already used by another project
-                for cfg in "$PROJECTS_DIR"/*/config.json; do
+                for cfg in "$PROJECTS_DIR"/*/config; do
                     [ -f "$cfg" ] || continue
                     local proj_dir=$(dirname "$cfg")
                     local proj_name=$(basename "$proj_dir")
                     [ "$proj_name" = "$project" ] && continue
-                    local other_alias=$(jq -r '.alias // empty' "$cfg")
+                    local other_alias=$(state_get "$cfg" "alias")
                     if [ "$other_alias" = "$new_alias" ]; then
                         pwt_error "Error: Alias '$new_alias' already used by project '$proj_name'"
                         exit 1
                     fi
                 done
                 # Set alias
-                local tmp_file
-                tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-                jq --arg alias "$new_alias" '.alias = $alias' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
+                state_set "$config_file" "alias" "$new_alias" && invalidate_project_index
                 echo -e "${GREEN}✓ Set alias '$new_alias' for $project${NC}"
             fi
             ;;
@@ -368,7 +357,7 @@ cmd_project() {
             echo "Options:"
             echo "  -h, --help, help    Show this help"
             echo ""
-            echo "Config location: ~/.pwt/projects/<project>/config.json"
+            echo "Config location: ~/.pwt/projects/<project>/config"
             echo "Hooks location: ~/.pwt/projects/<project>/hooks/"
             return 0
             ;;

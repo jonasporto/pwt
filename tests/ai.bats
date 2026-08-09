@@ -12,11 +12,9 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
 EOF
 
     # Add a commit
@@ -66,7 +64,7 @@ teardown() {
     [[ "$output" == *"Added 'claude'"* ]]
 
     # Verify in config
-    run jq -r '.ai.tools.claude' "$PWT_DIR/config.json"
+    run sed -n 's/^ai\.tools\.claude=//p' "$PWT_DIR/config"
     [ "$output" = "claude" ]
 }
 
@@ -75,7 +73,7 @@ teardown() {
     run "$PWT_BIN" ai add gemini "gemini --model gemini-2.0-flash"
     [ "$status" -eq 0 ]
 
-    run jq -r '.ai.tools.gemini' "$PWT_DIR/config.json"
+    run sed -n 's/^ai\.tools\.gemini=//p' "$PWT_DIR/config"
     [ "$output" = "gemini --model gemini-2.0-flash" ]
 }
 
@@ -105,8 +103,8 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"Removed"* ]]
 
-    run jq -r '.ai.tools.gemini // "null"' "$PWT_DIR/config.json"
-    [ "$output" = "null" ]
+    run sed -n 's/^ai\.tools\.gemini=//p' "$PWT_DIR/config"
+    [ -z "$output" ]
 }
 
 @test "pwt ai remove without arg shows usage" {
@@ -157,7 +155,7 @@ teardown() {
     run "$PWT_BIN" ai:gemini --default
     [ "$status" -eq 0 ]
 
-    run jq -r '.ai.default' "$PWT_DIR/config.json"
+    run sed -n 's/^ai\.default=//p' "$PWT_DIR/config"
     [ "$output" = "gemini" ]
 }
 
@@ -289,7 +287,7 @@ teardown() {
     [[ "$output" == *"mock-gemini"* ]]
 
     # Verify saved
-    run jq -r '.ai.tools.gemini' "$PWT_DIR/config.json"
+    run sed -n 's/^ai\.tools\.gemini=//p' "$PWT_DIR/config"
     [ "$output" = "gemini" ]
 }
 

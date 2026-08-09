@@ -88,6 +88,63 @@ jobs:
         env:
           PWT_TEST_JOBS: 1
 
+      # macOS ships bash 3.2.57, where BATS silently swallows a failing [[ ]]
+      # unless it is the test's last command. The run above uses whichever
+      # bash `env bash` finds (Homebrew's 5.x on GitHub runners), so this
+      # second pass is what actually exercises the 3.2 target users get.
+      - name: Run tests under macOS system bash 3.2
+        if: runner.os == 'macOS'
+        run: /bin/bash "$(command -v bats)" tests/
+        env:
+          PWT_TEST_JOBS: 1
+
+  # Minimal Linux box: no jq, no lsof, no column, no curl. pwt must still
+  # start, degrade gracefully and pass everything that does not need those
+  # tools. Guards the "core is bash + git + coreutils" promise.
+  test-minimal:
+    needs: should-run
+    if: needs.should-run.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    container: debian:12-slim
+    steps:
+      - name: Install the bare minimum
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends bash git ca-certificates procps
+          git config --global --add safe.directory '*'
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Smoke test without optional tools
+        run: |
+          chmod +x bin/pwt
+          ./bin/pwt --version
+          ./bin/pwt help >/dev/null
+          ./bin/pwt doctor || true   # must degrade to warnings, never crash
+
+          # A fresh install has nothing to convert and must not demand jq
+          ./bin/pwt state migrate --status
+          ./bin/pwt state migrate
+          test "$(cat "${PWT_DIR:-$HOME/.pwt}/state-version")" = "2"
+
+          # `command -v` returns 1 for an absent tool - which is the expected
+          # state here - so the loop must not decide the step's exit status.
+          for tool in jq lsof column curl fzf; do
+            if command -v "$tool" >/dev/null; then
+              echo "WARNING: $tool unexpectedly present"
+            fi
+          done
+          true
+
+      # The full suite is NOT run here on purpose: ~30 of its assertions pipe
+      # output through jq, so they fail for lack of a test-side tool rather
+      # than a product defect. This job guards the product promise (pwt runs
+      # and degrades cleanly with only bash+git+coreutils); the ubuntu job
+      # covers the suite.
+
   shellcheck:
     needs: should-run
     if: needs.should-run.outputs.run == 'true'
@@ -99,6 +156,10 @@ jobs:
       - name: Install ShellCheck
         run: sudo apt-get install -y shellcheck
 
-      - name: Run ShellCheck
-        run: shellcheck -x bin/pwt || true  # Non-blocking for now
-        continue-on-error: true
+      # Errors are blocking (baseline 2026-08-08: zero across bin/ and lib/).
+      - name: Run ShellCheck (errors block)
+        run: shellcheck -x -S error bin/pwt lib/pwt/*.sh
+
+      # Warnings are informational until the SC2155 backlog is worked down.
+      - name: Run ShellCheck (warnings, informational)
+        run: shellcheck -x -S warning bin/pwt lib/pwt/*.sh || true

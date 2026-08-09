@@ -13,13 +13,11 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/",
-  "alias": "tp"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
+alias=tp
 EOF
 
     # Add a commit
@@ -68,12 +66,10 @@ teardown() {
     git commit -q -m "Initial commit"
 
     mkdir -p "$PWT_DIR/projects/second-project"
-    cat > "$PWT_DIR/projects/second-project/config.json" << EOF
-{
-  "path": "$TEST_REPO2",
-  "worktrees_dir": "$TEST_TEMP_DIR/worktrees2",
-  "branch_prefix": "second/"
-}
+    cat > "$PWT_DIR/projects/second-project/config" << EOF
+path=$TEST_REPO2
+worktrees_dir=$TEST_TEMP_DIR/worktrees2
+branch_prefix=second/
 EOF
 
     run "$PWT_BIN" project list
@@ -125,7 +121,7 @@ EOF
     [ "$status" -eq 0 ]
 
     # Verify project was created
-    [ -f "$PWT_DIR/projects/new-project/config.json" ]
+    [ -f "$PWT_DIR/projects/new-project/config" ]
 }
 
 @test "pwt project init requires project name" {
@@ -195,11 +191,9 @@ EOF
 @test "pwt project alias prevents duplicate alias" {
     # Create a second project with its own alias
     mkdir -p "$PWT_DIR/projects/other-project"
-    cat > "$PWT_DIR/projects/other-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "alias": "otheralias"
-}
+    cat > "$PWT_DIR/projects/other-project/config" << EOF
+path=$TEST_REPO
+alias=otheralias
 EOF
 
     # Try to set same alias on test-project

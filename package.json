@@ -13,7 +13,8 @@
     "completions/",
     "plugins/",
     "INSTALL.md",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "postinstall": "echo 'pwt installed! Run: pwt --help'",

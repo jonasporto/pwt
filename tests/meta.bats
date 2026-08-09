@@ -13,12 +13,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 
     # Add a commit
@@ -236,10 +234,10 @@ teardown() {
     cd "$TEST_REPO"
     "$PWT_BIN" create WT-EMPTY HEAD
 
-    # Manually set description to empty string using jq (simulating existing empty metadata)
-    local project="test-project"
-    jq --arg p "$project" '.[$p]["WT-EMPTY"].description = ""' "$PWT_DIR/meta.json" > "$PWT_DIR/meta.json.tmp"
-    mv "$PWT_DIR/meta.json.tmp" "$PWT_DIR/meta.json"
+    # Manually set description to empty string (simulating existing empty metadata)
+    local meta_file="$PWT_DIR/state/test-project/WT-EMPTY.meta"
+    sed 's/^description=.*/description=/' "$meta_file" > "$meta_file.tmp"
+    mv "$meta_file.tmp" "$meta_file"
 
     run "$PWT_BIN" list --refresh
     [ "$status" -eq 0 ]
@@ -261,10 +259,8 @@ teardown() {
     cd "$TEST_REPO"
     "$PWT_BIN" create WT-NULL HEAD
 
-    # Manually set a null value in metadata using jq
-    local project="test-project"
-    jq --arg p "$project" '.[$p]["WT-NULL"].customfield = null' "$PWT_DIR/meta.json" > "$PWT_DIR/meta.json.tmp"
-    mv "$PWT_DIR/meta.json.tmp" "$PWT_DIR/meta.json"
+    # Manually seed an empty-valued custom field (v2 analog of a null value)
+    echo 'customfield=' >> "$PWT_DIR/state/test-project/WT-NULL.meta"
 
     run "$PWT_BIN" list --refresh
     [ "$status" -eq 0 ]
@@ -283,10 +279,8 @@ teardown() {
     # Set one field with value
     "$PWT_BIN" meta set WT-GETEXTRA env production
 
-    # Manually set empty notes using jq
-    local project="test-project"
-    jq --arg p "$project" '.[$p]["WT-GETEXTRA"].notes = ""' "$PWT_DIR/meta.json" > "$PWT_DIR/meta.json.tmp"
-    mv "$PWT_DIR/meta.json.tmp" "$PWT_DIR/meta.json"
+    # Manually seed empty notes
+    echo 'notes=' >> "$PWT_DIR/state/test-project/WT-GETEXTRA.meta"
 
     # Check list output - empty "notes" should not appear
     run "$PWT_BIN" list --refresh

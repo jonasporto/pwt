@@ -30,6 +30,7 @@ set -euo pipefail
 # PWT directory structure
 # PWT_DIR can be overridden via environment for testing/sandbox
 PWT_DIR="${PWT_DIR:-$HOME/.pwt}"
+# Legacy v1 metadata file: only read by the one-time state migration
 PWT_META_FILE="$PWT_DIR/meta.json"
 PWT_PROJECTS_DIR="$PWT_DIR/projects"
 
@@ -155,6 +156,11 @@ EXIT_ERROR=1        # General error
 EXIT_USAGE=2        # Usage/argument error
 EXIT_NOT_FOUND=3    # Resource not found (worktree, project, branch)
 EXIT_CONFLICT=4     # Conflict (already exists, port in use)
+EXIT_TIMEOUT=5      # Timeout (jobs wait / server wait exceeded --timeout)
+EXIT_DEPENDENCY=6   # Required external tool missing (node, git, ...)
+
+# Default --timeout (seconds) for wait commands (jobs wait, server wait)
+PWT_WAIT_TIMEOUT_DEFAULT=600
 
 # Output control (set via --quiet or --verbose flags)
 PWT_QUIET=false
@@ -363,7 +369,7 @@ require_cmd() {
 # Check dependencies early
 check_dependencies() {
     require_cmd git
-    require_cmd jq
+    # jq is optional since state v2 (only used for one-time legacy migration)
     # Optional: lsof (for port checking), fzf (for select)
     # These are checked where needed, not at startup
 }
@@ -413,6 +419,145 @@ detect_submodules() {
     return 0
 }
 
+# Align pipe-separated rows into padded columns (pure bash replacement for
+# column -t -s'|', which lives in bsdmainutils and is missing on slim Linux).
+# Usage: printf '%s\n' "${rows[@]}" | align_columns
+align_columns() {
+    local -a lines=()
+    local line
+    while IFS= read -r line; do
+        lines+=("$line")
+    done
+    [ ${#lines[@]} -eq 0 ] && return 0
+
+    # First pass: widest cell per column. Indexed access with :-0 default keeps
+    # this safe under set -u without ever expanding an empty array.
+    local -a widths=()
+    local rest cell i
+    for line in "${lines[@]}"; do
+        rest="$line"
+        i=0
+        while :; do
+            case "$rest" in
+                *"|"*) cell="${rest%%|*}"; rest="${rest#*|}" ;;
+                *)     cell="$rest"; rest="" ;;
+            esac
+            [ "${#cell}" -gt "${widths[$i]:-0}" ] && widths[$i]="${#cell}"
+            i=$((i + 1))
+            [ -z "$rest" ] && break
+        done
+    done
+
+    # Second pass: pad every cell except the row's last one.
+    local out width
+    for line in "${lines[@]}"; do
+        rest="$line"
+        out=""
+        i=0
+        while :; do
+            case "$rest" in
+                *"|"*)
+                    cell="${rest%%|*}"
+                    rest="${rest#*|}"
+                    width="${widths[$i]:-0}"
+                    out="${out}$(printf '%-*s  ' "$width" "$cell")"
+                    ;;
+                *)
+                    out="${out}${rest}"
+                    break
+                    ;;
+            esac
+            i=$((i + 1))
+        done
+        printf '%s\n' "$out"
+    done
+}
+
+# Interactive picker fallback for systems without fzf.
+# Reads aligned rows on stdin, prints the chosen row on stdout (empty on
+# cancel). Uses bash's `select` builtin plus a substring filter, so it needs
+# nothing beyond bash itself.
+# Usage: printf '%s\n' "${rows[@]}" | pick_fallback [prompt] [initial_query]
+pick_fallback() {
+    local prompt="${1:-Select}"
+    local query="${2:-}"
+    local -a rows=()
+    local line
+
+    while IFS= read -r line; do
+        [ -n "$line" ] && rows+=("$line")
+    done
+
+    if [ ${#rows[@]} -eq 0 ]; then
+        return 1
+    fi
+
+    # Apply an initial substring filter when one was supplied
+    if [ -n "$query" ]; then
+        local -a filtered=()
+        for line in "${rows[@]}"; do
+            case "$line" in
+                *"$query"*) filtered+=("$line") ;;
+            esac
+        done
+        [ ${#filtered[@]} -gt 0 ] && rows=("${filtered[@]}")
+    fi
+
+    # Exactly one candidate: no need to ask
+    if [ ${#rows[@]} -eq 1 ]; then
+        printf '%s\n' "${rows[0]}"
+        return 0
+    fi
+
+    if [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+        pwt_error "No terminal available for interactive selection"
+        return 1
+    fi
+
+    echo "$prompt (fzf not installed - using builtin picker)" >&2
+
+    local choice
+    local PS3="#? "
+    select choice in "${rows[@]}" "cancel"; do
+        if [ -z "${choice:-}" ]; then
+            echo "Invalid choice, try again." >&2
+            continue
+        fi
+        if [ "$choice" = "cancel" ]; then
+            return 1
+        fi
+        printf '%s\n' "$choice"
+        return 0
+    done < /dev/tty
+
+    return 1
+}
+
+# Open a path in the platform's file manager
+# Usage: open_path <path>
+# macOS has open(1); Linux desktops have xdg-open; headless boxes have neither.
+open_path() {
+    local target="$1"
+    local opener=""
+
+    if [ "$(uname -s)" = "Darwin" ] && command -v open >/dev/null 2>&1; then
+        opener="open"
+    elif command -v xdg-open >/dev/null 2>&1; then
+        opener="xdg-open"
+    elif command -v wslview >/dev/null 2>&1; then
+        opener="wslview"   # WSL: opens in the Windows file manager
+    fi
+
+    if [ -z "$opener" ]; then
+        echo -e "${YELLOW}No file manager opener found${NC} (tried open, xdg-open, wslview)" >&2
+        echo "$target"
+        return 1
+    fi
+
+    echo -e "${BLUE}Opening:${NC} $target"
+    "$opener" "$target"
+}
+
 # Check if lsof is available (cache result for performance)
 _lsof_available=""
 has_lsof() {
@@ -426,25 +571,59 @@ has_lsof() {
     [ "$_lsof_available" = "yes" ]
 }
 
-# Get PIDs using a port (returns empty if lsof unavailable)
+# Get PIDs using a port
 # Usage: get_pids_on_port <port>
+# Falls back to ss/fuser on Linux boxes without lsof (minimal containers, WSL).
 get_pids_on_port() {
     local port="$1"
+
     if has_lsof; then
         lsof -ti ":$port" 2>/dev/null || true
-    fi
-    # Without lsof, we can't detect - return empty (assume free)
-}
-
-# Check if a port is occupied (returns 1 if occupied or unknown, 0 if free)
-# Usage: is_port_free <port>
-is_port_free() {
-    local port="$1"
-    if ! has_lsof; then
-        # Without lsof, assume port is free (best effort)
         return 0
     fi
-    ! lsof -ti ":$port" > /dev/null 2>&1
+
+    if command -v ss >/dev/null 2>&1; then
+        # ss prints users:(("cmd",pid=1234,fd=7)) - extract every pid=N
+        ss -lntpH "sport = :$port" 2>/dev/null \
+            | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u
+        return 0
+    fi
+
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -n tcp "$port" 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+$' || true
+        return 0
+    fi
+
+    # No tool can name the owner; callers fall back to is_port_free for
+    # occupancy, which still works via /dev/tcp.
+}
+
+# Check if a port is occupied (returns 1 if occupied, 0 if free)
+# Usage: is_port_free <port>
+# Without lsof, probes the port directly with bash's /dev/tcp - no external
+# dependency, and far safer than the old "assume free" behaviour.
+is_port_free() {
+    local port="$1"
+
+    if has_lsof; then
+        ! lsof -ti ":$port" > /dev/null 2>&1
+        return $?
+    fi
+
+    local pids
+    pids=$(get_pids_on_port "$port")
+    if [ -n "$pids" ]; then
+        return 1
+    fi
+
+    # Last resort: try to connect. A successful connect means occupied.
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+        exec 3<&- 2>/dev/null || true
+        exec 3>&- 2>/dev/null || true
+        return 1
+    fi
+
+    return 0
 }
 
 # Initialize PWT directory
@@ -455,15 +634,451 @@ init_pwt() {
         mkdir -p "$PWT_PROJECTS_DIR"
     fi
 
-    # Create empty metadata file if it doesn't exist
-    if [ ! -f "$PWT_META_FILE" ]; then
-        echo '{}' > "$PWT_META_FILE"
+    # Declare the state schema for external consumers (state contract v2),
+    # migrating legacy v1 JSON state first when present
+    ensure_state_v2
+}
+
+# ============================================
+# State v2 startup check + one-time v1 migration
+# ============================================
+
+# True when any pre-v2 JSON state file exists
+_legacy_state_present() {
+    [ -f "$PWT_DIR/meta.json" ] && return 0
+    [ -f "$PWT_DIR/config.json" ] && return 0
+    [ -f "$PWT_DIR/claude-statusline.json" ] && return 0
+    local f
+    for f in "$PWT_DIR"/projects/*/config.json "$PWT_DIR"/projects/*/gateway.json \
+             "$PWT_DIR"/jobs/*.json "$PWT_DIR"/trash/*.json; do
+        [ -f "$f" ] && return 0
+    done
+    return 1
+}
+
+# Cheap per-invocation check: one stat when already on v2.
+# Fresh installs get state-version=2; legacy installs migrate once.
+ensure_state_v2() {
+    # `pwt migrate` drives migrations explicitly - never preempt it
+    if [ -n "${_PWT_NO_AUTO_MIGRATE:-}" ]; then
+        return 0
     fi
+    if [ -f "$PWT_DIR/state-version" ]; then
+        events_maybe_truncate
+        return 0
+    fi
+    if _legacy_state_present; then
+        migrate_state_v1 || exit 1
+    fi
+    state_version_write
+    events_maybe_truncate
+}
+
+# One-time conversion of v1 JSON state to v2 key=value files.
+# This is the ONLY code path that reads legacy JSON, and the only
+# remaining use of jq. Converted sources are kept as *.v1.bak.
+migrate_state_v1() {
+    if ! command -v jq >/dev/null 2>&1; then
+        pwt_error "Error: legacy pwt state (v1 JSON) found, but jq is not installed"
+        echo "" >&2
+        echo "pwt now stores state as plain key=value files and no longer needs jq," >&2
+        echo "but converting your existing JSON state requires jq once." >&2
+        echo "" >&2
+        echo "Options:" >&2
+        echo "  - Install jq (macOS: brew install jq / Ubuntu: sudo apt install jq)" >&2
+        echo "    and re-run any pwt command" >&2
+        echo "  - Or start fresh: mv \"$PWT_DIR\" \"$PWT_DIR.old\"" >&2
+        return 1
+    fi
+
+    echo -e "${BLUE}Migrating pwt state to v2 (key=value files)...${NC}" >&2
+
+    local f dir project wt key value
+
+    # meta.json → state/<project>/<worktree>.meta (one file per worktree)
+    #
+    # Every level is type-guarded: real installs accumulate malformed legacy
+    # entries (e.g. a worktree written at project level), and jq aborts the
+    # whole stream the moment it tries to iterate a string - silently dropping
+    # every entry after it. Guarding keeps one bad entry from truncating the
+    # migration; the skipped ones are reported and kept in the .v1.bak.
+    if [ -f "$PWT_DIR/meta.json" ]; then
+        local migrated_tsv="$PWT_DIR/.migrate-meta.tsv"
+        if ! jq -r '
+            to_entries[] | .key as $p | .value | select(type == "object") |
+            to_entries[] | .key as $w | .value | select(type == "object") |
+            to_entries[] | select(.value != null) |
+            [$p, $w, .key, (.value | tostring)] | @tsv
+        ' "$PWT_DIR/meta.json" > "$migrated_tsv" 2>"$migrated_tsv.err"; then
+            pwt_error "Error: could not read $PWT_DIR/meta.json"
+            sed 's/^/  /' "$migrated_tsv.err" >&2
+            echo "  Your state was NOT modified. Fix or remove meta.json and retry." >&2
+            rm -f "$migrated_tsv" "$migrated_tsv.err"
+            return 1
+        fi
+        rm -f "$migrated_tsv.err"
+
+        while IFS=$'\t' read -r project wt key value; do
+            [ -n "$project" ] && [ -n "$wt" ] && [ -n "$key" ] || continue
+            mkdir -p "$PWT_DIR/state/$project"
+            printf '%s=%s\n' "$key" "$value" >> "$PWT_DIR/state/$project/$wt.meta"
+        done < "$migrated_tsv"
+        rm -f "$migrated_tsv"
+
+        # Anything that was not a project→worktree→fields object is left
+        # behind on purpose; name it so the user can recover it by hand.
+        local skipped
+        skipped=$(jq -r '
+            to_entries[] | .key as $p | .value |
+            if type != "object" then $p
+            else (to_entries[] | select((.value | type) != "object") | "\($p)/\(.key)")
+            end
+        ' "$PWT_DIR/meta.json" 2>/dev/null || true)
+
+        mv "$PWT_DIR/meta.json" "$PWT_DIR/meta.json.v1.bak"
+        echo "  ✓ meta.json → state/<project>/<worktree>.meta" >&2
+        if [ -n "$skipped" ]; then
+            echo "  ⚠ skipped malformed legacy entries (kept in meta.json.v1.bak):" >&2
+            printf '      %s\n' $skipped >&2
+        fi
+    fi
+
+    # projects/<name>/config.json → projects/<name>/config
+    for f in "$PWT_DIR"/projects/*/config.json; do
+        [ -f "$f" ] || continue
+        dir=$(dirname "$f")
+        while IFS=$'\t' read -r key value; do
+            [ -n "$key" ] || continue
+            printf '%s=%s\n' "$key" "$value" >> "$dir/config"
+        done < <(jq -r '
+            to_entries[] | select(.value != null) |
+            [.key, (.value | if type == "array" then join(",") else tostring end)] | @tsv
+        ' "$f" 2>/dev/null)
+        # A config of {} yields no lines; without this the file would simply
+        # not exist and the project would vanish from `pwt project list`.
+        [ -f "$dir/config" ] || : > "$dir/config"
+        mv "$f" "$f.v1.bak"
+    done
+
+    # projects/<name>/gateway.json → projects/<name>/gateway.state
+    for f in "$PWT_DIR"/projects/*/gateway.json; do
+        [ -f "$f" ] || continue
+        dir=$(dirname "$f")
+        while IFS=$'\t' read -r key value; do
+            [ -n "$key" ] || continue
+            printf '%s=%s\n' "$key" "$value" >> "$dir/gateway.state"
+        done < <(jq -r '
+            to_entries[] | select(.value != null) |
+            [.key, (.value | tostring)] | @tsv
+        ' "$f" 2>/dev/null)
+        [ -f "$dir/gateway.state" ] || : > "$dir/gateway.state"
+        mv "$f" "$f.v1.bak"
+    done
+
+    # Global config.json → config (nested objects flatten to dotted keys)
+    if [ -f "$PWT_DIR/config.json" ]; then
+        while IFS=$'\t' read -r key value; do
+            [ -n "$key" ] || continue
+            printf '%s=%s\n' "$key" "$value" >> "$PWT_DIR/config"
+        done < <(jq -r '
+            paths(scalars) as $p |
+            [($p | map(tostring) | join(".")), (getpath($p) | tostring)] | @tsv
+        ' "$PWT_DIR/config.json" 2>/dev/null)
+        [ -f "$PWT_DIR/config" ] || : > "$PWT_DIR/config"
+        mv "$PWT_DIR/config.json" "$PWT_DIR/config.json.v1.bak"
+    fi
+
+    # claude-statusline.json → claude-statusline
+    if [ -f "$PWT_DIR/claude-statusline.json" ]; then
+        while IFS=$'\t' read -r key value; do
+            [ -n "$key" ] || continue
+            printf '%s=%s\n' "$key" "$value" >> "$PWT_DIR/claude-statusline"
+        done < <(jq -r '
+            to_entries[] | select(.value != null) |
+            [.key, (.value | tostring)] | @tsv
+        ' "$PWT_DIR/claude-statusline.json" 2>/dev/null)
+        [ -f "$PWT_DIR/claude-statusline" ] || : > "$PWT_DIR/claude-statusline"
+        mv "$PWT_DIR/claude-statusline.json" "$PWT_DIR/claude-statusline.json.v1.bak"
+    fi
+
+    # jobs/<id>.json → jobs/<id>.job
+    for f in "$PWT_DIR"/jobs/*.json; do
+        [ -f "$f" ] || continue
+        local job_base="${f%.json}"
+        while IFS=$'\t' read -r key value; do
+            [ -n "$key" ] || continue
+            printf '%s=%s\n' "$key" "$value" >> "$job_base.job"
+        done < <(jq -r '
+            to_entries[] | select(.value != null) |
+            [.key, (.value | tostring)] | @tsv
+        ' "$f" 2>/dev/null)
+        mv "$f" "$f.v1.bak"
+    done
+
+    # trash/<backup>.json → trash/<backup>.trash
+    for f in "$PWT_DIR"/trash/*.json; do
+        [ -f "$f" ] || continue
+        local trash_base="${f%.json}"
+        while IFS=$'\t' read -r key value; do
+            [ -n "$key" ] || continue
+            printf '%s=%s\n' "$key" "$value" >> "$trash_base.trash"
+        done < <(jq -r '
+            to_entries[] | select(.value != null) |
+            [.key, (.value | tostring)] | @tsv
+        ' "$f" 2>/dev/null)
+        mv "$f" "$f.v1.bak"
+    done
+
+    # Old caches were built from JSON configs; rebuild lazily
+    rm -f "$PWT_DIR/cache/project-index" 2>/dev/null || true
+
+    echo -e "${GREEN}✓ State migrated to v2${NC} (originals kept as *.v1.bak; 'pwt doctor' lists them)" >&2
+    return 0
 }
 
 # Alias for compatibility
 init_metadata() {
     init_pwt
+}
+
+# ============================================
+# State v2 helpers (flat key=value files)
+# ============================================
+# Internal state lives in key=value files (see docs/state-v2-contract.md):
+#   state-version                 single line: "2"
+#   events.log                    append-only TSV activity feed
+#   projects/<name>/config        key=value (dotted keys for nesting)
+#   state/<project>/<wt>.meta     key=value, one file per worktree
+#   jobs/<id>.job                 key=value
+# Values are raw except newline and backslash (escaped as \n and \\).
+# jq is NOT required at runtime — only for one-time v1 migration.
+
+PWT_STATE_VERSION=2
+
+# Escape a value for storage: backslash -> \\, newline -> \n
+_state_escape() {
+    local s="$1"
+    case "$s" in
+        *\\*|*$'\n'*) ;;
+        *) printf '%s' "$s"; return 0 ;;
+    esac
+    s="${s//\\/\\\\}"
+    s="${s//$'\n'/\\n}"
+    printf '%s' "$s"
+}
+
+# Reverse of _state_escape. Unknown escapes keep their backslash.
+_state_unescape() {
+    local s="$1" out="" chunk
+    case "$s" in
+        *\\*) ;;
+        *) printf '%s' "$s"; return 0 ;;
+    esac
+    while [ -n "$s" ]; do
+        chunk="${s%%\\*}"
+        if [ "$chunk" = "$s" ]; then
+            out+="$s"
+            break
+        fi
+        out+="$chunk"
+        s="${s#*\\}"
+        case "$s" in
+            n*)  out+=$'\n'; s="${s#n}" ;;
+            \\*) out+='\';   s="${s#\\}" ;;
+            *)   out+='\' ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
+# Read one key from a key=value file (first match wins; empty if absent)
+# Usage: state_get <file> <key>
+state_get() {
+    local file="$1" key="$2" line
+    [ -f "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            "$key="*)
+                _state_unescape "${line#"$key"=}"
+                printf '\n'
+                return 0
+                ;;
+        esac
+    done < "$file"
+    return 0
+}
+
+# Set one key in a key=value file (atomic tmp+mv; preserves unknown keys
+# and line order; appends new keys at the end)
+# Usage: state_set <file> <key> <value>
+state_set() {
+    local file="$1" key="$2" value="$3"
+    local dir tmp line found=false out="" escaped
+    dir=$(dirname "$file")
+    [ -d "$dir" ] || mkdir -p "$dir"
+    escaped=$(_state_escape "$value")
+    if [ -f "$file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                "$key="*)
+                    # First occurrence replaced; duplicates dropped
+                    [ "$found" = true ] && continue
+                    out+="${key}=${escaped}"$'\n'
+                    found=true
+                    ;;
+                *) out+="$line"$'\n' ;;
+            esac
+        done < "$file"
+    fi
+    [ "$found" = false ] && out+="${key}=${escaped}"$'\n'
+    tmp="${file}.tmp.$$"
+    printf '%s' "$out" > "$tmp" && mv "$tmp" "$file"
+}
+
+# Delete one key from a key=value file (no-op if absent)
+# Usage: state_del <file> <key>
+state_del() {
+    local file="$1" key="$2"
+    local tmp line out="" changed=false
+    [ -f "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            "$key="*) changed=true; continue ;;
+        esac
+        out+="$line"$'\n'
+    done < "$file"
+    [ "$changed" = false ] && return 0
+    tmp="${file}.tmp.$$"
+    printf '%s' "$out" > "$tmp" && mv "$tmp" "$file"
+}
+
+# List keys under a dotted prefix: prints "subkey<TAB>value" per line.
+# Usage: state_list_prefix <file> <prefix>   (prefix WITHOUT trailing dot)
+state_list_prefix() {
+    local file="$1" prefix="$2" line k v
+    [ -f "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            "$prefix".*=*)
+                k="${line%%=*}"
+                v="${line#*=}"
+                printf '%s\t%s\n' "${k#"$prefix".}" "$(_state_unescape "$v")"
+                ;;
+        esac
+    done < "$file"
+    return 0
+}
+
+# Keys whose values are numeric in the JSON contract. Type must follow the
+# KEY, never the value's shape: a branch or description that happens to be
+# all digits must still serialize as a string, or consumers see a field
+# change type between worktrees.
+_state_key_is_numeric() {
+    case "$1" in
+        port|pid|pgid|gateway_port|base_port) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Escape a string for embedding inside JSON double quotes (pure bash).
+# Handles backslash, quote, newline, CR and tab — the characters pwt
+# state can realistically contain.
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+# JSON value builders for porcelain output (pure bash, no jq)
+# json_str <s>          -> "escaped"
+# json_str_or_null <s>  -> "escaped" or null when empty
+# json_num_or_null <s>  -> number or null when not numeric
+json_str() {
+    printf '"%s"' "$(json_escape "$1")"
+}
+
+json_str_or_null() {
+    if [ -n "$1" ]; then
+        json_str "$1"
+    else
+        printf 'null'
+    fi
+}
+
+# Emit a bare JSON number, or null when the value is missing or not numeric.
+# A hand-edited or corrupt pid must never produce "pid":abc in output that
+# external consumers parse.
+json_num_or_null() {
+    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$1"
+    else
+        printf 'null'
+    fi
+}
+
+# Zero-fork variant for hot output paths: escapes $2 for JSON and assigns
+# the result to the variable named by $1 (a subshell per field would
+# dominate list --porcelain on many worktrees).
+# Usage: json_escape_var <varname> <value>
+json_escape_var() {
+    local _je="$2"
+    case "$_je" in
+        *[\\\"$'\n'$'\r'$'\t']*)
+            _je="${_je//\\/\\\\}"
+            _je="${_je//\"/\\\"}"
+            _je="${_je//$'\n'/\\n}"
+            _je="${_je//$'\r'/\\r}"
+            _je="${_je//$'\t'/\\t}"
+            ;;
+    esac
+    eval "$1=\$_je"
+}
+
+# Append one event to the activity feed (single printf: atomic under PIPE_BUF)
+# Usage: events_append <project> <worktree> <kind> <detail>
+events_append() {
+    local project="${1:-}" worktree="${2:-}" kind="${3:-}" detail="${4:-}"
+    [ -d "$PWT_DIR" ] || mkdir -p "$PWT_DIR" 2>/dev/null || return 0
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$project" "$worktree" "$kind" "$detail" \
+        >> "$PWT_DIR/events.log" 2>/dev/null || true
+    return 0
+}
+
+# Opportunistic rotation: keep events.log at the last 1000 lines.
+# Only rewrites when the file has grown well past the limit.
+events_maybe_truncate() {
+    local log="$PWT_DIR/events.log" lines
+    [ -f "$log" ] || return 0
+
+    # This forks once per invocation, which is a real cost on a startup path
+    # built to avoid forks. A size gate was tried and reverted: no byte
+    # threshold is correct, because a log of many short lines stays small
+    # while exceeding the documented 2000-line bound. Correctness wins; the
+    # measured cost is a small fraction of startup.
+    lines=$(wc -l < "$log" 2>/dev/null || echo 0)
+    if [ "${lines:-0}" -gt 2000 ]; then
+        local tmp="$log.tmp.$$"
+        tail -1000 "$log" > "$tmp" 2>/dev/null && mv "$tmp" "$log" || rm -f "$tmp"
+    fi
+    return 0
+}
+
+# Read the on-disk state schema version (empty if unset)
+state_version_read() {
+    [ -f "$PWT_DIR/state-version" ] || return 0
+    head -1 "$PWT_DIR/state-version" 2>/dev/null
+    return 0
+}
+
+# Declare the on-disk state schema version
+state_version_write() {
+    mkdir -p "$PWT_DIR"
+    printf '%s\n' "$PWT_STATE_VERSION" > "$PWT_DIR/state-version"
 }
 
 # ============================================
@@ -558,18 +1173,57 @@ detect_default_branch() {
 # ============================================
 # Project index
 # ============================================
-# One jq pass over all project configs, cached in a TSV global. Project
-# detection/alias resolution used to spawn 2-3 jq per project per lookup,
-# which added ~200ms of startup to every command on setups with many projects.
+# One pure-bash pass over all project configs, cached in a TSV global.
+# Project detection/alias resolution used to spawn 2-3 jq per project per
+# lookup, which added ~200ms of startup on setups with many projects; the
+# key=value configs (state v2) now parse with zero subprocess spawns.
 # Columns: name, path, worktrees_dir, branch_prefix, base_port, remote, aliases(csv)
 _PWT_PROJECT_INDEX=""
 _PWT_PROJECT_INDEX_LOADED=false
+
+# Emit one index row from a key=value project config (fields joined by \037)
+_project_index_row() {
+    local cfg="$1" line key value
+    local name path main_app wt_dir prefix base_port remote alias_val aliases
+    name=$(basename "$(dirname "$cfg")")
+    path="" main_app="" wt_dir="" prefix="" base_port="" remote="" alias_val="" aliases=""
+    [ -r "$cfg" ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            *=*) ;;
+            *) continue ;;
+        esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        # Unescape only when needed: a subshell per line would dominate the
+        # cold index build (values rarely contain backslashes)
+        case "$value" in
+            *\\*) value=$(_state_unescape "$value") ;;
+        esac
+        case "$key" in
+            path)          path="$value" ;;
+            main_app)      main_app="$value" ;;
+            worktrees_dir) wt_dir="$value" ;;
+            branch_prefix) prefix="$value" ;;
+            base_port)     base_port="$value" ;;
+            remote)        remote="$value" ;;
+            alias)         alias_val="$value" ;;
+            aliases)       aliases="$value" ;;
+        esac
+    done < "$cfg"
+    # path preferred, main_app kept for backwards compat
+    [ -z "$path" ] && path="$main_app"
+    local alias_csv="$alias_val"
+    [ -n "$aliases" ] && alias_csv="${alias_csv:+$alias_csv,}$aliases"
+    printf '%s\037%s\037%s\037%s\037%s\037%s\037%s\n' \
+        "$name" "$path" "$wt_dir" "$prefix" "$base_port" "$remote" "$alias_csv"
+}
 
 build_project_index() {
     [ "$_PWT_PROJECT_INDEX_LOADED" = true ] && return 0
     _PWT_PROJECT_INDEX_LOADED=true
     _PWT_PROJECT_INDEX=""
-    local configs=("$PWT_PROJECTS_DIR"/*/config.json)
+    local configs=("$PWT_PROJECTS_DIR"/*/config)
     [ -f "${configs[0]}" ] || return 0
 
     # Disk cache: loading it is pure bash (zero spawns), so startup stays fast.
@@ -596,47 +1250,19 @@ build_project_index() {
         fi
     fi
 
-    _PWT_PROJECT_INDEX=$(jq -r '
-        input_filename as $f |
-        [
-            ($f | split("/")[-2]),
-            (.path // .main_app // ""),
-            (.worktrees_dir // ""),
-            (.branch_prefix // ""),
-            ((.base_port // "") | tostring),
-            (.remote // ""),
-            (([.alias // empty] + (.aliases // [])) | join(","))
-        ] | join("")
-    ' "${configs[@]}" 2>/dev/null) || _PWT_PROJECT_INDEX=""
+    # Pure-bash build: one read loop per config, zero subprocess spawns for
+    # the parse itself. An unreadable config only drops that project.
     # NOTE: fields are joined with the ASCII unit separator (US, 0x1f), not tabs:
     # tab is IFS whitespace in bash, so `read` would collapse empty fields.
-
-    # jq aborts the whole batch on the first malformed config.json, which
-    # would leave EVERY project unresolvable. Fall back to one jq per file so
-    # only the broken project drops out. (Rebuilds happen on cache misses
-    # only, so the extra spawns don't hit normal startup.)
-    if [ -z "$_PWT_PROJECT_INDEX" ] && [ "${#configs[@]}" -gt 0 ]; then
-        local cfg row
-        for cfg in "${configs[@]}"; do
-            row=$(jq -r '
-                input_filename as $f |
-                [
-                    ($f | split("/")[-2]),
-                    (.path // .main_app // ""),
-                    (.worktrees_dir // ""),
-                    (.branch_prefix // ""),
-                    ((.base_port // "") | tostring),
-                    (.remote // ""),
-                    (([.alias // empty] + (.aliases // [])) | join(","))
-                ] | join("")
-            ' "$cfg" 2>/dev/null) || row=""
-            if [ -z "$row" ]; then
-                pwt_debug "Skipping invalid project config: $cfg"
-                continue
-            fi
-            _PWT_PROJECT_INDEX+="${_PWT_PROJECT_INDEX:+$'\n'}$row"
-        done
-    fi
+    local cfg row
+    for cfg in "${configs[@]}"; do
+        row=$(_project_index_row "$cfg") || row=""
+        if [ -z "$row" ]; then
+            pwt_debug "Skipping unreadable project config: $cfg"
+            continue
+        fi
+        _PWT_PROJECT_INDEX+="${_PWT_PROJECT_INDEX:+$'\n'}$row"
+    done
 
     if [ -n "$_PWT_PROJECT_INDEX" ]; then
         mkdir -p "$PWT_DIR/cache"
@@ -645,7 +1271,7 @@ build_project_index() {
     fi
 }
 
-# Call after writing any config.json so the next lookup re-reads it
+# Call after writing any project config so the next lookup re-reads it
 invalidate_project_index() {
     _PWT_PROJECT_INDEX_LOADED=false
     _PWT_PROJECT_INDEX=""
@@ -720,9 +1346,9 @@ detect_project() {
         fi
     done <<< "$_PWT_PROJECT_INDEX"
 
-    # Pass 3: adopted worktrees can live outside worktrees_dir; match metadata
-    # paths (single jq over the whole metadata file)
-    if [ -f "$METADATA_FILE" ]; then
+    # Pass 3: adopted worktrees can live outside worktrees_dir; match recorded
+    # meta paths (pure-bash walk over state/<project>/*.meta)
+    if [ -d "$PWT_DIR/state" ]; then
         local meta_project meta_path
         while IFS=$'\t' read -r meta_project meta_path; do
             [ -n "$meta_path" ] && [ -d "$meta_path" ] || continue
@@ -734,7 +1360,7 @@ detect_project() {
                     return 0
                     ;;
             esac
-        done < <(jq -r 'to_entries[] | .key as $p | .value | to_entries[] | [$p, (.value.path // "")] | @tsv' "$METADATA_FILE" 2>/dev/null)
+        done < <(meta_all_project_paths)
     fi
 
     # No configured project found - try auto-detect from git
@@ -786,7 +1412,7 @@ resolve_project_alias() {
 
     local idx_name idx_path _wt _prefix _port _remote idx_aliases
     # First check if it's a real project (must have a main path, not just an alias pointer)
-    if [ -f "$PWT_PROJECTS_DIR/$name/config.json" ]; then
+    if [ -f "$PWT_PROJECTS_DIR/$name/config" ]; then
         while IFS=$'\037' read -r idx_name idx_path _wt _prefix _port _remote idx_aliases; do
             if [ "$idx_name" = "$name" ] && [ -n "$idx_path" ]; then
                 echo "$name"
@@ -818,7 +1444,7 @@ load_project_config() {
 
     # Resolve alias to real project name
     project=$(resolve_project_alias "$project")
-    local config_file="$PWT_PROJECTS_DIR/$project/config.json"
+    local config_file="$PWT_PROJECTS_DIR/$project/config"
 
     CURRENT_PROJECT="$project"
 
@@ -962,13 +1588,12 @@ cmd_init() {
         local project_dir="$PWT_PROJECTS_DIR/$project_name"
         mkdir -p "$project_dir"
 
-        cat > "$project_dir/config.json" << EOF
-{
-  "path": "$target_dir",
-  "remote": "$url",
-  "worktrees_dir": "${target_dir}-worktrees"
-}
+        cat > "$project_dir/config" << EOF
+path=$target_dir
+remote=$url
+worktrees_dir=${target_dir}-worktrees
 EOF
+        invalidate_project_index
 
         echo -e "${GREEN}✓ Cloned and configured: $project_name${NC}"
         echo ""
@@ -993,10 +1618,10 @@ EOF
     local remote_url=$(git remote get-url origin 2>/dev/null || echo "")
 
     # Check if already configured
-    if [ -f "$PWT_PROJECTS_DIR/$project_name/config.json" ]; then
+    if [ -f "$PWT_PROJECTS_DIR/$project_name/config" ]; then
         echo -e "${YELLOW}Already configured: $project_name${NC}"
         echo ""
-        cat "$PWT_PROJECTS_DIR/$project_name/config.json"
+        cat "$PWT_PROJECTS_DIR/$project_name/config"
         return 0
     fi
 
@@ -1004,24 +1629,17 @@ EOF
     local project_dir="$PWT_PROJECTS_DIR/$project_name"
     mkdir -p "$project_dir"
 
-    local config="{
-  \"path\": \"$repo_root\",
-  \"worktrees_dir\": \"${repo_root}-worktrees\""
-
-    if [ -n "$remote_url" ]; then
-        config="$config,
-  \"remote\": \"$remote_url\""
-    fi
-
-    config="$config
-}"
-
-    echo "$config" > "$project_dir/config.json"
+    {
+        echo "path=$repo_root"
+        echo "worktrees_dir=${repo_root}-worktrees"
+        [ -n "$remote_url" ] && echo "remote=$remote_url"
+        true
+    } > "$project_dir/config"
     invalidate_project_index
 
     echo -e "${GREEN}✓ Configured: $project_name${NC}"
     echo ""
-    cat "$project_dir/config.json"
+    cat "$project_dir/config"
     echo ""
     echo "Usage:"
     echo -e "  ${GREEN}pwt $project_name list${NC}"
@@ -1056,13 +1674,12 @@ cmd_init_named() {
         local project_dir="$PWT_PROJECTS_DIR/$project_name"
         mkdir -p "$project_dir"
 
-        cat > "$project_dir/config.json" << EOF
-{
-  "path": "$target_dir",
-  "remote": "$url",
-  "worktrees_dir": "${target_dir}-worktrees"
-}
+        cat > "$project_dir/config" << EOF
+path=$target_dir
+remote=$url
+worktrees_dir=${target_dir}-worktrees
 EOF
+        invalidate_project_index
 
         echo -e "${GREEN}✓ Cloned and configured: $project_name${NC}"
         echo ""
@@ -1086,10 +1703,10 @@ EOF
     local remote_url=$(git remote get-url origin 2>/dev/null || echo "")
 
     # Check if already configured
-    if [ -f "$PWT_PROJECTS_DIR/$project_name/config.json" ]; then
+    if [ -f "$PWT_PROJECTS_DIR/$project_name/config" ]; then
         echo -e "${YELLOW}Already configured: $project_name${NC}"
         echo ""
-        cat "$PWT_PROJECTS_DIR/$project_name/config.json"
+        cat "$PWT_PROJECTS_DIR/$project_name/config"
         return 0
     fi
 
@@ -1097,24 +1714,17 @@ EOF
     local project_dir="$PWT_PROJECTS_DIR/$project_name"
     mkdir -p "$project_dir"
 
-    local config="{
-  \"path\": \"$repo_root\",
-  \"worktrees_dir\": \"${repo_root}-worktrees\""
-
-    if [ -n "$remote_url" ]; then
-        config="$config,
-  \"remote\": \"$remote_url\""
-    fi
-
-    config="$config
-}"
-
-    echo "$config" > "$project_dir/config.json"
+    {
+        echo "path=$repo_root"
+        echo "worktrees_dir=${repo_root}-worktrees"
+        [ -n "$remote_url" ] && echo "remote=$remote_url"
+        true
+    } > "$project_dir/config"
     invalidate_project_index
 
     echo -e "${GREEN}✓ Configured as: $project_name${NC}"
     echo ""
-    cat "$project_dir/config.json"
+    cat "$project_dir/config"
     echo ""
     echo "Usage:"
     echo -e "  ${GREEN}pwt $project_name list${NC}"
@@ -1174,9 +1784,9 @@ cmd_discover() {
     # Get list of already configured project paths
     local configured_paths=()
     if [ -d "$PWT_PROJECTS_DIR" ]; then
-        for project_config in "$PWT_PROJECTS_DIR"/*/config.json; do
+        for project_config in "$PWT_PROJECTS_DIR"/*/config; do
             [ -f "$project_config" ] || continue
-            local path=$(jq -r '.path // empty' "$project_config" 2>/dev/null)
+            local path=$(state_get "$project_config" "path")
             [ -n "$path" ] || continue
             # Normalize to the physical path for symlink-safe comparison
             local resolved_path
@@ -1307,91 +1917,129 @@ cmd_discover() {
     fi
 }
 
-# Atomic write to metadata file with file locking
-# Usage: atomic_metadata_write <jq_filter> [jq_args...]
-atomic_metadata_write() {
-    local jq_filter="$1"
-    shift
+# ============================================
+# Worktree metadata (state v2: one key=value file per worktree)
+# ============================================
+# state/<project>/<worktree>.meta — each write rewrites one small file
+# atomically (tmp + mv). Unknown keys (user metadata like phase/next) are
+# preserved by state_set.
 
-    init_metadata
-
-    local lock_dir="$METADATA_FILE.lock"
-    local lock_pid_file="$lock_dir/pid"
-    # Create tmp in same directory as metadata for atomic mv (same filesystem)
-    local tmp_file
-    tmp_file="$(mktemp "${METADATA_FILE}.tmp.XXXXXX")"
-    local max_wait=50  # 5 seconds (50 * 0.1s)
-    local stale_threshold=60  # seconds - lock older than this is stale
-    local already_locked=false
-
-    # Create tmp_file early and set trap to clean it up on any exit
-    trap "rm -f '$tmp_file'" RETURN
-
-    # Check if we already own the lock (re-entrant call)
-    if [ -d "$lock_dir" ] && [ -f "$lock_pid_file" ]; then
-        local current_owner=$(cat "$lock_pid_file" 2>/dev/null)
-        if [ "$current_owner" = "$$" ]; then
-            already_locked=true
-        fi
-    fi
-
-    # Acquire lock using mkdir (atomic on all systems), unless we already own it
-    local waited=0
-    while [ "$already_locked" = false ] && ! mkdir "$lock_dir" 2>/dev/null; do
-        # Check for stale lock
-        if [ -f "$lock_pid_file" ]; then
-            local lock_pid=$(cat "$lock_pid_file" 2>/dev/null)
-            local lock_age=0
-            # Get lock age in seconds (portable: stat -f %m on macOS, stat -c %Y on Linux)
-            if stat --version >/dev/null 2>&1; then
-                lock_age=$(( $(date +%s) - $(stat -c %Y "$lock_pid_file" 2>/dev/null || echo 0) ))
-            else
-                lock_age=$(( $(date +%s) - $(stat -f %m "$lock_pid_file" 2>/dev/null || echo 0) ))
-            fi
-
-            # Remove stale lock if process is dead or lock is too old
-            if [ -n "$lock_pid" ]; then
-                if ! kill -0 "$lock_pid" 2>/dev/null || [ "$lock_age" -gt "$stale_threshold" ]; then
-                    rm -rf "$lock_dir" 2>/dev/null
-                    continue  # Retry acquiring lock
-                fi
-            fi
-        fi
-
-        waited=$((waited + 1))
-        if [ $waited -ge $max_wait ]; then
-            pwt_error "Error: Could not acquire lock on metadata file"
-            return 1
-        fi
-        sleep 0.1
-    done
-
-    # Write our PID to the lock (only if we acquired it)
-    if [ "$already_locked" = false ]; then
-        echo "$$" > "$lock_pid_file"
-        # Update trap to also clean lock after acquiring it
-        trap "rm -rf '$lock_dir' '$tmp_file'" RETURN
-    fi
-    # If already_locked, we keep the original trap that only cleans tmp_file
-
-    # Perform atomic write
-    if jq "$jq_filter" "$@" "$METADATA_FILE" > "$tmp_file"; then
-        mv "$tmp_file" "$METADATA_FILE"
-        return 0
-    else
-        return 1
-    fi
-    # trap handles cleanup on return
+# Directory holding a project's worktree meta files
+# Usage: meta_dir [project]
+meta_dir() {
+    echo "$PWT_DIR/state/${1:-${CURRENT_PROJECT:-unknown}}"
 }
 
-# Acquire metadata lock (for operations needing read-modify-write atomicity)
+# Path to one worktree's meta file
+# Usage: meta_file <name> [project]
+meta_file() {
+    local name="$1"
+    local project="${2:-${CURRENT_PROJECT:-unknown}}"
+    echo "$PWT_DIR/state/$project/$name.meta"
+}
+
+# Read one key from a meta file with zero subprocess forks (hot loops).
+# Sets the variable named by $1.
+# Usage: _meta_read_key_var <varname> <file> <key>
+_meta_read_key_var() {
+    local _varname="$1" _file="$2" _key="$3" _line _val=""
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in
+            "$_key="*)
+                _val="${_line#"$_key"=}"
+                case "$_val" in
+                    *\\*) _val=$(_state_unescape "$_val") ;;
+                esac
+                break
+                ;;
+        esac
+    done < "$_file"
+    eval "$_varname=\$_val"
+}
+
+# List a project's worktrees with their recorded paths (name<TAB>path)
+# Usage: meta_worktree_paths [project]
+meta_worktree_paths() {
+    local dir="$PWT_DIR/state/${1:-${CURRENT_PROJECT:-unknown}}"
+    [ -d "$dir" ] || return 0
+    local f name wt_path
+    for f in "$dir"/*.meta; do
+        [ -f "$f" ] || continue
+        name="${f##*/}"
+        name="${name%.meta}"
+        _meta_read_key_var wt_path "$f" "path"
+        printf '%s\t%s\n' "$name" "$wt_path"
+    done
+    return 0
+}
+
+# List every recorded worktree across all projects (project<TAB>path)
+meta_all_project_paths() {
+    local state_dir="$PWT_DIR/state"
+    [ -d "$state_dir" ] || return 0
+    local d f project wt_path
+    for d in "$state_dir"/*/; do
+        [ -d "$d" ] || continue
+        project="${d%/}"
+        project="${project##*/}"
+        for f in "$d"*.meta; do
+            [ -f "$f" ] || continue
+            _meta_read_key_var wt_path "$f" "path"
+            printf '%s\t%s\n' "$project" "$wt_path"
+        done
+    done
+    return 0
+}
+
+# Render one worktree meta file as pretty JSON (pure bash, output only)
+# Numeric values (like port) are emitted as JSON numbers.
+# Usage: meta_show_json <meta_file>
+meta_show_json() {
+    local file="$1" line key value out="" sep=""
+    echo "{"
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            *=*) ;;
+            *) continue ;;
+        esac
+        key="${line%%=*}"
+        value=$(_state_unescape "${line#*=}")
+        if [ -n "$out" ]; then
+            printf '%s,\n' "$out"
+        fi
+        if _state_key_is_numeric "$key" && [[ "$value" =~ ^[0-9]+$ ]]; then
+            out=$(printf '  "%s": %s' "$(json_escape "$key")" "$value")
+        else
+            out=$(printf '  "%s": "%s"' "$(json_escape "$key")" "$(json_escape "$value")")
+        fi
+    done < "$file"
+    [ -n "$out" ] && printf '%s\n' "$out"
+    echo "}"
+}
+
+# List allocated ports for a project's worktrees (one per line)
+# Usage: meta_ports [project]
+meta_ports() {
+    local dir="$PWT_DIR/state/${1:-${CURRENT_PROJECT:-unknown}}"
+    [ -d "$dir" ] || return 0
+    local f port
+    for f in "$dir"/*.meta; do
+        [ -f "$f" ] || continue
+        _meta_read_key_var port "$f" "port"
+        [ -n "$port" ] && printf '%s\n' "$port"
+    done
+    return 0
+}
+
+# Acquire metadata lock (for operations needing read-modify-write atomicity,
+# e.g. port allocation across concurrent creates)
 # Usage: acquire_metadata_lock
 # Returns: 0 on success, 1 on failure
 # IMPORTANT: Must call release_metadata_lock when done
 acquire_metadata_lock() {
     init_metadata
 
-    local lock_dir="$METADATA_FILE.lock"
+    local lock_dir="$PWT_DIR/state.lock"
     local lock_pid_file="$lock_dir/pid"
     local max_wait=50  # 5 seconds
     local stale_threshold=60
@@ -1430,7 +2078,7 @@ acquire_metadata_lock() {
 # Release metadata lock
 # Usage: release_metadata_lock
 release_metadata_lock() {
-    local lock_dir="$METADATA_FILE.lock"
+    local lock_dir="$PWT_DIR/state.lock"
     rm -rf "$lock_dir" 2>/dev/null
 }
 
@@ -1448,27 +2096,20 @@ save_metadata() {
     local created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local project="${CURRENT_PROJECT:-unknown}"
 
-    atomic_metadata_write \
-       '.[$project][$name] = {
-           path: $path,
-           branch: $branch,
-           base: $base,
-           base_commit: $base_commit,
-           port: $port,
-           description: $description,
-           mode: $mode,
-           created_at: $created_at
-       }' \
-       --arg project "$project" \
-       --arg name "$name" \
-       --arg path "$path" \
-       --arg branch "$branch" \
-       --arg base "$base" \
-       --arg base_commit "$base_commit" \
-       --argjson port "$port" \
-       --arg description "$description" \
-       --arg mode "$mode" \
-       --arg created_at "$created_at"
+    local file tmp
+    file=$(meta_file "$name" "$project")
+    mkdir -p "$(dirname "$file")"
+    tmp="${file}.tmp.$$"
+    {
+        printf 'path=%s\n' "$(_state_escape "$path")"
+        printf 'branch=%s\n' "$(_state_escape "$branch")"
+        printf 'base=%s\n' "$(_state_escape "$base")"
+        printf 'base_commit=%s\n' "$(_state_escape "$base_commit")"
+        printf 'port=%s\n' "$port"
+        printf 'description=%s\n' "$(_state_escape "$description")"
+        printf 'mode=%s\n' "$(_state_escape "$mode")"
+        printf 'created_at=%s\n' "$created_at"
+    } > "$tmp" && mv "$tmp" "$file"
 }
 
 # Get worktree metadata field (namespaced by project)
@@ -1478,10 +2119,8 @@ get_metadata() {
     local field="$2"
     local project="${CURRENT_PROJECT:-unknown}"
 
-    init_metadata
-
-    jq -r --arg project "$project" --arg name "$name" --arg field "$field" \
-        '.[$project][$name][$field] // empty' "$METADATA_FILE" 2>/dev/null
+    # Inline path (meta_file) to avoid a subshell: this is the hottest read
+    state_get "$PWT_DIR/state/$project/$name.meta" "$field"
 }
 
 # Get port for a worktree, with legacy fallback
@@ -1503,17 +2142,24 @@ get_worktree_port() {
 get_extra_metadata() {
     local name="$1"
     local project="${CURRENT_PROJECT:-unknown}"
+    local file line key value out=""
 
-    init_metadata
-
-    jq -r --arg project "$project" --arg name "$name" '
-        .[$project][$name] // {} |
-        to_entries |
-        map(select(.key | test("^(path|branch|base|base_commit|created_at|mode)$") | not)) |
-        map(select(.value != null and .value != "")) |
-        map("\(.key)=\(.value)") |
-        join(" ")
-    ' "$METADATA_FILE" 2>/dev/null
+    file=$(meta_file "$name" "$project")
+    [ -f "$file" ] || { echo ""; return 0; }
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            *=*) ;;
+            *) continue ;;
+        esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        case "$key" in
+            path|branch|base|base_commit|created_at|mode) continue ;;
+        esac
+        [ -n "$value" ] || continue
+        out="${out:+$out }${key}=$(_state_unescape "$value")"
+    done < "$file"
+    echo "$out"
 }
 
 # Remove worktree metadata (namespaced by project)
@@ -1521,8 +2167,8 @@ get_extra_metadata() {
 remove_metadata() {
     local name="$1"
     local project="${CURRENT_PROJECT:-unknown}"
-    atomic_metadata_write 'del(.[$project][$name])' \
-        --arg project "$project" --arg name "$name"
+    rm -f "$(meta_file "$name" "$project")"
+    events_append "$project" "$name" "remove" ""
 }
 
 # Update worktree metadata field (namespaced by project)
@@ -1533,21 +2179,20 @@ update_metadata() {
     local field="$2"
     local value="$3"
     local project="${CURRENT_PROJECT:-unknown}"
-    atomic_metadata_write \
-       'if .[$project][$name] then .[$project][$name][$field] = $value else . end' \
-       --arg project "$project" --arg name "$name" --arg field "$field" --arg value "$value"
+    local file
+    file=$(meta_file "$name" "$project")
+    # Match v1 semantics: only update worktrees that have metadata
+    [ -f "$file" ] || return 0
+    state_set "$file" "$field" "$value"
+    events_append "$project" "$name" "meta_change" "$field=$value"
 }
 
 # Update worktree metadata field with JSON value (for numbers, booleans, etc.)
 # Usage: update_metadata_json <name> <field> <json_value>
 update_metadata_json() {
-    local name="$1"
-    local field="$2"
-    local json_value="$3"
-    local project="${CURRENT_PROJECT:-unknown}"
-    atomic_metadata_write \
-       'if .[$project][$name] then .[$project][$name][$field] = $value else . end' \
-       --arg project "$project" --arg name "$name" --arg field "$field" --argjson value "$json_value"
+    # v2 state is untyped (key=value); kept as an alias for callers that
+    # historically passed raw JSON values (numbers like port)
+    update_metadata "$@"
 }
 
 # Get project config value
@@ -1555,11 +2200,9 @@ update_metadata_json() {
 get_project_config() {
     local project="$1"
     local key="$2"
-    local config_file="$PROJECTS_DIR/$project/config.json"
+    local config_file="$PROJECTS_DIR/$project/config"
 
-    if [ -f "$config_file" ]; then
-        jq -r --arg key "$key" '.[$key] // empty' "$config_file" 2>/dev/null
-    fi
+    state_get "$config_file" "$key"
 }
 
 # ============================================
@@ -1568,24 +2211,20 @@ get_project_config() {
 
 # Resolve AI tool command from config or PATH
 # Returns the command to execute for the given tool name
-# Resolution order: config.json > PATH > empty
+# Resolution order: global config > PATH > empty
 resolve_ai_tool() {
     local name="${1:-}"
-    local config_file="$PWT_DIR/config.json"
+    local config_file="$PWT_DIR/config"
 
     # If empty, use default
     if [ -z "$name" ]; then
-        if [ -f "$config_file" ]; then
-            name=$(jq -r '.ai.default // empty' "$config_file" 2>/dev/null)
-        fi
+        name=$(state_get "$config_file" "ai.default")
         [ -z "$name" ] && name="claude"
     fi
 
     # Look up in config
-    local cmd=""
-    if [ -f "$config_file" ]; then
-        cmd=$(jq -r --arg name "$name" '.ai.tools[$name] // empty' "$config_file" 2>/dev/null)
-    fi
+    local cmd
+    cmd=$(state_get "$config_file" "ai.tools.$name")
 
     # Fallback to PATH
     if [ -z "$cmd" ] && command -v "$name" &>/dev/null; then
@@ -1599,98 +2238,52 @@ resolve_ai_tool() {
 add_ai_tool() {
     local name="$1"
     local cmd="$2"
-    local config_file="$PWT_DIR/config.json"
-
-    [ ! -f "$config_file" ] && echo '{}' > "$config_file"
-
-    local tmp_file
-    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg name "$name" --arg cmd "$cmd" '
-        .ai //= {} |
-        .ai.tools //= {} |
-        .ai.tools[$name] = $cmd
-    ' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+    state_set "$PWT_DIR/config" "ai.tools.$name" "$cmd"
 }
 
 # Remove an AI tool from global config
 remove_ai_tool() {
     local name="$1"
-    local config_file="$PWT_DIR/config.json"
-
-    [ ! -f "$config_file" ] && return 0
-
-    local tmp_file
-    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg name "$name" 'del(.ai.tools[$name])' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+    state_del "$PWT_DIR/config" "ai.tools.$name"
 }
 
 # Set default AI tool
 set_default_ai_tool() {
     local name="$1"
-    local config_file="$PWT_DIR/config.json"
-
-    [ ! -f "$config_file" ] && echo '{}' > "$config_file"
-
-    local tmp_file
-    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg name "$name" '.ai.default = $name' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+    state_set "$PWT_DIR/config" "ai.default" "$name"
 }
 
 # Add an editor to global config
 add_editor_tool() {
     local name="$1"
     local cmd="$2"
-    local config_file="$PWT_DIR/config.json"
-
-    [ ! -f "$config_file" ] && echo '{}' > "$config_file"
-
-    local tmp_file
-    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg name "$name" --arg cmd "$cmd" '
-        .editor //= {} |
-        .editor.tools //= {} |
-        .editor.tools[$name] = $cmd
-    ' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+    state_set "$PWT_DIR/config" "editor.tools.$name" "$cmd"
 }
 
 # Remove an editor from global config
 remove_editor_tool() {
     local name="$1"
-    local config_file="$PWT_DIR/config.json"
-
-    [ ! -f "$config_file" ] && return 0
-
-    local tmp_file
-    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg name "$name" 'del(.editor.tools[$name])' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+    state_del "$PWT_DIR/config" "editor.tools.$name"
 }
 
 # Set default editor
 set_default_editor_tool() {
     local name="$1"
-    local config_file="$PWT_DIR/config.json"
-
-    [ ! -f "$config_file" ] && echo '{}' > "$config_file"
-
-    local tmp_file
-    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg name "$name" '.editor.default = $name' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+    state_set "$PWT_DIR/config" "editor.default" "$name"
 }
 
 # Get editor command (from config, then $EDITOR)
 get_editor_cmd() {
     local name="${1:-}"
-    local config_file="$PWT_DIR/config.json"
+    local config_file="$PWT_DIR/config"
 
     # If name specified, look it up
     if [ -n "$name" ]; then
-        if [ -f "$config_file" ]; then
-            local cmd
-            cmd=$(jq -r --arg name "$name" '.editor.tools[$name] // empty' "$config_file" 2>/dev/null)
-            if [ -n "$cmd" ]; then
-                echo "$cmd"
-                return 0
-            fi
+        local cmd
+        cmd=$(state_get "$config_file" "editor.tools.$name")
+        if [ -n "$cmd" ]; then
+            echo "$cmd"
+            return 0
         fi
         # Check if it's in PATH
         if command -v "$name" &>/dev/null; then
@@ -1703,10 +2296,10 @@ get_editor_cmd() {
     # No name: use default from config, then $EDITOR
     if [ -f "$config_file" ]; then
         local default_name
-        default_name=$(jq -r '.editor.default // empty' "$config_file" 2>/dev/null)
+        default_name=$(state_get "$config_file" "editor.default")
         if [ -n "$default_name" ]; then
             local cmd
-            cmd=$(jq -r --arg name "$default_name" '.editor.tools[$name] // empty' "$config_file" 2>/dev/null)
+            cmd=$(state_get "$config_file" "editor.tools.$default_name")
             if [ -n "$cmd" ]; then
                 echo "$cmd"
                 return 0
@@ -2247,6 +2840,15 @@ BGEOF
             open(STDIN, "<", "/dev/null");
             open(STDOUT, ">", $ARGV[1]);
             open(STDERR, ">&STDOUT");
+            # Close every inherited descriptor above stderr. Without this the
+            # daemon keeps the caller pipes open (bats output pipe, $(...)
+            # capture, CI log fd), and on Linux the caller blocks until the
+            # daemon exits. macOS happens to hide it; Linux does not.
+            my $max = POSIX::sysconf(&POSIX::_SC_OPEN_MAX) || 256;
+            $max = 4096 if $max > 4096 || $max < 0;   # ulimit -n can be huge
+            for my $fd (3 .. $max) {
+                POSIX::close($fd);
+            }
             exec("/bin/bash", $ARGV[0]) or die "exec failed: $!";
         }
         open(my $fh, ">", $ARGV[2]);
@@ -2295,7 +2897,7 @@ BGEOF
         pwt_error "Background job failed to start"
         echo "Last output:" >&2
         tail -20 "$log_file" 2>/dev/null >&2 || echo "(no output)" >&2
-        rm -f "$PWT_JOBS_DIR/${job_id}.json" 2>/dev/null
+        rm -f "$PWT_JOBS_DIR/${job_id}.job" 2>/dev/null
         return $EXIT_ERROR
     fi
 
@@ -2547,17 +3149,13 @@ init_project() {
 
     if [ ! -d "$project_dir" ]; then
         mkdir -p "$project_dir/hooks"
-        cat > "$project_dir/config.json" << 'EOF'
-{
-  "name": "PROJECT_NAME",
-  "main_app": "",
-  "worktrees_dir": "",
-  "branch_prefix": "",
-  "post_create_commands": [],
-  "pre_remove_commands": []
-}
+        cat > "$project_dir/config" << EOF
+name=$project
+main_app=
+worktrees_dir=
+branch_prefix=
 EOF
-        sed_inplace "s/PROJECT_NAME/$project/" "$project_dir/config.json"
+        invalidate_project_index
         echo -e "${GREEN}✓ Created project config: $project_dir${NC}"
     fi
 }
@@ -2589,13 +3187,11 @@ next_available_port() {
     allocated_ports+=("$BASE_PORT")
 
     # Read ports from metadata for current project (primary source)
-    if [ -f "$METADATA_FILE" ]; then
-        while IFS= read -r port; do
-            if [[ "$port" =~ ^[0-9]+$ ]]; then
-                allocated_ports+=("$port")
-            fi
-        done < <(jq -r --arg project "$project" '.[$project] // {} | .[].port // empty' "$METADATA_FILE" 2>/dev/null)
-    fi
+    while IFS= read -r port; do
+        if [[ "$port" =~ ^[0-9]+$ ]]; then
+            allocated_ports+=("$port")
+        fi
+    done < <(meta_ports "$project")
 
     # Also scan directory names (fallback for legacy worktrees without metadata)
     if [ -d "$WORKTREES_DIR" ]; then
@@ -2675,10 +3271,203 @@ check_server_status() {
 #   --from-current    Create from current branch
 
 
+# Probe a TCP port on localhost using pure bash (/dev/tcp), no nc/curl needed.
+# The connect runs in a background subshell with a ~2s guard so a hung connect
+# can never stall the caller's wait loop.
+# Usage: _tcp_port_ready <port>
+_tcp_port_ready() {
+    local port="$1"
+    ( exec 3<>"/dev/tcp/127.0.0.1/$port" ) >/dev/null 2>&1 &
+    local probe=$!
+    local guard=40
+    while kill -0 "$probe" 2>/dev/null && [ "$guard" -gt 0 ]; do
+        sleep 0.05
+        guard=$((guard - 1))
+    done
+    if kill -0 "$probe" 2>/dev/null; then
+        kill "$probe" 2>/dev/null || true
+        wait "$probe" 2>/dev/null || true
+        return 1
+    fi
+    wait "$probe" 2>/dev/null
+}
+
+# Command: server wait
+# Block until a worktree's dev server is ready.
+# Default readiness: the worktree's allocated port accepts TCP connections.
+# With --log-contains: the server job's log contains the given string.
+# Usage: pwt server wait [worktree] [--log-contains <str>] [--timeout <seconds>]
+# Exit: 0 ready, 3 worktree/port/job not found, 5 timeout
+cmd_server_wait() {
+    local arg="" log_contains="" timeout=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                echo "Usage: pwt server wait [worktree] [--log-contains <str>] [--timeout <seconds>]"
+                echo ""
+                echo "Block until the worktree's dev server is ready."
+                echo ""
+                echo "Readiness checks:"
+                echo "  default             Allocated port accepts TCP connections"
+                echo "  --log-contains STR  Server job log contains STR (needs a --bg server job)"
+                echo ""
+                echo "Options:"
+                echo "  --timeout N     Give up after N seconds (default: ${PWT_WAIT_TIMEOUT_DEFAULT}s)"
+                echo "  -h, --help      Show this help"
+                echo ""
+                echo "Worktree defaults to the current one (same detection as 'pwt server')."
+                echo ""
+                echo "Exit codes: 0 ready, $EXIT_NOT_FOUND not found (worktree/port/job), $EXIT_TIMEOUT timeout"
+                echo ""
+                echo "Examples:"
+                echo "  pwt server TICKET-123 --bg && pwt server wait TICKET-123 --timeout 120"
+                echo "  pwt server wait TICKET-123 --log-contains 'Listening on'"
+                return 0
+                ;;
+            --log-contains)
+                if [ $# -lt 2 ]; then
+                    pwt_error "Missing value for --log-contains"
+                    return $EXIT_USAGE
+                fi
+                log_contains="$2"
+                shift 2
+                ;;
+            --log-contains=*) log_contains="${1#--log-contains=}"; shift ;;
+            --timeout)
+                if [ $# -lt 2 ]; then
+                    pwt_error "Missing value for --timeout"
+                    return $EXIT_USAGE
+                fi
+                timeout="$2"
+                shift 2
+                ;;
+            --timeout=*) timeout="${1#--timeout=}"; shift ;;
+            -*)
+                pwt_error "Unknown option: $1"
+                echo "Usage: pwt server wait [worktree] [--log-contains <str>] [--timeout <seconds>]" >&2
+                return $EXIT_USAGE
+                ;;
+            *) [ -z "$arg" ] && arg="$1"; shift ;;
+        esac
+    done
+
+    [ -z "$timeout" ] && timeout="${PWT_WAIT_TIMEOUT_DEFAULT:-600}"
+    if ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
+        pwt_error "Invalid --timeout value: $timeout (expected seconds as integer)"
+        return $EXIT_USAGE
+    fi
+
+    # Resolve worktree: same detection order as cmd_server
+    # (argument > pwd inside worktree > pwd inside main app > current symlink)
+    local current_dir=$(pwd)
+    local worktree_name="" worktree_path=""
+    if [ -n "$arg" ]; then
+        if [ "$arg" = "@" ]; then
+            worktree_name="@"
+            worktree_path="$MAIN_APP"
+        else
+            worktree_path="$WORKTREES_DIR/$arg"
+            if [ ! -d "$worktree_path" ]; then
+                local match=$(resolve_worktree_path "$arg" 2>/dev/null || true)
+                if [ -n "$match" ] && [ -d "$match" ]; then
+                    worktree_path="$match"
+                fi
+            fi
+            if [ ! -d "$worktree_path" ]; then
+                pwt_error "Worktree not found: $arg"
+                return $EXIT_NOT_FOUND
+            fi
+            worktree_name=$(basename "$worktree_path")
+        fi
+    elif [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+        worktree_name=$(basename "$current_dir")
+    elif [[ "$current_dir" == "$MAIN_APP"* ]]; then
+        worktree_name="@"
+    elif worktree_name=$(get_current_from_symlink 2>/dev/null); then
+        :
+    else
+        pwt_error "No worktree specified or detected"
+        echo "Usage: pwt server wait [worktree] [--log-contains <str>] [--timeout <seconds>]" >&2
+        return $EXIT_USAGE
+    fi
+
+    # Readiness source: job log (--log-contains) or allocated TCP port
+    local port="" log_file=""
+    if [ -n "$log_contains" ]; then
+        load_module jobs
+        _init_jobs_dir
+        # Find the worktree's server job: prefer a running one, else most recent
+        local fallback_log="" json_file j_wt j_cmd j_id
+        for json_file in $(ls -t "$PWT_JOBS_DIR"/*.job 2>/dev/null); do
+            [ -f "$json_file" ] || continue
+            j_wt=$(state_get "$json_file" "worktree")
+            [ "$j_wt" = "$worktree_name" ] || continue
+            j_cmd=$(state_get "$json_file" "command")
+            [ "$j_cmd" = "server" ] || continue
+            j_id=$(state_get "$json_file" "id")
+            local j_log
+            j_log=$(state_get "$json_file" "log")
+            [ -z "$fallback_log" ] && fallback_log="$j_log"
+            if _is_job_alive "$j_id"; then
+                log_file="$j_log"
+                break
+            fi
+        done
+        [ -z "$log_file" ] && log_file="$fallback_log"
+        if [ -z "$log_file" ]; then
+            pwt_error "No server job found for worktree: $worktree_name"
+            echo "Start one with: pwt server $worktree_name --bg" >&2
+            return $EXIT_NOT_FOUND
+        fi
+    else
+        if [ "$worktree_name" = "@" ]; then
+            port="${BASE_PORT:-5000}"
+        else
+            port=$(get_worktree_port "$worktree_name")
+        fi
+        if [ -z "$port" ]; then
+            pwt_error "No port allocated for worktree: $worktree_name"
+            echo "Check 'pwt info $worktree_name' or run 'pwt fix-port $worktree_name'" >&2
+            echo "For log-based readiness: pwt server wait $worktree_name --log-contains <str>" >&2
+            return $EXIT_NOT_FOUND
+        fi
+    fi
+
+    # Poll every 0.5s; two ticks per second of budget
+    local ticks=$((timeout * 2))
+    while :; do
+        if [ -n "$log_contains" ]; then
+            if [ -f "$log_file" ] && grep -qF -- "$log_contains" "$log_file"; then
+                echo -e "${GREEN}Ready:${NC} $worktree_name (log contains: $log_contains)"
+                return 0
+            fi
+        else
+            if _tcp_port_ready "$port"; then
+                echo -e "${GREEN}Ready:${NC} $worktree_name (port $port)"
+                return 0
+            fi
+        fi
+        if [ "$ticks" -le 0 ]; then
+            pwt_error "Timeout: server for $worktree_name not ready after ${timeout}s"
+            echo "Check logs with: pwt logs $worktree_name" >&2
+            return $EXIT_TIMEOUT
+        fi
+        sleep 0.5
+        ticks=$((ticks - 1))
+    done
+}
+
 # Command: server
 # Start the server using Pwtfile's server() function
 # Usage: cmd_server [worktree]
 cmd_server() {
+    # Subcommand: pwt server wait [worktree] [--log-contains <str>] [--timeout <s>]
+    if [ "${1:-}" = "wait" ]; then
+        shift
+        cmd_server_wait "$@"
+        return $?
+    fi
+
     # Parse server-specific flags (--bg, --no-input, --help)
     # Separate worktree arg from pwtfile args (like --worker)
     local worktree_arg=""
@@ -2690,8 +3479,10 @@ cmd_server() {
         case "$1" in
             -h|--help)
                 echo "Usage: pwt server|s [worktree] [--bg] [--no-input] [pwtfile-flags...]"
+                echo "       pwt server wait [worktree] [--log-contains <str>] [--timeout <s>]"
                 echo ""
                 echo "Start development server for a worktree."
+                echo "'pwt server wait' blocks until the server is ready (see: pwt server wait --help)."
                 echo ""
                 echo "Arguments:"
                 echo "  worktree        Worktree name (default: current worktree or symlink)"
@@ -2777,7 +3568,20 @@ cmd_server() {
             # must not save navigation state or fall into the fzf picker
             local candidate_match=$(resolve_worktree_path "$arg" 2>/dev/null || true)
             if [ -z "$candidate_match" ] || [ ! -d "$candidate_match" ]; then
-                if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+                # Compare symlink-resolved paths: inside a worktree reached
+                # through the project's 'current' symlink, $PWD is
+                # .../projects/<p>/current, which never matches WORKTREES_DIR.
+                # Without resolving, `pwt server stop` from there is taken as
+                # a worktree named "stop" instead of a Pwtfile argument.
+                # Only inside a worktree is the context unambiguous enough to
+                # read an unknown positional as a Pwtfile argument. From the
+                # main app it stays a worktree lookup (most likely a typo) -
+                # see "server <worktree> fails for nonexistent worktree".
+                local resolved_dir resolved_wt_dir
+                resolved_dir=$(cd "$current_dir" 2>/dev/null && pwd -P) || resolved_dir="$current_dir"
+                resolved_wt_dir=$(cd "$WORKTREES_DIR" 2>/dev/null && pwd -P) || resolved_wt_dir="$WORKTREES_DIR"
+                if [[ "$current_dir" == "$WORKTREES_DIR"/* ]] || \
+                   [[ "$resolved_dir" == "$resolved_wt_dir"/* ]]; then
                     arg_is_pwtfile_arg=true
                 fi
             fi
@@ -2910,6 +3714,8 @@ cmd_server() {
     # Actually cd to worktree path (for Pwtfile commands that use pwd)
     cd "$worktree_path" || exit 1
 
+    events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "server_start" "port=$port"
+
     # Run Pwtfile server phase
     run_pwtfile "server"
 }
@@ -3033,27 +3839,30 @@ cmd_current() {
             echo "$output_path"
             ;;
         json)
-            jq -n -c \
-                --arg name "$name" \
-                --arg branch "$branch" \
-                --arg symlink_path "$symlink_path" \
-                --arg resolved_path "$resolved_path" \
-                --arg port "$port" \
-                --arg marker "$marker" \
-                --arg description "$desc" \
-                --argjson from_symlink "$from_symlink" '
-                {
-                    in_worktree: true,
-                    name: $name,
-                    branch: $branch,
-                    symlink_path: $symlink_path,
-                    resolved_path: $resolved_path
-                }
-                + (if $port != "" then {port: ($port | tonumber)} else {} end)
-                + (if $marker != "" then {marker: $marker} else {} end)
-                + (if $description != "" then {description: $description} else {} end)
-                + (if $from_symlink then {from_symlink: true} else {} end)
-                '
+            local _json _e
+            _json="{\"in_worktree\":true"
+            json_escape_var _e "$name";          _json+=",\"name\":\"$_e\""
+            json_escape_var _e "$branch";        _json+=",\"branch\":\"$_e\""
+            json_escape_var _e "$symlink_path";  _json+=",\"symlink_path\":\"$_e\""
+            json_escape_var _e "$resolved_path"; _json+=",\"resolved_path\":\"$_e\""
+            if [ -n "$port" ]; then
+                if [[ "$port" =~ ^[0-9]+$ ]]; then
+                    _json+=",\"port\":$port"
+                else
+                    _json+=",\"port\":null"
+                fi
+            fi
+            if [ -n "$marker" ]; then
+                json_escape_var _e "$marker"
+                _json+=",\"marker\":\"$_e\""
+            fi
+            if [ -n "$desc" ]; then
+                json_escape_var _e "$desc"
+                _json+=",\"description\":\"$_e\""
+            fi
+            [ "$from_symlink" = true ] && _json+=",\"from_symlink\":true"
+            _json+="}"
+            echo "$_json"
             ;;
         default)
             # stdout=symlink path (stable), stderr=context (Unix-style)
@@ -3182,7 +3991,7 @@ find_worktree_name_by_path() {
             echo "$name"
             return 0
         fi
-    done < <(jq -r --arg project "$project" '.[$project] // {} | to_entries[] | [.key, (.value.path // "")] | @tsv' "$METADATA_FILE" 2>/dev/null)
+    done < <(meta_worktree_paths "$project")
 
     return 1
 }
@@ -3208,7 +4017,7 @@ list_known_worktree_entries() {
         [[ "$seen" == *"|$name|"* ]] && continue
         printf '%s\t%s\n' "$name" "$path"
         seen="${seen}|${name}|"
-    done < <(jq -r --arg project "$project" '.[$project] // {} | to_entries[] | [.key, (.value.path // "")] | @tsv' "$METADATA_FILE" 2>/dev/null)
+    done < <(meta_worktree_paths "$project")
 }
 
 # Update symlink atomically
@@ -3290,12 +4099,6 @@ cmd_ps1() {
 # Usage: _use_interactive_select [query]
 _use_interactive_select() {
     local initial_query="${1:-}"
-    # Check if fzf is installed
-    if ! command -v fzf &>/dev/null; then
-        pwt_error "Error: fzf is required for pwt use --select"
-        echo "Install with: brew install fzf"
-        exit 1
-    fi
 
     # Build enriched list of worktrees
     local items=()
@@ -3326,7 +4129,7 @@ _use_interactive_select() {
     fi
 
     local formatted
-    formatted=$(printf '%s\n' "${items[@]}" | column -t -s'|')
+    formatted=$(printf '%s\n' "${items[@]}" | align_columns)
 
     # Build preview command
     local preview_cmd="name=\$(echo {} | awk '{print \$1}'); "
@@ -3336,16 +4139,20 @@ _use_interactive_select() {
     preview_cmd+="  pwt info \"\$name\" 2>/dev/null || echo \"Worktree: \$name\"; "
     preview_cmd+="fi"
 
-    # Run fzf
+    # Run fzf when available, otherwise the builtin picker
     local selected
-    selected=$(echo "$formatted" | fzf \
-        --height=60% \
-        --reverse \
-        --ansi \
-        --header=$'Select worktree to set as current\n↵:use  Esc:cancel' \
-        --preview="$preview_cmd" \
-        --preview-window=right:45%:wrap \
-        ${initial_query:+--query="$initial_query"})
+    if command -v fzf &>/dev/null; then
+        selected=$(echo "$formatted" | fzf \
+            --height=60% \
+            --reverse \
+            --ansi \
+            --header=$'Select worktree to set as current\n↵:use  Esc:cancel' \
+            --preview="$preview_cmd" \
+            --preview-window=right:45%:wrap \
+            ${initial_query:+--query="$initial_query"})
+    else
+        selected=$(echo "$formatted" | pick_fallback "Select worktree to set as current" "$initial_query") || selected=""
+    fi
 
     if [ -z "$selected" ]; then
         exit 0
@@ -3619,13 +4426,13 @@ cmd_info() {
     load_module jobs
     local running_jobs=""
     local _job_json
-    for _job_json in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.json; do
+    for _job_json in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
         [ -f "$_job_json" ] || continue
         local _j_wt _j_cmd _j_id _j_status
-        _j_wt=$(jq -r '.worktree // empty' "$_job_json" 2>/dev/null)
-        _j_cmd=$(jq -r '.command // empty' "$_job_json" 2>/dev/null)
-        _j_id=$(jq -r '.id // empty' "$_job_json" 2>/dev/null)
-        _j_status=$(jq -r '.status // empty' "$_job_json" 2>/dev/null)
+        _j_wt=$(state_get "$_job_json" "worktree")
+        _j_cmd=$(state_get "$_job_json" "command")
+        _j_id=$(state_get "$_job_json" "id")
+        _j_status=$(state_get "$_job_json" "status")
         [ "$_j_wt" = "$name" ] && [ "$_j_status" = "running" ] || continue
         _is_job_alive "$_j_id" || continue
         running_jobs="${running_jobs:+$running_jobs, }$_j_cmd ($_j_id)"
@@ -3643,37 +4450,37 @@ cmd_info() {
 
     # Machine-readable output for scripts/agents
     if [ "$porcelain" = true ]; then
-        jq -n \
-            --arg name "$name" \
-            --arg project "$CURRENT_PROJECT" \
-            --arg branch "$branch" \
-            --arg upstream "$upstream" \
-            --arg commit "$commit" \
-            --arg commit_msg "$commit_msg" \
-            --arg port "$port" \
-            --arg server "$server_state" \
-            --arg server_pid "$server_pid" \
-            --arg jobs "$running_jobs" \
-            --arg path "$worktree_dir" \
-            --arg mode "$mode" \
-            --arg created "$created" \
-            --arg description "$desc" \
-            '{
-                name: $name,
-                project: $project,
-                branch: $branch,
-                upstream: (if $upstream == "-" then null else $upstream end),
-                commit: $commit,
-                commit_message: $commit_msg,
-                port: (if ($port | test("^[0-9]+$")) then ($port | tonumber) else null end),
-                server: $server,
-                server_pid: (if $server_pid == "" then null else ($server_pid | tonumber) end),
-                jobs: (if $jobs == "" then [] else ($jobs | split(", ")) end),
-                path: $path,
-                mode: (if $mode == "" then null else $mode end),
-                created_at: (if $created == "" then null else $created end),
-                description: (if $description == "" then null else $description end)
-            }'
+        local _upstream_json
+        if [ "$upstream" = "-" ]; then _upstream_json="null"; else _upstream_json=$(json_str "$upstream"); fi
+        local _jobs_json="[]"
+        if [ -n "$running_jobs" ]; then
+            _jobs_json="["
+            local _rest="$running_jobs" _item _first=true
+            while [ -n "$_rest" ]; do
+                _item="${_rest%%, *}"
+                if [ "$_item" = "$_rest" ]; then _rest=""; else _rest="${_rest#*, }"; fi
+                [ "$_first" = true ] || _jobs_json+=","
+                _jobs_json+=$(json_str "$_item")
+                _first=false
+            done
+            _jobs_json+="]"
+        fi
+        echo "{"
+        echo "  \"name\": $(json_str "$name"),"
+        echo "  \"project\": $(json_str "$CURRENT_PROJECT"),"
+        echo "  \"branch\": $(json_str "$branch"),"
+        echo "  \"upstream\": $_upstream_json,"
+        echo "  \"commit\": $(json_str "$commit"),"
+        echo "  \"commit_message\": $(json_str "$commit_msg"),"
+        echo "  \"port\": $(json_num_or_null "$port"),"
+        echo "  \"server\": $(json_str "$server_state"),"
+        echo "  \"server_pid\": $(json_num_or_null "$server_pid"),"
+        echo "  \"jobs\": $_jobs_json,"
+        echo "  \"path\": $(json_str "$worktree_dir"),"
+        echo "  \"mode\": $(json_str_or_null "$mode"),"
+        echo "  \"created_at\": $(json_str_or_null "$created"),"
+        echo "  \"description\": $(json_str_or_null "$desc")"
+        echo "}"
         return 0
     fi
 
@@ -3921,17 +4728,20 @@ cmd_meta() {
             # List all metadata for current project (key=value format)
             echo -e "${BLUE}Worktree Metadata ($project):${NC}"
             echo ""
-            jq -r --arg project "$project" '
-              .[$project] // {} | to_entries[] |
-              "\(.key):",
-              "  path=\(.value.path // "")",
-              "  branch=\(.value.branch // "")",
-              "  base=\(.value.base // "")@\(.value.base_commit // "")",
-              "  port=\(.value.port // "")",
-              "  description=\(.value.description // "")",
-              "  created=\(.value.created_at // "")",
-              ""
-            ' "$METADATA_FILE"
+            local _mf _wt
+            for _mf in "$(meta_dir "$project")"/*.meta; do
+                [ -f "$_mf" ] || continue
+                _wt=$(basename "$_mf")
+                _wt="${_wt%.meta}"
+                echo "${_wt}:"
+                echo "  path=$(state_get "$_mf" "path")"
+                echo "  branch=$(state_get "$_mf" "branch")"
+                echo "  base=$(state_get "$_mf" "base")@$(state_get "$_mf" "base_commit")"
+                echo "  port=$(state_get "$_mf" "port")"
+                echo "  description=$(state_get "$_mf" "description")"
+                echo "  created=$(state_get "$_mf" "created_at")"
+                echo ""
+            done
             ;;
         show)
             if [ -z "$name" ]; then
@@ -3939,12 +4749,13 @@ cmd_meta() {
                 echo "Usage: pwt meta show <worktree>"
                 exit 1
             fi
-            local meta=$(jq --arg project "$project" --arg name "$name" '.[$project][$name]' "$METADATA_FILE")
-            if [ "$meta" = "null" ]; then
+            local _mf
+            _mf=$(meta_file "$name" "$project")
+            if [ ! -f "$_mf" ]; then
                 echo -e "${YELLOW}No metadata found for: $name${NC}"
             else
                 echo -e "${BLUE}Metadata for $name:${NC}"
-                echo "$meta" | jq '.'
+                meta_show_json "$_mf"
             fi
             ;;
         set)
@@ -4123,6 +4934,7 @@ HELP
                         local wt_desc=$(echo "$wt_branch" | sed -E 's|^[a-z]+/||' | tr '-' ' ')
 
                         save_metadata "$wt_name" "$dir" "$wt_branch" "${DEFAULT_BRANCH:-master}" "$wt_base_short" "$wt_port" "$wt_desc"
+                        events_append "${CURRENT_PROJECT:-unknown}" "$wt_name" "adopt" "branch=$wt_branch port=$wt_port"
                         echo -e "  ${GREEN}✓${NC} Imported: $wt_name (port $wt_port)"
                     else
                         echo -e "  ${YELLOW}○${NC} Exists: $wt_name"
@@ -4172,7 +4984,7 @@ cmd_alias() {
         return 0
     fi
 
-    local config_file="$PROJECTS_DIR/$CURRENT_PROJECT/config.json"
+    local config_file="$PROJECTS_DIR/$CURRENT_PROJECT/config"
 
     if [ ! -f "$config_file" ]; then
         echo -e "${RED}Project config not found: $CURRENT_PROJECT${NC}"
@@ -4181,7 +4993,7 @@ cmd_alias() {
 
     if [ -z "$new_alias" ]; then
         # Show current project and alias
-        local current=$(jq -r '.alias // empty' "$config_file")
+        local current=$(state_get "$config_file" "alias")
         if [ -n "$current" ]; then
             echo -e "${GREEN}$CURRENT_PROJECT${NC} → ${CYAN}$current${NC}"
         else
@@ -4189,9 +5001,8 @@ cmd_alias() {
         fi
     elif [ "$new_alias" = "--clear" ]; then
         # Clear alias
-        local tmp_file
-        tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-        jq 'del(.alias)' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+        state_del "$config_file" "alias"
+        invalidate_project_index
         echo -e "${GREEN}✓ Cleared alias for $CURRENT_PROJECT${NC}"
     else
         # Set alias - validate first
@@ -4203,26 +5014,25 @@ cmd_alias() {
             fi
         done
         # Check if alias conflicts with existing project name
-        if [ -f "$PROJECTS_DIR/$new_alias/config.json" ]; then
+        if [ -f "$PROJECTS_DIR/$new_alias/config" ]; then
             pwt_error "Error: '$new_alias' is already a project name"
             exit 1
         fi
         # Check if alias already used by another project
-        for cfg in "$PROJECTS_DIR"/*/config.json; do
+        for cfg in "$PROJECTS_DIR"/*/config; do
             [ -f "$cfg" ] || continue
             local proj_dir=$(dirname "$cfg")
             local proj_name=$(basename "$proj_dir")
             [ "$proj_name" = "$CURRENT_PROJECT" ] && continue
-            local other_alias=$(jq -r '.alias // empty' "$cfg")
+            local other_alias=$(state_get "$cfg" "alias")
             if [ "$other_alias" = "$new_alias" ]; then
                 pwt_error "Error: Alias '$new_alias' already used by project '$proj_name'"
                 exit 1
             fi
         done
         # Set alias
-        local tmp_file
-        tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-        jq --arg alias "$new_alias" '.alias = $alias' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+        state_set "$config_file" "alias" "$new_alias"
+        invalidate_project_index
         echo -e "${GREEN}✓ $CURRENT_PROJECT${NC} → ${CYAN}$new_alias${NC}"
     fi
 }
@@ -4454,14 +5264,12 @@ resolve_worktree_path() {
     fi
 
     local project="${CURRENT_PROJECT:-unknown}"
-    if [ -f "$METADATA_FILE" ]; then
-        while IFS=$'\t' read -r name path; do
-            [ -n "$name" ] && [ -n "$path" ] && [ -d "$path" ] || continue
-            if [[ "$name" == *"$target"* ]]; then
-                matches+=("$path")
-            fi
-        done < <(jq -r --arg project "$project" '.[$project] // {} | to_entries[] | [.key, (.value.path // "")] | @tsv' "$METADATA_FILE" 2>/dev/null)
-    fi
+    while IFS=$'\t' read -r name path; do
+        [ -n "$name" ] && [ -n "$path" ] && [ -d "$path" ] || continue
+        if [[ "$name" == *"$target"* ]]; then
+            matches+=("$path")
+        fi
+    done < <(meta_worktree_paths "$project")
 
     if [ ${#matches[@]} -eq 1 ]; then
         echo "${matches[0]}"
@@ -4556,7 +5364,7 @@ cmd_implicit_cd() {
         -?*) return 1 ;;
     esac
     case "$target" in
-        init|discover|create|add|track|adopt|setup|list|ls|tree|status|info|show|current|use|ps1|remove|rm|server|s|gateway|servers|repair|fix|auto-remove|cleanup|restore|fix-port|meta|m|alias|config|cd|_cd|run|editor|e|editor:*|ai|ai:*|open|diff|copy|cp|for-each|steps|step|doctor|self|versions|which|logs|jobs|select|_select|shell-init|setup-shell|claude-setup|project|port|version|help|-h|--help|plugin)
+        init|discover|create|add|track|adopt|setup|list|ls|tree|status|info|show|current|use|ps1|remove|rm|server|s|gateway|servers|repair|fix|auto-remove|cleanup|restore|fix-port|meta|m|alias|config|cd|_cd|run|editor|e|editor:*|ai|ai:*|open|diff|copy|cp|for-each|steps|step|doctor|state|migrate|self|versions|which|logs|jobs|select|_select|shell-init|setup-shell|claude-setup|project|port|version|help|-h|--help|plugin)
             return 1
             ;;
     esac
@@ -4704,15 +5512,15 @@ cmd_restore() {
     local backup_name=""
 
     # Try exact match first
-    if [ -f "$TRASH_DIR/${first_arg}.json" ] || [ -f "$TRASH_DIR/${first_arg}.patch" ]; then
+    if [ -f "$TRASH_DIR/${first_arg}.trash" ] || [ -f "$TRASH_DIR/${first_arg}.patch" ]; then
         backup_name="$first_arg"
     else
         # Try fuzzy match by worktree name prefix (most recent)
-        local matching=$(find "$TRASH_DIR" -maxdepth 1 -name "${first_arg}*.json" -print0 2>/dev/null | \
+        local matching=$(find "$TRASH_DIR" -maxdepth 1 -name "${first_arg}*.trash" -print0 2>/dev/null | \
             xargs -0 ls -t 2>/dev/null | head -1)
 
         if [ -n "$matching" ]; then
-            backup_name=$(basename "$matching" .json)
+            backup_name=$(basename "$matching" .trash)
             echo -e "${DIM}Found: $backup_name${NC}"
         fi
     fi
@@ -4737,11 +5545,11 @@ _restore_list() {
     local found=false
     local json_files=()
 
-    # Collect JSON metadata files (newest first)
+    # Collect metadata records (newest first)
     while IFS= read -r -d '' file; do
         json_files+=("$file")
         found=true
-    done < <(find "$TRASH_DIR" -maxdepth 1 -name "*.json" -print0 2>/dev/null | sort -z -r)
+    done < <(find "$TRASH_DIR" -maxdepth 1 -name "*.trash" -print0 2>/dev/null | sort -z -r)
 
     if [ "$found" = false ]; then
         # Fall back to patch files without JSON (legacy)
@@ -4765,10 +5573,10 @@ _restore_list() {
         done
     else
         for json_file in "${json_files[@]}"; do
-            local basename=$(basename "$json_file" .json)
-            local wt_name=$(jq -r '.worktree // empty' "$json_file" 2>/dev/null)
-            local branch=$(jq -r '.branch // empty' "$json_file" 2>/dev/null)
-            local date=$(jq -r '.date // empty' "$json_file" 2>/dev/null)
+            local basename=$(basename "$json_file" .trash)
+            local wt_name=$(state_get "$json_file" "worktree")
+            local branch=$(state_get "$json_file" "branch")
+            local date=$(state_get "$json_file" "date")
 
             # Check what backup files exist
             local has_patch=false
@@ -4797,7 +5605,7 @@ _restore_backup() {
     local target_worktree="$2"
     local TRASH_DIR="$PWT_DIR/trash"
 
-    local json_file="$TRASH_DIR/${backup_name}.json"
+    local json_file="$TRASH_DIR/${backup_name}.trash"
     local patch_file="$TRASH_DIR/${backup_name}.patch"
     local untracked_dir="$TRASH_DIR/${backup_name}_untracked"
 
@@ -4825,9 +5633,9 @@ _restore_backup() {
             return 1
         fi
 
-        local branch=$(jq -r '.branch // empty' "$json_file" 2>/dev/null)
-        local base=$(jq -r '.base // empty' "$json_file" 2>/dev/null)
-        local desc=$(jq -r '.description // empty' "$json_file" 2>/dev/null)
+        local branch=$(state_get "$json_file" "branch")
+        local base=$(state_get "$json_file" "base")
+        local desc=$(state_get "$json_file" "description")
 
         if [ -z "$branch" ]; then
             echo -e "${RED}Cannot auto-create worktree: no branch in metadata${NC}"
@@ -4909,6 +5717,7 @@ _restore_backup() {
     fi
 
     if [ "$restored_something" = true ]; then
+        events_append "${CURRENT_PROJECT:-unknown}" "$(basename "$target_dir")" "restore" "backup=$backup_name"
         echo ""
         echo -e "${GREEN}✓ Restore complete!${NC}"
         echo -e "${DIM}Worktree: $target_dir${NC}"
@@ -4950,13 +5759,13 @@ cmd_editor_remove() {
 
 # Command: editor list
 cmd_editor_list() {
-    local config_file="$PWT_DIR/config.json"
+    local config_file="$PWT_DIR/config"
     local default_tool=""
     local tools=""
 
     if [ -f "$config_file" ]; then
-        default_tool=$(jq -r '.editor.default // empty' "$config_file" 2>/dev/null)
-        tools=$(jq -r '.editor.tools // {} | to_entries[] | "\(.key)\t\(.value)"' "$config_file" 2>/dev/null)
+        default_tool=$(state_get "$config_file" "editor.default")
+        tools=$(state_list_prefix "$config_file" "editor.tools")
     fi
 
     if [ -z "$tools" ]; then
@@ -5156,16 +5965,15 @@ cmd_ai_remove() {
 # Command: ai list
 # List configured AI tools
 cmd_ai_list() {
-    local config_file="$PWT_DIR/config.json"
+    local config_file="$PWT_DIR/config"
     local default_tool=""
     local tools=""
 
     if [ -f "$config_file" ]; then
-        default_tool=$(jq -r '.ai.default // "claude"' "$config_file" 2>/dev/null)
-        tools=$(jq -r '.ai.tools // {} | to_entries[] | "\(.key)\t\(.value)"' "$config_file" 2>/dev/null)
-    else
-        default_tool="claude"
+        default_tool=$(state_get "$config_file" "ai.default")
+        tools=$(state_list_prefix "$config_file" "ai.tools")
     fi
+    [ -z "$default_tool" ] && default_tool="claude"
 
     if [ -z "$tools" ]; then
         echo "No tools configured."
@@ -5333,7 +6141,10 @@ cmd_ai() {
 
     # Get display name for the tool
     local tool_name="${tool:-default}"
-    [ "$tool_name" = "default" ] && tool_name=$(jq -r '.ai.default // "claude"' "$PWT_DIR/config.json" 2>/dev/null || echo "claude")
+    if [ "$tool_name" = "default" ]; then
+        tool_name=$(state_get "$PWT_DIR/config" "ai.default")
+        [ -z "$tool_name" ] && tool_name="claude"
+    fi
 
     echo -e "${BLUE}Starting $tool_name in:${NC} $worktree_path"
     (cd "$worktree_path" && eval "$ai_cmd" ${extra_args[@]+"${extra_args[@]}"})
@@ -5373,8 +6184,7 @@ cmd_open() {
         fi
     fi
 
-    echo -e "${BLUE}Opening in Finder:${NC} $worktree_path"
-    open "$worktree_path"
+    open_path "$worktree_path"
 }
 
 # Command: diff
@@ -5719,6 +6529,148 @@ cmd_self() {
 # Command: doctor
 # Check system health and configuration
 # Usage: pwt doctor
+# Emit one key=value file as a JSON object (numbers unquoted)
+# Usage: _state_kv_json_object <file> <indent>
+_state_kv_json_object() {
+    local file="$1" indent="${2:-}" line key value first=true
+    printf '{'
+    if [ -f "$file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                *=*) ;;
+                *) continue ;;
+            esac
+            key="${line%%=*}"
+            value=$(_state_unescape "${line#*=}")
+            [ "$first" = true ] || printf ','
+            first=false
+            printf '\n%s  "%s": ' "$indent" "$(json_escape "$key")"
+            if _state_key_is_numeric "$key" && [[ "$value" =~ ^[0-9]+$ ]]; then
+                printf '%s' "$value"
+            else
+                printf '"%s"' "$(json_escape "$value")"
+            fi
+        done < "$file"
+    fi
+    if [ "$first" = true ]; then
+        printf '}'
+    else
+        printf '\n%s}' "$indent"
+    fi
+}
+
+# Command: state
+# Aggregated, versioned snapshot of all pwt state for external consumers
+# Usage: pwt state --json
+cmd_state() {
+    # Schema migrations live under the subsystem they touch, so the bare
+    # verb stays free for user-facing "migrate a worktree/project" ideas.
+    if [ "${1:-}" = "migrate" ]; then
+        shift
+        load_module migrate
+        cmd_migrate "$@"
+        return $?
+    fi
+
+    local json=false arg
+    for arg in "$@"; do
+        case "$arg" in
+            --json) json=true ;;
+            -h|--help|help)
+                echo "Usage: pwt state [--json]"
+                echo "       pwt state migrate [--status|--check|--verify]"
+                echo ""
+                echo "Emit a versioned JSON snapshot of all pwt state: projects,"
+                echo "worktrees (with metadata) and background jobs."
+                echo ""
+                echo "Subcommands:"
+                echo "  migrate    Inspect/apply state schema migrations"
+                echo "             (see docs/migrations/)"
+                echo ""
+                echo "Consumers that prefer reading files directly can watch"
+                echo "\$PWT_DIR (state-version, events.log, projects/, state/, jobs/)"
+                echo "as described in docs/state-v2-contract.md."
+                return 0
+                ;;
+            *)
+                pwt_error "Unknown option: $arg"
+                echo "Usage: pwt state [--json] | pwt state migrate [--check]" >&2
+                return $EXIT_USAGE
+                ;;
+        esac
+    done
+
+    if [ "$json" != true ]; then
+        echo "State version: $(state_version_read)"
+        echo "Location:      $PWT_DIR"
+        echo ""
+        echo "For the full snapshot: pwt state --json"
+        return 0
+    fi
+
+    local first f name project dir
+
+    echo "{"
+    echo "  \"schema_version\": ${PWT_STATE_VERSION},"
+    echo "  \"pwt_version\": \"$(json_escape "$PWT_VERSION")\","
+
+    # Projects (config key=value per project)
+    printf '  "projects": {'
+    first=true
+    for f in "$PWT_PROJECTS_DIR"/*/config; do
+        [ -f "$f" ] || continue
+        name=$(basename "$(dirname "$f")")
+        [ "$first" = true ] || printf ','
+        first=false
+        printf '\n    "%s": ' "$(json_escape "$name")"
+        _state_kv_json_object "$f" "    "
+    done
+    if [ "$first" = true ]; then printf '},\n'; else printf '\n  },\n'; fi
+
+    # Worktrees (state/<project>/<worktree>.meta)
+    printf '  "worktrees": {'
+    first=true
+    if [ -d "$PWT_DIR/state" ]; then
+        for dir in "$PWT_DIR/state"/*/; do
+            [ -d "$dir" ] || continue
+            project=$(basename "$dir")
+            local has_meta=false
+            for f in "$dir"*.meta; do
+                [ -f "$f" ] && has_meta=true && break
+            done
+            [ "$has_meta" = true ] || continue
+            [ "$first" = true ] || printf ','
+            first=false
+            printf '\n    "%s": {' "$(json_escape "$project")"
+            local wt_first=true
+            for f in "$dir"*.meta; do
+                [ -f "$f" ] || continue
+                name=$(basename "$f")
+                name="${name%.meta}"
+                [ "$wt_first" = true ] || printf ','
+                wt_first=false
+                printf '\n      "%s": ' "$(json_escape "$name")"
+                _state_kv_json_object "$f" "      "
+            done
+            printf '\n    }'
+        done
+    fi
+    if [ "$first" = true ]; then printf '},\n'; else printf '\n  },\n'; fi
+
+    # Jobs (jobs/<id>.job)
+    printf '  "jobs": ['
+    first=true
+    for f in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
+        [ -f "$f" ] || continue
+        [ "$first" = true ] || printf ','
+        first=false
+        printf '\n    '
+        _state_kv_json_object "$f" "    "
+    done
+    if [ "$first" = true ]; then printf ']\n'; else printf '\n  ]\n'; fi
+    echo "}"
+}
+
 cmd_doctor() {
     # Handle --help
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -5727,9 +6679,10 @@ cmd_doctor() {
         echo "Check system health and pwt configuration."
         echo ""
         echo "Checks performed:"
-        echo "  - Required tools (git, jq)"
-        echo "  - Optional tools (lsof, fzf)"
+        echo "  - Required tools (git)"
+        echo "  - Optional tools (jq, lsof, fzf)"
         echo "  - PWT directory structure"
+        echo "  - Leftover legacy state backups (*.v1.bak)"
         echo "  - Project configurations"
         echo "  - Worktree integrity"
         return 0
@@ -5749,13 +6702,23 @@ cmd_doctor() {
         errors=$((errors + 1))
     fi
 
-    # Check jq
+    # Check jq (optional: only used to migrate legacy v1 JSON state)
     if command -v jq &>/dev/null; then
         local jq_version=$(jq --version 2>/dev/null || echo "?")
-        echo -e "${GREEN}✓${NC} jq: $jq_version"
+        echo -e "${GREEN}✓${NC} jq: $jq_version (optional: legacy state migration only)"
     else
-        echo -e "${RED}✗${NC} jq: not installed (required)"
-        errors=$((errors + 1))
+        echo -e "${YELLOW}⚠${NC} jq: not installed (optional: only needed to migrate pre-v2 state)"
+    fi
+
+    # Report leftover v1 state backups from migration
+    local _v1_backups
+    _v1_backups=$(find "$PWT_DIR" -maxdepth 3 -name '*.v1.bak' 2>/dev/null | head -20)
+    if [ -n "$_v1_backups" ]; then
+        local _v1_count
+        _v1_count=$(printf '%s\n' "$_v1_backups" | wc -l | tr -d ' ')
+        echo -e "${YELLOW}⚠${NC} Legacy state backups: $_v1_count file(s) from the v1→v2 migration"
+        printf '%s\n' "$_v1_backups" | sed 's/^/    /'
+        echo "    Remove them once you no longer need to roll back."
     fi
 
     # Check lsof
@@ -5772,7 +6735,7 @@ cmd_doctor() {
         local fzf_version=$(fzf --version 2>/dev/null | head -1 || echo "?")
         echo -e "${GREEN}✓${NC} fzf: $fzf_version"
     else
-        echo -e "${YELLOW}⚠${NC} fzf: not installed (needed for --select option)"
+        echo -e "${YELLOW}⚠${NC} fzf: not installed (--select uses the builtin picker)"
     fi
 
     # Check shell integration
@@ -5832,13 +6795,35 @@ cmd_doctor() {
             fi
         fi
 
-        # Check Pwtfile
-        if [ -n "${PWTFILE:-}" ] && [ -f "$PWTFILE" ]; then
-            echo -e "${GREEN}✓${NC} Pwtfile: $PWTFILE"
-        elif [ -f "$MAIN_APP/Pwtfile" ]; then
-            echo -e "${GREEN}✓${NC} Pwtfile: $MAIN_APP/Pwtfile"
+        # Check Pwtfile - via the same resolver the runtime uses, so a
+        # Pwtfile declared in project config (possibly living outside the
+        # repo) is reported instead of a bogus "not found".
+        local doctor_pwtfile
+        doctor_pwtfile=$(get_project_pwtfile 2>/dev/null || true)
+        if [ -n "$doctor_pwtfile" ] && [ -f "$doctor_pwtfile" ]; then
+            echo -e "${GREEN}✓${NC} Pwtfile: $doctor_pwtfile"
         else
-            echo -e "${YELLOW}⚠${NC} Pwtfile: not found (optional)"
+            local declared
+            declared=$(get_project_config "$CURRENT_PROJECT" "pwtfile" 2>/dev/null || true)
+            if [ -n "$declared" ]; then
+                echo -e "${RED}✗${NC} Pwtfile: declared but missing: $declared"
+                echo "    Fix with: pwt config pwtfile <path>"
+            else
+                echo -e "${YELLOW}⚠${NC} Pwtfile: not found (optional)"
+            fi
+        fi
+
+        # Project-defined health checks: a Pwtfile may expose doctor(), which
+        # runs here with the usual PWT_* environment. pwt cannot know what a
+        # given stack considers healthy (deps installed, registry auth,
+        # services up), so it delegates instead of guessing.
+        if [ -n "$doctor_pwtfile" ] && grep -qE '^[[:space:]]*(function[[:space:]]+)?doctor[[:space:]]*\(\)' "$doctor_pwtfile" 2>/dev/null; then
+            echo ""
+            echo -e "${BLUE}Project checks (Pwtfile doctor):${NC}"
+            # A health check naturally ends on a failing test, and under
+            # `set -e -o pipefail` that status would abort the rest of
+            # doctor (editor config, worktree integrity, the summary).
+            run_pwtfile "doctor" 2>&1 | sed 's/^/  /' || true
         fi
 
         # Check editor config
@@ -5929,12 +6914,7 @@ cmd_select() {
         esac
     done
 
-    # Check if fzf is installed
-    if ! command -v fzf &>/dev/null; then
-        pwt_error "Error: fzf is required for pwt select"
-        echo "Install with: brew install fzf"
-        exit 1
-    fi
+    # fzf gives the rich picker; without it we fall back to bash's select
 
     # Build enriched list of worktrees
     # Format: name|branch|port|status|marker|description
@@ -5980,7 +6960,7 @@ cmd_select() {
 
     # Format with column for aligned display
     local formatted
-    formatted=$(printf '%s\n' "${items[@]}" | column -t -s'|')
+    formatted=$(printf '%s\n' "${items[@]}" | align_columns)
 
     # Build preview command
     local preview_cmd="name=\$(echo {} | awk '{print \$1}'); "
@@ -6014,7 +6994,11 @@ cmd_select() {
     fi
 
     local selected
-    selected=$(echo "$formatted" | fzf "${fzf_opts[@]}")
+    if command -v fzf &>/dev/null; then
+        selected=$(echo "$formatted" | fzf "${fzf_opts[@]}")
+    else
+        selected=$(echo "$formatted" | pick_fallback "Select worktree" "$initial_query") || selected=""
+    fi
 
     if [ -z "$selected" ]; then
         exit 0
@@ -6189,11 +7173,18 @@ cmd_step() {
         echo ""
         echo "Arguments:"
         echo "  name    Step name (without step_ prefix)"
-        echo "  args    Extra arguments (available as \$PWT_ARGS)"
+        echo "  args    Passed to the function as \"\$1\", \"\$2\", ... and"
+        echo "          as raw \"\$PWT_ARGS\""
+        echo ""
+        echo "A step that setup() calls with arguments needs the same"
+        echo "arguments here. Under \"set -u\" a missing one fails with"
+        echo "\"\$1: unbound variable\" - the step is asking for input,"
+        echo "it is not a pwt error."
         echo ""
         echo "Examples:"
         echo "  pwt step install          # run step_install()"
         echo "  pwt step seed --fresh     # run step_seed() with args"
+        echo "  pwt step setup_dbs _wt42  # step that requires a positional"
         echo "  pwt steps                 # list available steps"
         return 0
     fi
@@ -6271,24 +7262,34 @@ cmd_jobs() {
             echo "Manage background jobs started with --bg."
             echo ""
             echo "Subcommands:"
-            echo "  list              List all jobs (default)"
+            echo "  list [--porcelain] List all jobs (default; --porcelain for JSON)"
             echo "  logs <job-id> [-f] View job output (-f to follow)"
+            echo "  wait <id|worktree> [--timeout <s>] Block until a job finishes"
             echo "  stop <job-id>     Stop a running job"
             echo "  stop --all        Stop all running jobs"
             echo "  clean             Remove stale job entries"
             echo "  help              Show this help"
+            echo ""
+            echo "wait exits 0 when the job's process is gone and prints '<id> <status>'."
+            echo "Default --timeout is ${PWT_WAIT_TIMEOUT_DEFAULT}s; on timeout it exits $EXIT_TIMEOUT."
+            echo "A worktree name resolves to its running server job (then most recent job)."
             echo ""
             echo "Examples:"
             echo "  pwt server --bg              # start server in background"
             echo "  pwt jobs                     # list running jobs"
             echo "  pwt jobs logs abc123         # view job output"
             echo "  pwt jobs logs abc123 -f      # follow job output"
+            echo "  pwt jobs wait abc123 --timeout 300   # block until job exits"
             echo "  pwt jobs stop abc123         # stop a job"
             echo "  pwt jobs stop --all          # stop all jobs"
             return 0
             ;;
         list|ls)
-            _jobs_list_formatted
+            if [ "${2:-}" = "--porcelain" ] || [ "${2:-}" = "--json" ]; then
+                _jobs_list_porcelain
+            else
+                _jobs_list_formatted
+            fi
             ;;
         logs|log)
             local follow=false
@@ -6296,6 +7297,30 @@ cmd_jobs() {
                 follow=true
             fi
             _tail_job_log "${2:-}" "$follow"
+            ;;
+        wait)
+            shift
+            local wait_target="" wait_timeout=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --timeout)
+                        if [ $# -lt 2 ]; then
+                            pwt_error "Missing value for --timeout"
+                            return $EXIT_USAGE
+                        fi
+                        wait_timeout="$2"
+                        shift 2
+                        ;;
+                    --timeout=*) wait_timeout="${1#--timeout=}"; shift ;;
+                    -*)
+                        pwt_error "Unknown option for jobs wait: $1"
+                        echo "Usage: pwt jobs wait <job-id|worktree> [--timeout <seconds>]" >&2
+                        return $EXIT_USAGE
+                        ;;
+                    *) [ -z "$wait_target" ] && wait_target="$1"; shift ;;
+                esac
+            done
+            _wait_job "$wait_target" "$wait_timeout"
             ;;
         stop)
             if [ "${2:-}" = "--all" ]; then
@@ -6358,7 +7383,6 @@ Worktree Management:
   list [flags]                   List worktrees (-v, --dirty, --porcelain)
   tree [--all|--dirty|--ports]   Visual tree view of worktrees
   info [worktree]                Show worktree details
-  status                         Interactive TUI dashboard (like htop)
   select [--preview]             Interactive worktree selector (fzf)
   auto-remove [target] [--execute] Remove worktrees merged into target
 
@@ -6370,6 +7394,7 @@ Navigation:
 
 Development:
   server [worktree]              Start dev server (from Pwtfile)
+  server wait [worktree]         Block until server is ready (--log-contains, --timeout)
   gateway [action]               Stable gateway to a worktree server
   servers [--all]                Show project server status
   run <worktree> <cmd>           Run command in worktree
@@ -6393,6 +7418,8 @@ Other:
   port --find <port>             Find who uses a port
   fix-port [worktree]            Fix port conflict
   restore [backup] [worktree]    Recover backed up changes from trash
+  state --json                   Versioned JSON snapshot of all pwt state
+  state migrate [--check]        Inspect/apply state schema migrations
   meta [action] [args]           Manage worktree metadata
   plugin [action]                Manage plugins (list, install, create)
   shell-init [shell]             Output shell integration code
@@ -6448,6 +7475,8 @@ Lifecycle Hooks:
   server()      Runs when "pwt server" called (use exec for stdin)
   server --kill Runs for "pwt remove --kill-server"
   teardown()    Runs when worktree removed
+  doctor()      Runs as part of "pwt doctor" - project health checks
+                (deps installed, registry auth, services reachable...)
 
 Custom Commands:
   xxx()         Any function becomes "pwt xxx"
@@ -6582,7 +7611,6 @@ show_help_brief() {
     echo "  list [flags]                   List worktrees (-v/--verbose, --dirty, --porcelain)"
     echo "  list statusline                Output for shell prompts"
     echo "  tree [--all|--dirty|--ports]   Visual tree view of worktrees"
-    echo "  status                         Interactive TUI dashboard (like htop)"
     echo "  info [worktree]                Show worktree details"
     echo "  current [--name|--resolved]    Show current (symlink path, --resolved for actual)"
     echo "  use <worktree> [--select]      Set worktree as current (--select for fzf picker)"
@@ -6597,12 +7625,15 @@ show_help_brief() {
     echo "  diff <wt1> [wt2]               Show diff between worktrees"
     echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
     echo "  server [worktree]              Start dev server (from Pwtfile)"
+    echo "  server wait [worktree]         Block until server is ready (--log-contains, --timeout)"
     echo "  gateway [action]               Stable gateway to a worktree server"
     echo "  servers [--all]                Show project server status"
     echo "  fix-port [worktree]            Fix port conflict"
     echo "  auto-remove [target] [--execute] Remove worktrees merged into target"
     echo "  restore [backup] [worktree]    Recover backed up changes from trash"
     echo "  doctor                         Check system health and configuration"
+    echo "  state --json                   Versioned JSON snapshot of all pwt state"
+    echo "  state migrate [--check]        Inspect/apply state schema migrations"
     echo "  self|versions [use <target>]   List installed pwt versions / switch active one"
     echo "  shell-init                     Output shell function for cd integration"
     echo "  meta|m [action] [args]         Manage worktree metadata"
@@ -6614,7 +7645,7 @@ show_help_brief() {
     echo "  config [key] [value]           View/set project configuration"
     echo "  project [action] [args]        Manage project configs"
     echo "  plugin [action]                Manage plugins (list, install, create)"
-    echo "  jobs [subcommand]              Manage background jobs (list, logs, stop, clean)"
+    echo "  jobs [subcommand]              Manage background jobs (list, logs, wait, stop, clean)"
     echo "  logs [worktree] [-f]           Show the worktree's job logs (server first)"
     echo ""
     echo "Worktree-first form (inside a project):"
@@ -6634,7 +7665,9 @@ show_help_brief() {
     echo "  info <wt> --porcelain          JSON worktree details"
     echo "  gateway status --json          JSON gateway state"
     echo "  --no-input                     Never prompt; safe for automation"
-    echo "  Exit codes: 0 ok, 1 error, 2 usage, 3 not found"
+    echo "  jobs wait <id|worktree>        Block until a job finishes (--timeout)"
+    echo "  server wait [worktree]         Block until server is ready (--timeout)"
+    echo "  Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 timeout, 6 missing dep"
     echo ""
     echo "Project selection (in order of priority):"
     echo "  1. pwt <project> <command>     Project as first argument"
@@ -6767,8 +7800,20 @@ cmd_shell_init() {
     local shell="${1:-}"
     local cmd_name
     cmd_name=$(basename "$0")
+    # Point the generated function at the binary that produced it, not at
+    # whatever `which` finds: `eval "$(./bin/pwt shell-init)"` must call
+    # ./bin/pwt, otherwise a dev checkout silently drives the installed pwt
+    # (and vice versa). $0 is absolutized but never symlink-resolved, so an
+    # installed symlink stays the stable entry point.
     local pwt_path
-    pwt_path=$(which "$cmd_name" 2>/dev/null || echo "$0")
+    if [ -n "${0:-}" ] && [ -x "$0" ]; then
+        case "$0" in
+            /*) pwt_path="$0" ;;
+            *)  pwt_path="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")" ;;
+        esac
+    else
+        pwt_path=$(which "$cmd_name" 2>/dev/null || echo "$cmd_name")
+    fi
 
     if [ -z "$shell" ]; then
         shell=$(basename "${SHELL:-}")
@@ -6785,13 +7830,16 @@ function _pwt_is_project
     set -l name $argv[1]
     test -z "$name"; and return 1
     test -d ~/.pwt/projects/$name; and return 0
-    for config in ~/.pwt/projects/*/config.json
+    for config in ~/.pwt/projects/*/config
         test -f "$config"; or continue
-        set -l alias_val (jq -r '.alias // empty' "$config" 2>/dev/null)
+        set -l alias_val (sed -n 's/^alias=//p' "$config" 2>/dev/null)
         if test "$alias_val" = "$name"
             return 0
         end
-        jq -e --arg a "$name" '.aliases // [] | index($a) != null' "$config" >/dev/null 2>&1; and return 0
+        set -l aliases_val (sed -n 's/^aliases=//p' "$config" 2>/dev/null)
+        if test -n "$aliases_val"; and contains -- "$name" (string split ',' "$aliases_val")
+            return 0
+        end
     end
     return 1
 end
@@ -6803,9 +7851,9 @@ function _pwt_detect_project
     # Check if in a worktree directory
     if string match -q "*-worktrees/*" -- "$path"
         set -l worktrees_dir (string replace -r '-worktrees/.*' '-worktrees' -- "$path")
-        for config in ~/.pwt/projects/*/config.json
+        for config in ~/.pwt/projects/*/config
             test -f "$config"; or continue
-            set -l wt_dir (jq -r '.worktrees_dir // empty' "$config" 2>/dev/null)
+            set -l wt_dir (sed -n 's/^worktrees_dir=//p' "$config" 2>/dev/null)
             if test "$wt_dir" = "$worktrees_dir"
                 basename (dirname "$config")
                 return 0
@@ -6817,9 +7865,10 @@ function _pwt_detect_project
     end
 
     # Check if in a project's main app directory
-    for config in ~/.pwt/projects/*/config.json
+    for config in ~/.pwt/projects/*/config
         test -f "$config"; or continue
-        set -l main_path (jq -r '.path // .main_app // empty' "$config" 2>/dev/null)
+        set -l main_path (sed -n 's/^path=//p' "$config" 2>/dev/null)
+        test -z "$main_path"; and set main_path (sed -n 's/^main_app=//p' "$config" 2>/dev/null)
         if test -n "$main_path"; and string match -q "$main_path*" -- "$path"
             basename (dirname "$config")
             return 0
@@ -6838,9 +7887,9 @@ function _pwt_update_title --on-variable PWD
 
     # Get format
     set -l format "$PWT_TITLE_FORMAT"
-    if test -z "$format"; and test -f ~/.pwt/config.json
-        set format (jq -r '.title.format // empty' ~/.pwt/config.json 2>/dev/null)
-        set -l enabled (jq -r '.title.enabled // true' ~/.pwt/config.json 2>/dev/null)
+    if test -z "$format"; and test -f ~/.pwt/config
+        set format (sed -n 's/^title\.format=//p' ~/.pwt/config 2>/dev/null)
+        set -l enabled (sed -n 's/^title\.enabled=//p' ~/.pwt/config 2>/dev/null)
         if test "$enabled" = "false"
             return 0
         end
@@ -7033,10 +8082,11 @@ _pwt_is_project() {
     # Check aliases
     while IFS= read -r config; do
         [ -f "\$config" ] || continue
-        local alias_val=\$(jq -r '.alias // empty' "\$config" 2>/dev/null)
+        local alias_val=\$(sed -n 's/^alias=//p' "\$config" 2>/dev/null)
         [[ "\$alias_val" == "\$1" ]] && return 0
-        jq -e --arg a "\$1" '.aliases // [] | index(\$a) != null' "\$config" >/dev/null 2>&1 && return 0
-    done < <(find ~/.pwt/projects -maxdepth 2 -name config.json 2>/dev/null)
+        local aliases_val=\$(sed -n 's/^aliases=//p' "\$config" 2>/dev/null)
+        case ",\$aliases_val," in *",\$1,"*) return 0 ;; esac
+    done < <(find ~/.pwt/projects -maxdepth 2 -name config 2>/dev/null)
     return 1
 }
 
@@ -7051,9 +8101,9 @@ _pwt_detect_project() {
         local parent_dir="\${worktrees_dir%/*}"
         local parent_name="\${parent_dir##*/}"
         # Try to find matching project by worktrees_dir
-        for config in ~/.pwt/projects/*/config.json; do
+        for config in ~/.pwt/projects/*/config; do
             [ -f "\$config" ] || continue
-            local wt_dir=\$(jq -r '.worktrees_dir // empty' "\$config" 2>/dev/null)
+            local wt_dir=\$(sed -n 's/^worktrees_dir=//p' "\$config" 2>/dev/null)
             if [[ "\$wt_dir" == "\$worktrees_dir" ]]; then
                 local config_dir="\${config%/*}"
                 echo "\${config_dir##*/}"
@@ -7066,9 +8116,10 @@ _pwt_detect_project() {
     fi
 
     # Check if in a project's main app directory
-    for config in ~/.pwt/projects/*/config.json; do
+    for config in ~/.pwt/projects/*/config; do
         [ -f "\$config" ] || continue
-        local main_path=\$(jq -r '.path // .main_app // empty' "\$config" 2>/dev/null)
+        local main_path=\$(sed -n 's/^path=//p' "\$config" 2>/dev/null)
+        [ -z "\$main_path" ] && main_path=\$(sed -n 's/^main_app=//p' "\$config" 2>/dev/null)
         if [[ -n "\$main_path" && "\$path" == "\$main_path"* ]]; then
             local config_dir="\${config%/*}"
             echo "\${config_dir##*/}"
@@ -7088,10 +8139,10 @@ _pwt_update_title() {
 
     # Get format from env var or config (default: {project}:{worktree})
     local format="\${PWT_TITLE_FORMAT:-}"
-    if [[ -z "\$format" && -f ~/.pwt/config.json ]]; then
-        format=\$(jq -r '.title.format // empty' ~/.pwt/config.json 2>/dev/null)
+    if [[ -z "\$format" && -f ~/.pwt/config ]]; then
+        format=\$(sed -n 's/^title\\.format=//p' ~/.pwt/config 2>/dev/null)
         # Check if disabled in config
-        local enabled=\$(jq -r '.title.enabled // true' ~/.pwt/config.json 2>/dev/null)
+        local enabled=\$(sed -n 's/^title\\.enabled=//p' ~/.pwt/config 2>/dev/null)
         if [[ "\$enabled" == "false" ]]; then
             return 0
         fi
@@ -7441,6 +8492,14 @@ while [[ "${1:-}" == --* ]]; do
     esac
 done
 
+# The migrate command inspects and applies migrations itself; letting the
+# startup hook auto-migrate first would make --check/--status report on state
+# it had already converted, which defeats the point of a dry run.
+case "${1:-}" in
+    migrate) _PWT_NO_AUTO_MIGRATE=1 ;;
+    state)   [ "${2:-}" = "migrate" ] && _PWT_NO_AUTO_MIGRATE=1 ;;
+esac
+
 # Initialize pwt
 init_pwt
 
@@ -7454,7 +8513,7 @@ if [ -n "${1:-}" ]; then
             # pwt <existing-project> init → show already configured
             echo -e "${YELLOW}Already configured: $_resolved${NC}"
             echo ""
-            cat "$PWT_PROJECTS_DIR/${_resolved}/config.json"
+            cat "$PWT_PROJECTS_DIR/${_resolved}/config"
             exit 0
         fi
         # Load config and shift for other commands
@@ -7577,20 +8636,15 @@ case "${1:-}" in
         cmd_tree "$@"
         ;;
     status)
-        shift  # remove "status" from args
-        # Check if --all or --help flags are present - if so, skip project requirement
-        _status_needs_project=true
-        for _arg in "$@"; do
-            case "$_arg" in
-                --all|-a|--help|-h) _status_needs_project=false ;;
-            esac
-        done
-        if [ "$_status_needs_project" = true ]; then
-            require_project --info-only
-        fi
-        unset _status_needs_project _arg
-        load_module status
-        cmd_status "$@"
+        # Retired: the bash status dashboard was removed in favor of the
+        # standalone pwt-ui project. Keep a stub so old muscle memory gets
+        # a pointer instead of "unknown command".
+        echo -e "${YELLOW}pwt status was removed.${NC} Use 'pwt list', 'pwt tree' or 'pwt servers' — or the upcoming pwt-ui dashboard." >&2
+        # Asking for help is not an error, even about a retired command
+        case "${2:-}" in
+            -h|--help) exit "$EXIT_SUCCESS" ;;
+        esac
+        exit "$EXIT_ERROR"
         ;;
     info|show)
         require_project --info-only
@@ -7743,6 +8797,15 @@ case "${1:-}" in
     doctor)
         shift  # remove "doctor" from args
         cmd_doctor "$@"
+        ;;
+    state)
+        shift  # remove "state" from args
+        cmd_state "$@"
+        ;;
+    migrate)
+        shift  # remove "migrate" from args
+        load_module migrate
+        cmd_migrate "$@"
         ;;
     self|versions|which)
         shift
@@ -7944,7 +9007,7 @@ case "${1:-}" in
 
             echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
             # Try to suggest similar commands (include installed plugins)
-            _known_commands="create track adopt setup list tree info current use pick select remove cd run shell editor ai open diff copy server gateway servers fix-port auto-remove restore doctor meta project plugin port help version for-each jobs"
+            _known_commands="create track adopt setup list tree info current use pick select remove cd run shell editor ai open diff copy server gateway servers fix-port auto-remove restore doctor state meta project plugin port help version for-each jobs"
             # Add installed plugins from all directories to suggestions
             _get_all_plugin_dirs() {
                 echo "$PWT_DIR/plugins"

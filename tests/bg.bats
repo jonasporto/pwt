@@ -13,12 +13,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 
     # Add a commit
@@ -31,10 +29,10 @@ EOF
 teardown() {
     # Kill any background processes we spawned
     if [ -d "$PWT_DIR/jobs" ]; then
-        for json in "$PWT_DIR/jobs"/*.json; do
-            [ -f "$json" ] || continue
+        for job in "$PWT_DIR/jobs"/*.job; do
+            [ -f "$job" ] || continue
             local pid
-            pid=$(grep -o '"pid": *[0-9]*' "$json" | grep -o '[0-9]*' || true)
+            pid=$(sed -n 's/^pid=//p' "$job" | head -1 || true)
             [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
         done
     fi

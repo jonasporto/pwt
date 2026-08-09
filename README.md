@@ -4,13 +4,12 @@
 
 [![Tests](https://github.com/jonasporto/pwt/actions/workflows/test.yml/badge.svg)](https://github.com/jonasporto/pwt/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.13-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.14-green.svg)](CHANGELOG.md)
 
 ## Demos
 
 ![Quick Start](examples/gifs/01-quickstart.gif)
 ![Use Symlink](examples/gifs/02-use-symlink.gif)
-![Status TUI](examples/gifs/03-status-tui.gif)
 
 [Watch overview (mp4)](examples/videos/00-overview.mp4)
 
@@ -73,7 +72,7 @@ bunx @jonasporto/pwt --help
 curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh | bash
 ```
 
-**Dependencies:** `git`, `jq` (required). `fzf`, `lsof` (optional but highly recommended).
+**Dependencies:** `git` (required). `fzf`, `lsof` (optional but highly recommended). `jq` is only needed once, to convert state written before schema v2.
 
 See [INSTALL.md](INSTALL.md) for shell setup and troubleshooting.
 
@@ -149,6 +148,13 @@ server() {
         stop) ./scripts/dev-stop ;;
     esac
 }
+
+# Runs as part of `pwt doctor`: pwt checks the machine and the worktree
+# layout, the project checks whatever "healthy" means for its own stack.
+doctor() {
+    [ -d node_modules ] || echo "⚠ dependencies not installed"
+    [ -s .npmrc ] || echo "⚠ .npmrc is empty (registry auth missing)"
+}
 ```
 
 Command params are available as `$1`, `$2`, etc. and as raw `$PWT_ARGS`.
@@ -195,12 +201,15 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | `<project> <worktree>` | Jump to worktree in another project |
 | `editor` | Open editor in current worktree |
 | `server` | Start dev server (from Pwtfile) |
+| `server wait [worktree]` | Block until the server is ready (`--log-contains`, `--timeout`) |
+| `jobs wait <id\|worktree>` | Block until a background job finishes (`--timeout`) |
 | `gateway` | Stable project URL that routes to a worktree server |
 | `servers` | Show active servers, gateway target, and background jobs |
 | `logs [worktree]` | Show background job logs (`-f` to follow) |
 | `self` | List installed pwt versions / switch active (`self use <target>`) |
 | `ai` | Start AI coding assistant |
 | `remove <worktree>` | Remove worktree (`--with-branch`) |
+| `state --json` | Versioned JSON snapshot of all pwt state (projects, worktrees, jobs) |
 
 ---
 
@@ -316,6 +325,19 @@ Create your own: `pwt plugin create mycommand`
 | [FAQ.md](FAQ.md) | Frequently asked questions |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 
+### For agents
+
+Driving pwt from an AI agent or a script? Read
+[skills/pwt-cli/SKILL.md](skills/pwt-cli/SKILL.md): machine-readable flags
+(`list --porcelain`, `info --porcelain`, `gateway status --json`,
+`pwt state --json`, `--no-input`), the exit-code table, and the wait
+primitives (`pwt server wait`, `pwt jobs wait`) that replace poll loops.
+
+External tools can also read pwt state directly: `~/.pwt` holds flat
+key=value files plus an append-only `events.log`, versioned via
+`~/.pwt/state-version` — see
+[docs/state-v2-contract.md](docs/state-v2-contract.md).
+
 ---
 
 ## Contributing
@@ -323,3 +345,12 @@ Create your own: `pwt plugin create mycommand`
 Contributions welcome! Please [open an issue](https://github.com/jonasporto/pwt/issues/new) first to discuss changes.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+---
+
+## License
+
+[MIT](LICENSE) © Jonas Porto
+
+Found a security issue? See [SECURITY.md](SECURITY.md) — please report it
+privately rather than opening an issue.

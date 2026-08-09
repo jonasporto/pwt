@@ -12,11 +12,9 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
 EOF
 
     # Add a commit
@@ -128,16 +126,16 @@ teardown() {
     [[ "$output" == *"PWT_TITLE_FORMAT"* ]]
 }
 
-@test "shell-init reads config.json title.format" {
+@test "shell-init reads config title.format" {
     run "$PWT_BIN" shell-init bash
     [ "$status" -eq 0 ]
-    [[ "$output" == *"title.format"* ]]
+    [[ "$output" == *'title\.format='* ]]
 }
 
-@test "shell-init reads config.json title.enabled" {
+@test "shell-init reads config title.enabled" {
     run "$PWT_BIN" shell-init bash
     [ "$status" -eq 0 ]
-    [[ "$output" == *"title.enabled"* ]]
+    [[ "$output" == *'title\.enabled='* ]]
 }
 
 # ============================================

@@ -12,11 +12,25 @@ _gateway_project_dir() {
 }
 
 _gateway_config_file() {
-    echo "$PROJECTS_DIR/$CURRENT_PROJECT/config.json"
+    echo "$PROJECTS_DIR/$CURRENT_PROJECT/config"
+}
+
+# Suggest a command the user actually has for finding a port's owner
+_port_owner_hint() {
+    local port="$1"
+    if command -v lsof >/dev/null 2>&1; then
+        echo "lsof -i :$port"
+    elif command -v ss >/dev/null 2>&1; then
+        echo "ss -lntp sport = :$port"
+    elif command -v fuser >/dev/null 2>&1; then
+        echo "fuser -n tcp $port"
+    else
+        echo "(install lsof or ss to identify the owner of port $port)"
+    fi
 }
 
 _gateway_state_file() {
-    echo "$(_gateway_project_dir)/gateway.json"
+    echo "$(_gateway_project_dir)/gateway.state"
 }
 
 _gateway_pid_file() {
@@ -78,11 +92,7 @@ _gateway_set_port() {
         return $EXIT_USAGE
     fi
 
-    mkdir -p "$(dirname "$config_file")"
-    [ -f "$config_file" ] || echo "{}" > "$config_file"
-    local tmp_file
-    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg port "$port" '.gateway_port = $port' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file" && invalidate_project_index
+    state_set "$config_file" "gateway_port" "$port" && invalidate_project_index
 }
 
 _gateway_set_host() {
@@ -91,11 +101,7 @@ _gateway_set_host() {
 
     _gateway_validate_host "$host" || return $?
 
-    mkdir -p "$(dirname "$config_file")"
-    [ -f "$config_file" ] || echo "{}" > "$config_file"
-    local tmp_file
-    tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")"
-    jq --arg host "$host" '.gateway_host = $host' "$config_file" > "$tmp_file" && mv "$tmp_file" "$config_file"
+    state_set "$config_file" "gateway_host" "$host"
 }
 
 _gateway_is_running() {
@@ -107,15 +113,11 @@ _gateway_is_running() {
 }
 
 _gateway_target_name() {
-    local state_file=$(_gateway_state_file)
-    [ -f "$state_file" ] || return 0
-    jq -r '.target // empty' "$state_file" 2>/dev/null
+    state_get "$(_gateway_state_file)" "target"
 }
 
 _gateway_target_port() {
-    local state_file=$(_gateway_state_file)
-    [ -f "$state_file" ] || return 0
-    jq -r '.target_port // empty' "$state_file" 2>/dev/null
+    state_get "$(_gateway_state_file)" "target_port"
 }
 
 _gateway_write_proxy_script() {
@@ -144,7 +146,12 @@ function httpError(socket, status, message) {
 
 function readTarget() {
   try {
-    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    // pwt state v2: flat key=value lines (split on first "=")
+    const state = {};
+    for (const line of fs.readFileSync(stateFile, "utf8").split("\n")) {
+      const idx = line.indexOf("=");
+      if (idx > 0) state[line.slice(0, idx)] = line.slice(idx + 1);
+    }
     const port = Number(state.target_port);
     if (!Number.isInteger(port) || port <= 0) return null;
     return { port, name: state.target || "" };
@@ -196,7 +203,7 @@ _gateway_start() {
     # process — spawning would EADDRINUSE and traffic would hit the wrong server.
     if _gateway_port_listening "$port"; then
         pwt_error "Error: Gateway port $port is already in use by another process"
-        echo "  Find the owner with: lsof -i :$port" >&2
+        echo "  Find the owner with: $(_port_owner_hint "$port")" >&2
         return $EXIT_ERROR
     fi
     if ! command -v node >/dev/null 2>&1; then
@@ -211,7 +218,7 @@ _gateway_start() {
     local script=$(_gateway_proxy_script)
 
     mkdir -p "$project_dir"
-    [ -f "$state_file" ] || echo '{}' > "$state_file"
+    [ -f "$state_file" ] || : > "$state_file"
     _gateway_write_proxy_script
 
     local pid
@@ -357,21 +364,15 @@ _gateway_save_target() {
     local state_file=$(_gateway_state_file)
 
     mkdir -p "$(dirname "$state_file")"
-    jq -n \
-        --arg project "$CURRENT_PROJECT" \
-        --arg target "$name" \
-        --arg path "$path" \
-        --arg branch "$branch" \
-        --argjson target_port "$port" \
-        --arg updated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-        '{
-            project: $project,
-            target: $target,
-            target_path: $path,
-            target_port: $target_port,
-            branch: $branch,
-            updated_at: $updated_at
-        }' > "$state_file"
+    local tmp="${state_file}.tmp.$$"
+    {
+        printf 'project=%s\n' "$(_state_escape "$CURRENT_PROJECT")"
+        printf 'target=%s\n' "$(_state_escape "$name")"
+        printf 'target_path=%s\n' "$(_state_escape "$path")"
+        printf 'target_port=%s\n' "$port"
+        printf 'branch=%s\n' "$(_state_escape "$branch")"
+        printf 'updated_at=%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    } > "$tmp" && mv "$tmp" "$state_file"
 }
 
 _gateway_use() {
@@ -452,25 +453,21 @@ _gateway_status() {
     [ -f "$(_gateway_pid_file)" ] && pid=$(cat "$(_gateway_pid_file)" 2>/dev/null || true)
 
     if [ "$json" = true ]; then
-        jq -n -c \
-            --arg project "$CURRENT_PROJECT" \
-            --arg port "$port" \
-            --arg host "$host" \
-            --arg target "$target" \
-            --arg target_port "$target_port" \
-            --arg pid "$pid" \
-            --argjson running "$running" \
-            '{
-                project: $project,
-                configured: ($port != ""),
-                port: (if $port != "" then ($port | tonumber) else null end),
-                host: $host,
-                url: (if $port != "" then "http://" + $host + ":" + $port else null end),
-                running: $running,
-                pid: (if $pid != "" then ($pid | tonumber) else null end),
-                target: (if $target != "" then $target else null end),
-                target_port: (if $target_port != "" then ($target_port | tonumber) else null end)
-            }'
+        local _configured="false" _url="null"
+        if [ -n "$port" ]; then
+            _configured="true"
+            _url=$(json_str "http://$host:$port")
+        fi
+        printf '{"project":%s,"configured":%s,"port":%s,"host":%s,"url":%s,"running":%s,"pid":%s,"target":%s,"target_port":%s}\n' \
+            "$(json_str "$CURRENT_PROJECT")" \
+            "$_configured" \
+            "$(json_num_or_null "$port")" \
+            "$(json_str "$host")" \
+            "$_url" \
+            "$running" \
+            "$(json_num_or_null "$pid")" \
+            "$(json_str_or_null "$target")" \
+            "$(json_num_or_null "$target_port")"
         return 0
     fi
 
@@ -495,13 +492,13 @@ _servers_job_status_for() {
     load_module jobs
 
     local json_file
-    for json_file in "$PWT_JOBS_DIR"/*.json; do
+    for json_file in "$PWT_JOBS_DIR"/*.job; do
         [ -f "$json_file" ] || continue
         local j_wt j_cmd j_id j_status
-        j_wt=$(jq -r '.worktree // empty' "$json_file" 2>/dev/null)
-        j_cmd=$(jq -r '.command // empty' "$json_file" 2>/dev/null)
-        j_id=$(jq -r '.id // empty' "$json_file" 2>/dev/null)
-        j_status=$(jq -r '.status // empty' "$json_file" 2>/dev/null)
+        j_wt=$(state_get "$json_file" "worktree")
+        j_cmd=$(state_get "$json_file" "command")
+        j_id=$(state_get "$json_file" "id")
+        j_status=$(state_get "$json_file" "status")
         [ "$j_wt" = "$name" ] && [ "$j_cmd" = "server" ] || continue
         if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
             status="job:$j_id"
@@ -534,13 +531,13 @@ _servers_print_row() {
     load_module jobs
     local extra_jobs=""
     local json_file
-    for json_file in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.json; do
+    for json_file in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
         [ -f "$json_file" ] || continue
         local j_wt j_cmd j_id j_status
-        j_wt=$(jq -r '.worktree // empty' "$json_file" 2>/dev/null)
-        j_cmd=$(jq -r '.command // empty' "$json_file" 2>/dev/null)
-        j_id=$(jq -r '.id // empty' "$json_file" 2>/dev/null)
-        j_status=$(jq -r '.status // empty' "$json_file" 2>/dev/null)
+        j_wt=$(state_get "$json_file" "worktree")
+        j_cmd=$(state_get "$json_file" "command")
+        j_id=$(state_get "$json_file" "id")
+        j_status=$(state_get "$json_file" "status")
         [ "$j_wt" = "$name" ] && [ "$j_cmd" != "server" ] || continue
         if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
             extra_jobs="${extra_jobs:+$extra_jobs, }$j_cmd ($j_id)"
@@ -583,7 +580,7 @@ cmd_servers() {
     has_pwtfile_command "server" && has_server=true
 
     if [ "$json" = true ]; then
-        local rows="[]"
+        local rows=""
         local name path port branch listening job marker row
         while IFS=$'\t' read -r name path; do
             [ -n "$name" ] && [ -d "$path" ] || continue
@@ -596,42 +593,28 @@ cmd_servers() {
             [ "$name" = "$gateway_target" ] && marker="${marker}gateway "
             [ "$name" = "$current" ] && marker="${marker}current "
             if [ "$show_all" = true ] || [ "$listening" = true ] || [ -n "$job" ] || [ -n "$marker" ]; then
-                row=$(jq -n \
-                    --arg name "$name" --arg path "$path" --arg port "$port" \
-                    --arg branch "$branch" --arg job "$job" --arg marker "${marker% }" \
-                    --argjson listening "$listening" \
-                    '{
-                        "name": $name,
-                        "path": $path,
-                        "port": (if $port != "" then ($port | tonumber) else null end),
-                        "branch": $branch,
-                        "listening": $listening,
-                        "job": (if $job != "" then $job else null end),
-                        "marker": $marker
-                    }')
-                rows=$(echo "$rows" | jq --argjson row "$row" '. + [$row]')
+                row=$(printf '{"name":%s,"path":%s,"port":%s,"branch":%s,"listening":%s,"job":%s,"marker":%s}' \
+                    "$(json_str "$name")" \
+                    "$(json_str "$path")" \
+                    "$(json_num_or_null "$port")" \
+                    "$(json_str "$branch")" \
+                    "$listening" \
+                    "$(json_str_or_null "$job")" \
+                    "$(json_str "${marker% }")")
+                rows="${rows:+$rows,}$row"
             fi
         done < <(list_known_worktree_entries)
-        jq -n -c \
-            --arg project "$CURRENT_PROJECT" \
-            --arg gateway_port "$gateway_port" \
-            --arg gateway_target "$gateway_target" \
-            --arg current "$current" \
-            --argjson gateway_running "$gateway_running" \
-            --argjson has_server "$has_server" \
-            --argjson servers "$rows" \
-            '{
-                "project": $project,
-                "pwtfile_server": $has_server,
-                "gateway": {
-                    "configured": ($gateway_port != ""),
-                    "port": (if $gateway_port != "" then ($gateway_port | tonumber) else null end),
-                    "running": $gateway_running,
-                    "target": (if $gateway_target != "" then $gateway_target else null end)
-                },
-                "current": (if $current != "" then $current else null end),
-                "servers": $servers
-            }'
+        local _gw_configured="false"
+        [ -n "$gateway_port" ] && _gw_configured="true"
+        printf '{"project":%s,"pwtfile_server":%s,"gateway":{"configured":%s,"port":%s,"running":%s,"target":%s},"current":%s,"servers":[%s]}\n' \
+            "$(json_str "$CURRENT_PROJECT")" \
+            "$has_server" \
+            "$_gw_configured" \
+            "$(json_num_or_null "$gateway_port")" \
+            "$gateway_running" \
+            "$(json_str_or_null "$gateway_target")" \
+            "$(json_str_or_null "$current")" \
+            "$rows"
         return 0
     fi
 
@@ -718,7 +701,7 @@ cmd_gateway() {
                 local cur_port=$(_gateway_port 2>/dev/null || echo "")
                 if ! { _gateway_is_running && [ "$cur_port" = "$port" ]; }; then
                     pwt_error "Error: Port $port is already in use by another process"
-                    echo "  Pick a free port, or find the owner with: lsof -i :$port" >&2
+                    echo "  Pick a free port, or find the owner with: $(_port_owner_hint "$port")" >&2
                     return $EXIT_USAGE
                 fi
             fi

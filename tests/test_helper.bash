@@ -16,7 +16,8 @@ setup_test_env() {
     export PWT_DIR="$TEST_TEMP_DIR/pwt"
     mkdir -p "$HOME"
     mkdir -p "$PWT_DIR/projects"
-    echo '{}' > "$PWT_DIR/meta.json"
+    # State contract v2: declare schema so pwt skips legacy-migration checks
+    echo '2' > "$PWT_DIR/state-version"
 
     # Create a temporary git repo for testing
     export TEST_REPO="$TEST_TEMP_DIR/test-repo"

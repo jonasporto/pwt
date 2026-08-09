@@ -13,12 +13,10 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config.json" << EOF
-{
-  "path": "$TEST_REPO",
-  "worktrees_dir": "$TEST_WORKTREES",
-  "branch_prefix": "test/"
-}
+    cat > "$PWT_DIR/projects/test-project/config" << EOF
+path=$TEST_REPO
+worktrees_dir=$TEST_WORKTREES
+branch_prefix=test/
 EOF
 
     # Add a commit
@@ -398,4 +396,74 @@ EOF
     [[ "$output" == *"SERVER_PARAM_WT:TEST-IN-WT-SERVER-PARAM"* ]]
     [[ "$output" == *"SERVER_PARAM_1:stop"* ]]
     [[ "$output" == *"SERVER_PARAM_ARGS:stop"* ]]
+}
+
+# ============================================
+# Pwtfile arguments vs worktree names
+# Regression: `pwt server stop` inside a worktree reached through the
+# project's `current` symlink was read as a worktree named "stop", because
+# $PWD is .../projects/<p>/current and never matches $WORKTREES_DIR.
+# ============================================
+
+_seed_arg_echo_pwtfile() {
+    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+server() {
+    echo "ARGS=[$PWT_ARGS]"
+}
+EOF
+    cd "$TEST_REPO"
+    git add Pwtfile
+    git commit -q -m "Add Pwtfile"
+}
+
+@test "server passes an unknown positional as a Pwtfile arg from inside a worktree" {
+    _seed_arg_echo_pwtfile
+    "$PWT_BIN" create ARG-WT HEAD >/dev/null 2>&1
+
+    cd "$TEST_WORKTREES/ARG-WT"
+    run "$PWT_BIN" server stop
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ARGS=[stop]"* ]]
+    [[ "$output" != *"Worktree not found"* ]]
+}
+
+@test "server passes an unknown positional as a Pwtfile arg via the current symlink" {
+    _seed_arg_echo_pwtfile
+    "$PWT_BIN" create ARG-WT HEAD >/dev/null 2>&1
+    "$PWT_BIN" use ARG-WT >/dev/null 2>&1
+
+    local current_link="$PWT_DIR/projects/test-project/current"
+    [ -L "$current_link" ] || skip "current symlink was not created"
+
+    cd "$current_link"
+    run "$PWT_BIN" server stop
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ARGS=[stop]"* ]]
+    [[ "$output" != *"Worktree not found"* ]]
+}
+
+@test "server from the main app still treats an unknown name as a worktree" {
+    # Deliberate asymmetry: inside a worktree the context is unambiguous, so
+    # an unknown positional is a Pwtfile arg; from the main app it is far more
+    # likely a mistyped worktree name, so it must still fail.
+    _seed_arg_echo_pwtfile
+
+    cd "$TEST_REPO"
+    run "$PWT_BIN" server definitely-not-a-worktree
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not found"* ]]
+}
+
+@test "server still resolves a real worktree name instead of treating it as an arg" {
+    _seed_arg_echo_pwtfile
+    "$PWT_BIN" create ARG-WT HEAD >/dev/null 2>&1
+    "$PWT_BIN" use ARG-WT >/dev/null 2>&1
+
+    local current_link="$PWT_DIR/projects/test-project/current"
+    [ -L "$current_link" ] || skip "current symlink was not created"
+
+    cd "$current_link"
+    run "$PWT_BIN" server ARG-WT
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ARGS=[]"* ]]
 }

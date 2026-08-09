@@ -4,10 +4,16 @@
 
 - **bash** 3.2+ (default on macOS/Linux/WSL)
 - **git** 2.5+ (for worktree support)
-- **jq** (JSON processing)
-- **make** (required for source install)
-- **fzf** (optional but highly recommended, for interactive selection)
-- **lsof** (optional but highly recommended, for port detection)
+- **make** (only for installing from source)
+
+Everything else is optional; pwt degrades gracefully without it:
+
+- **fzf** — richer interactive picker (`select`, `cd --select`); without it a
+  builtin picker is used
+- **lsof** — port owner detection; falls back to `ss`, `fuser`, then a bash
+  `/dev/tcp` probe
+- **jq** — needed **once** to convert pre-v2 JSON state, and never again;
+  fresh installs never use it
 
 **Windows:** supported via **WSL** only (native Windows shell is not supported).
 
@@ -81,10 +87,10 @@ sudo make install
 
 **macOS:**
 ```bash
-brew install git jq make fzf
+brew install git make fzf   # jq only if upgrading an old install
 ```
 
-**Linux/WSL:** install `git`, `jq`, `make`, `fzf`, and `lsof` with your package manager.
+**Linux/WSL:** install `git` and `make`; `fzf` and `lsof` are recommended.
 
 ## Shell Setup
 
@@ -170,6 +176,9 @@ Add this line to your `~/.zshrc` or `~/.bashrc`.
 2. Rebuild completion cache: `rm -f ~/.zcompdump* && compinit`
 
 ### "jq: command not found"
+
+Only affects installs created before state schema v2. See
+[docs/migrations/001-v1-to-v2.md](docs/migrations/001-v1-to-v2.md).
 
 Install jq with your package manager (macOS: `brew install jq`).
 

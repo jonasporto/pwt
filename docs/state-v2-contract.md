@@ -44,10 +44,18 @@ so nothing under `$PWT_DIR` is a surprise.
 
 ### File format: flat key=value
 
-One `key=value` per line. Keys are `[a-z0-9_.]+`; nested concepts flatten
-with dots (`editor.default=vim`, `ai.tools.claude=claude --resume`). Values
-are raw except newline and backslash, escaped as `\n` and `\\`. Read in bash
-with `while IFS='=' read -r k v` (split on first `=` only); written with
+One `key=value` per line. Keys match `[A-Za-z0-9_.-]+` (uppercase and `-`
+appear in tool names such as `ai.tools.gpt-4o`) and are rejected otherwise, so
+a key can never contain the `=` that would make pwt and a consumer disagree
+about where the value starts. Nested concepts flatten with dots
+(`editor.default=vim`, `ai.tools.claude=claude --resume`).
+
+Values are raw except backslash, newline, tab and CR, escaped as `\\`, `\n`,
+`\t` and `\r`. Only newline can break a `key=value` line; tab and CR are
+escaped because the same escaper writes `events.log`, which is tab-separated.
+`_state_escape` and `_state_unescape` must be edited together: every sequence
+one emits, the other must reverse. Read in bash with
+`while IFS='=' read -r k v` (split on first `=` only); written with
 `printf '%s=%s\n'`. Unknown keys MUST be preserved by writers (user-defined
 metadata like `phase`, `next`, `blocked` lives beside built-ins).
 

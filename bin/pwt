@@ -49,6 +49,10 @@ load_module() {
     local module="$1"
     local module_path="$PWT_LIB/${module}.sh"
     if [[ -f "$module_path" ]]; then
+        # Non-constant path with a loop-variable module name: shellcheck
+        # cannot resolve it and no directive can enumerate the set.
+        # scripts/check lints every module explicitly instead.
+        # shellcheck source=/dev/null
         source "$module_path"
     else
         pwt_error "Error: Module not found: $module_path"
@@ -927,7 +931,9 @@ state_set() {
         pwt_error "Invalid state key: '$key'"
         echo "  Keys may contain letters, digits, '_', '.' and '-' only." >&2
         echo "  Use separate arguments: pwt meta set <worktree> <key> <value>" >&2
-        return "$EXIT_USAGE"
+        # Defaulted: state_set is also sourced standalone by the test harness,
+        # where bin/pwt's exit-code constants are not defined.
+        return "${EXIT_USAGE:-2}"
     fi
 
     dir=$(dirname "$file")
@@ -1103,11 +1109,12 @@ events_append() {
     return 0
 }
 
-# Opportunistic rotation: keep events.log at the last 1000 lines.
-# Only rewrites when the file has grown well past the limit.
 # Pairs the server_start event for a foreground server (see cmd_server).
 # Reads globals because an EXIT trap runs after the emitting function's
 # locals are gone.
+#
+# Note: a server() that ends in `exec` (the documented pattern) replaces the
+# process, so this trap never fires and that server_start stays unpaired.
 _pwt_emit_server_stop() {
     local rc=$?
     if [ -n "${_PWT_SERVER_EVENT_WT:-}" ]; then
@@ -1119,6 +1126,8 @@ _pwt_emit_server_stop() {
     return $rc
 }
 
+# Opportunistic rotation: keep events.log at the last 1000 lines.
+# Only rewrites when the file has grown well past the limit.
 events_maybe_truncate() {
     local log="$PWT_DIR/events.log" lines
     [ -f "$log" ] || return 0
@@ -2782,6 +2791,8 @@ run_single_pwtfile() {
             replace_re() { pwtfile_replace_re "$@"; }
             run() { pwtfile_run "$@"; }
 
+            # User-provided file, path known only at runtime
+            # shellcheck source=/dev/null
             source "$pwtfile"
 
             # Call the phase function if it exists
@@ -2799,6 +2810,8 @@ run_single_pwtfile() {
             replace_re() { pwtfile_replace_re "$@"; }
             run() { pwtfile_run "$@"; }
 
+            # User-provided file, path known only at runtime
+            # shellcheck source=/dev/null
             source "$pwtfile"
 
             # Call the phase function if it exists
@@ -8158,14 +8171,14 @@ EOF
 
 # Helper: check if arg is a pwt project
 _pwt_is_project() {
-    [[ -d ~/.pwt/projects/\$1 ]] && return 0
+    [[ -d ~/.pwt/projects/\${1:-} ]] && return 0
     # Check aliases
     while IFS= read -r config; do
         [ -f "\$config" ] || continue
         local alias_val=\$(sed -n 's/^alias=//p' "\$config" 2>/dev/null)
-        [[ "\$alias_val" == "\$1" ]] && return 0
+        [[ "\$alias_val" == "\${1:-}" ]] && return 0
         local aliases_val=\$(sed -n 's/^aliases=//p' "\$config" 2>/dev/null)
-        case ",\$aliases_val," in *",\$1,"*) return 0 ;; esac
+        case ",\$aliases_val," in *",\${1:-},"*) return 0 ;; esac
     done < <(find ~/.pwt/projects -maxdepth 2 -name config 2>/dev/null)
     return 1
 }
@@ -8270,16 +8283,16 @@ _pwt_update_title() {
 }
 
 # Auto-update title on directory change
-if [[ -n "\$ZSH_VERSION" ]]; then
+if [[ -n "\${ZSH_VERSION:-}" ]]; then
     # zsh: use chpwd hook
     autoload -Uz add-zsh-hook 2>/dev/null
     add-zsh-hook chpwd _pwt_update_title 2>/dev/null || {
         # Fallback if add-zsh-hook not available
         chpwd() { _pwt_update_title; }
     }
-elif [[ -n "\$BASH_VERSION" ]]; then
+elif [[ -n "\${BASH_VERSION:-}" ]]; then
     # bash: use PROMPT_COMMAND
-    if [[ "\$PROMPT_COMMAND" != *"_pwt_update_title"* ]]; then
+    if [[ "\${PROMPT_COMMAND:-}" != *"_pwt_update_title"* ]]; then
         PROMPT_COMMAND="_pwt_update_title\${PROMPT_COMMAND:+; \$PROMPT_COMMAND}"
     fi
 fi
@@ -8291,18 +8304,18 @@ $cmd_name() {
     # Check if this invocation should change the shell's directory.
     local _is_cd=false
     local _implicit_cd_target=""
-    if [[ "\$1" == "cd" ]]; then
+    if [[ "\${1:-}" == "cd" ]]; then
         _is_cd=true
-    elif [[ "\$2" == "cd" ]]; then
+    elif [[ "\${2:-}" == "cd" ]]; then
         _is_cd=true
-    elif type _pwt_is_project >/dev/null 2>&1 && _pwt_is_project "\$1" && [[ -z "\$2" || "\$2" == @* || "\$2" == -h || "\$2" == --help ]]; then
+    elif type _pwt_is_project >/dev/null 2>&1 && _pwt_is_project "\${1:-}" && [[ -z "\${2:-}" || "\${2:-}" == @* || "\${2:-}" == -h || "\${2:-}" == --help ]]; then
         # pwt <project> without command OR pwt <project> @
-        if [[ "\$2" == -h || "\$2" == --help ]]; then
+        if [[ "\${2:-}" == -h || "\${2:-}" == --help ]]; then
             "$pwt_path" "\$@"
             return \$?
         fi
         _is_cd=true
-    elif [[ -z "\$2" ]] || { type _pwt_is_project >/dev/null 2>&1 && _pwt_is_project "\$1" && [[ -z "\$3" ]]; }; then
+    elif [[ -z "\${2:-}" ]] || { type _pwt_is_project >/dev/null 2>&1 && _pwt_is_project "\${1:-}" && [[ -z "\${3:-}" ]]; }; then
         _implicit_cd_target=\$("$pwt_path" _implicit-cd "\$@" 2>/dev/null)
         if [[ \$? -eq 0 && -d "\$_implicit_cd_target" ]]; then
             _is_cd=true
@@ -8313,18 +8326,20 @@ $cmd_name() {
 
     if [[ "\$_is_cd" == true ]]; then
         # pwt cd or pwt <project> cd or pwt <project> - change to worktree directory
-        local input target project
+        # Initialised: the generated function runs in the user shell, which
+        # may have set -u, and not every branch below assigns all three.
+        local input="" target="" project=""
         if [[ -n "\$_implicit_cd_target" ]]; then
             target="\$_implicit_cd_target"
-        elif [[ "\$1" == "cd" ]]; then
-            input="\$2"
-        elif [[ "\$2" == "cd" ]]; then
+        elif [[ "\${1:-}" == "cd" ]]; then
+            input="\${2:-}"
+        elif [[ "\${2:-}" == "cd" ]]; then
             # pwt <project> cd <target>
-            project="\$1"
-            input="\$3"
+            project="\${1:-}"
+            input="\${3:-}"
         else
             # pwt <project> [worktree] - no cd keyword
-            project="\$1"
+            project="\${1:-}"
             input="\${2:-@}"
         fi
 
@@ -8332,11 +8347,11 @@ $cmd_name() {
         if [[ -n "\$_implicit_cd_target" ]]; then
             :
         elif [[ "\$input" == "-" ]]; then
-            if [[ -z "\$PWT_PREVIOUS_PATH" ]]; then
+            if [[ -z "\${PWT_PREVIOUS_PATH:-}" ]]; then
                 echo "No previous worktree" >&2
                 return 1
             fi
-            target="\$PWT_PREVIOUS_PATH"
+            target="\${PWT_PREVIOUS_PATH:-}"
         else
             if [[ -n "\$project" ]]; then
                 target=\$("$pwt_path" "\$project" _cd "\$input" 2>&1)
@@ -8362,15 +8377,15 @@ $cmd_name() {
         else
             unset PWT_WORKTREE
         fi
-    elif [[ "\$1" == "select" ]] || [[ "\$2" == "select" ]]; then
+    elif [[ "\${1:-}" == "select" ]] || [[ "\${2:-}" == "select" ]]; then
         # pwt select or pwt <project> select - interactive selection with cd
         local target
-        if [[ "\$1" == "select" ]]; then
+        if [[ "\${1:-}" == "select" ]]; then
             shift
             target=\$("$pwt_path" _select "\$@" 2>&1)
         else
             # pwt <project> select
-            local project="\$1"
+            local project="\${1:-}"
             shift 2
             target=\$("$pwt_path" "\$project" _select "\$@" 2>&1)
         fi
@@ -8396,7 +8411,7 @@ $cmd_name() {
         else
             unset PWT_WORKTREE
         fi
-    elif [[ "\$1" == "use" ]] || [[ "\$2" == "use" ]]; then
+    elif [[ "\${1:-}" == "use" ]] || [[ "\${2:-}" == "use" ]]; then
         # pwt use or pwt <project> use - run command then follow symlink if inside current
         "$pwt_path" "\$@"
         local exit_code=\$?

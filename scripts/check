@@ -64,24 +64,31 @@ check_format() {
     if ! have shfmt; then skip "shfmt (brew install shfmt)"; return; fi
 
     local unformatted
-    unformatted=$(shfmt -i 4 -ci -l "${SOURCES[@]}" completions/pwt.bash 2>/dev/null | wc -l | tr -d ' ')
+    # No printer flags: passing any of them disables .editorconfig
+    unformatted=$(shfmt -l "${SOURCES[@]}" completions/pwt.bash 2>/dev/null | wc -l | tr -d ' ')
     if [ "$unformatted" -eq 0 ]; then
         pass "shfmt (all files formatted)"
     else
-        info "shfmt: $unformatted file(s) unformatted — 'shfmt -i 4 -ci -w' to fix"
+        info "shfmt: $unformatted file(s) unformatted — 'shfmt -w .' to fix"
     fi
 }
 
-check_style() {
-    stage "Style (bashate)"
-    if ! have bashate; then skip "bashate (pip install bashate)"; return; fi
+# Distinguish "tests failed" from "the run died": a bats killed by a signal
+# exits non-zero with zero `not ok` lines, and reporting that as "0 failing"
+# hides the real problem.
+_report_bats() {
+    local rc="$1" log="$2" label="$3" passed failed
+    passed=$(grep -c '^ok' "$log" 2>/dev/null || echo 0)
+    failed=$(grep -c '^not ok' "$log" 2>/dev/null || echo 0)
 
-    # E006 = line length: pwt has long help/printf lines by design
-    local out errors warnings
-    out=$(bashate -i E006 "${SOURCES[@]}" 2>&1)
-    errors=$(printf '%s' "$out" | grep -cE ': E[0-9]+' || true)
-    warnings=$(printf '%s' "$out" | grep -oE '[0-9]+ bashate warning' | grep -oE '^[0-9]+' || echo 0)
-    info "bashate: ${errors:-0} finding(s), ${warnings:-0} warning(s) (informational)"
+    if [ "$rc" -eq 0 ]; then
+        pass "$label ($passed tests)"
+    elif [ "$failed" -gt 0 ]; then
+        fail "$label ($failed failing of $((passed + failed)))"
+        grep -E '^not ok' "$log" | head -10
+    else
+        fail "$label (run aborted: exit $rc after $passed tests - see $log)"
+    fi
 }
 
 check_tests() {
@@ -89,12 +96,11 @@ check_tests() {
     stage "Tests (bats)"
     if ! have bats; then fail "bats not installed"; return; fi
 
-    if bats tests/ >/tmp/pwt-check-tests.log 2>&1; then
-        pass "bats under $(bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1) ($(grep -c '^ok' /tmp/pwt-check-tests.log) tests)"
-    else
-        fail "bats ($(grep -c '^not ok' /tmp/pwt-check-tests.log) failing)"
-        grep -E '^not ok' /tmp/pwt-check-tests.log | head -10
-    fi
+    local rc
+    bats tests/ >/tmp/pwt-check-tests.log 2>&1
+    rc=$?
+    _report_bats "$rc" /tmp/pwt-check-tests.log \
+        "bats under bash $(bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
 
     [ "$both" = both ] || return
 
@@ -102,12 +108,10 @@ check_tests() {
     # runs under it (shebang), so the 3.2 pass is the compatibility check.
     if [ "$(uname -s)" = Darwin ] && [ -x /bin/bash ]; then
         local v32; v32=$(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
-        if /bin/bash "$(command -v bats)" tests/ >/tmp/pwt-check-32.log 2>&1; then
-            pass "bats under system bash $v32 ($(grep -c '^ok' /tmp/pwt-check-32.log) tests)"
-        else
-            fail "bats under system bash $v32 ($(grep -c '^not ok' /tmp/pwt-check-32.log) failing)"
-            grep -E '^not ok' /tmp/pwt-check-32.log | head -10
-        fi
+        local rc32
+        /bin/bash "$(command -v bats)" tests/ >/tmp/pwt-check-32.log 2>&1
+        rc32=$?
+        _report_bats "$rc32" /tmp/pwt-check-32.log "bats under system bash $v32"
     fi
 }
 
@@ -136,11 +140,18 @@ check_docs() {
     stage "Docs consistency"
     local problems=0
 
-    # Every command in the brief help must appear in the man page
-    local cmd
-    for cmd in "state migrate" "server wait" "jobs wait"; do
-        if ! grep -q -- "${cmd% *}" man/pwt.1; then
-            echo "      man page missing: $cmd"; problems=1
+    # Every subcommand must appear in the man page. Both tokens must land on
+    # the SAME line, or this passes on any mention of "state"/"server"/"jobs"
+    # - which is what the first version of this check actually did.
+    local pair verb sub
+    for pair in "state:migrate" "server:wait" "jobs:wait" "jobs:porcelain"; do
+        verb="${pair%%:*}"
+        sub="${pair##*:}"
+        # No \b here: BSD grep (macOS) lacks it, and this script must behave
+        # identically on both platforms.
+        if ! grep -E "^\.B .*${verb}.*${sub}" man/pwt.1 >/dev/null; then
+            echo "      man page missing: $verb $sub"
+            problems=1
         fi
     done
 
@@ -168,7 +179,7 @@ main() {
             check_syntax; check_shellcheck; check_format; check_tests one
             ;;
         lint)
-            check_syntax; check_shellcheck; check_format; check_style
+            check_syntax; check_shellcheck; check_format
             ;;
         tests)
             check_tests both
@@ -177,7 +188,7 @@ main() {
             check_coverage
             ;;
         all)
-            check_syntax; check_shellcheck; check_format; check_style
+            check_syntax; check_shellcheck; check_format
             check_docs; check_tests both
             ;;
         -h|--help)

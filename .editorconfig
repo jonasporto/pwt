@@ -1,0 +1,34 @@
+; shfmt reads this file when given no printer flags, so formatting lives in
+; one place and editors pick it up for free. Passing any printer flag on the
+; command line disables EditorConfig entirely - use one or the other.
+root = true
+
+[*]
+end_of_line = lf
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[{bin/pwt,*.sh,*.bash}]
+indent_style = space
+indent_size = 4
+switch_case_indent = true    # -ci
+shell_variant = bash
+binary_next_line = false
+space_redirects = false
+
+[*.bats]
+indent_style = space
+indent_size = 4
+shell_variant = bats
+
+[Makefile]
+indent_style = tab
+
+[*.{md,yml,yaml,json}]
+indent_style = space
+indent_size = 2
+
+[*.fish]
+indent_style = space
+indent_size = 4

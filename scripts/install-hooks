@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Install git hooks for this checkout.
+#
+#   scripts/install-hooks          # install
+#   scripts/install-hooks --remove # uninstall
+#
+# Split by cost, so neither hook is worth bypassing:
+#
+#   pre-commit  sub-second: syntax + shellcheck -S error + shfmt, staged files
+#               only. Catches the typo while the context is still in your head.
+#   pre-push    the full `scripts/check`: both bash versions, the whole suite,
+#               docs consistency. Paid once per batch, right when the code is
+#               about to leave the machine.
+#
+# Putting the suite in pre-commit would tax small commits and train everyone
+# to reach for --no-verify, which protects nothing.
+
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+
+HOOK_DIR="$(git rev-parse --git-path hooks)"
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+NC=$'\033[0m'
+
+if [ "${1:-}" = "--remove" ]; then
+    rm -f "$HOOK_DIR/pre-commit" "$HOOK_DIR/pre-push"
+    echo "Hooks removed from $HOOK_DIR"
+    exit 0
+fi
+
+mkdir -p "$HOOK_DIR"
+
+cat > "$HOOK_DIR/pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+# pwt pre-commit: fast checks on staged shell files only.
+# Bypass with --no-verify when you genuinely need to.
+set -uo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACM |
+    grep -E '^(bin/pwt|lib/pwt/.*\.sh|completions/pwt\.bash|scripts/[a-z-]+)$' || true)
+[ -n "$staged" ] || exit 0
+
+fail=0
+while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    bash -n "$f" || { echo "  syntax: $f"; fail=1; }
+done <<< "$staged"
+
+if command -v shellcheck >/dev/null 2>&1; then
+    # Only errors block here; the warning backlog is reported by scripts/check
+    # shellcheck disable=SC2086
+    shellcheck -x -S error $staged || fail=1
+fi
+
+if command -v shfmt >/dev/null 2>&1; then
+    # No printer flags: .editorconfig is the single source of formatting truth
+    # shellcheck disable=SC2086
+    unformatted=$(shfmt -l $staged 2>/dev/null || true)
+    if [ -n "$unformatted" ]; then
+        echo "  not formatted (run 'shfmt -w .'):"
+        printf '    %s\n' $unformatted
+    fi
+fi
+
+[ "$fail" -eq 0 ] || {
+    echo "pre-commit failed. Fix, or commit with --no-verify." >&2
+    exit 1
+}
+HOOK
+
+cat > "$HOOK_DIR/pre-push" <<'HOOK'
+#!/usr/bin/env bash
+# pwt pre-push: the full local pipeline before anything leaves the machine.
+# Bypass with --no-verify.
+set -uo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+exec "$repo_root/scripts/check"
+HOOK
+
+chmod +x "$HOOK_DIR/pre-commit" "$HOOK_DIR/pre-push"
+
+echo "${GREEN}✓${NC} hooks installed in $HOOK_DIR"
+echo "    pre-commit  syntax + shellcheck -S error + shfmt (staged files)"
+echo "    pre-push    scripts/check (full pipeline)"
+echo ""
+echo "${YELLOW}note${NC} hooks are per-checkout; each clone runs this once."
+echo "     remove with: scripts/install-hooks --remove"

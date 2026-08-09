@@ -98,6 +98,33 @@ jobs:
         env:
           PWT_TEST_JOBS: 1
 
+  # Runs the whole suite with `set -u` forced on, which mechanically enforces
+  # the CLAUDE.md rule that every PWT_* variable must be exported with a
+  # default: a missing one becomes an unbound-variable failure instead of
+  # needing a hand-written test per variable. Pattern from bats-core.
+  test-nounset:
+    needs: should-run
+    if: needs.should-run.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats jq
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+      - name: Run suite under set -u
+        run: |
+          chmod +x bin/pwt
+          bats tests/
+        env:
+          BASH_ENV: ${{ github.workspace }}/.github/workflows/set_nounset.bash
+          PWT_TEST_JOBS: 1
+
   # Minimal Linux box: no jq, no lsof, no column, no curl. pwt must still
   # start, degrade gracefully and pass everything that does not need those
   # tools. Guards the "core is bash + git + coreutils" promise.

@@ -627,9 +627,12 @@ META
 
     run "$PWT_BIN" state migrate --check --porcelain
     [ "$status" -eq 0 ]
-    [[ "$output" == *'"meta_records":1'* ]]
     [[ "$output" == *'"converts":1'* ]]
     [[ "$output" == *'"skips":1'* ]]
+    # records must equal converts + skips (docs/migrations rule #3): a
+    # malformed entry is still a record that was examined, and reporting
+    # otherwise makes the dry run contradict itself.
+    [[ "$output" == *'"meta_records":2'* ]]
 }
 
 # Regression: _state_escape gained \t and \r without _state_unescape learning

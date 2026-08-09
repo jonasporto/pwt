@@ -49,12 +49,17 @@ migration_001_check() {
             return "$EXIT_ERROR"
         fi
 
-        # Guard the type here too: `to_entries` on a non-object aborts jq,
-        # and the old `|| echo 0` swallowed that - the very mistake rule #1 in
-        # docs/migrations/README.md warns about, left in the command users are
-        # told to read before migrating.
+        # Guard the type at every level: `to_entries` on a non-object aborts
+        # jq, and the old `|| echo 0` swallowed that - the very mistake rule #1
+        # in docs/migrations/README.md warns about, left in the command users
+        # are told to read before migrating.
+        #
+        # "records" must equal converts + skips (rule #3), so it counts both
+        # the sub-entries of well-formed projects AND the top-level entries
+        # that are not projects at all; the latter are skips too.
         _MIG_META_RECORDS=$(jq -r '
-            [ .[] | select(type == "object") | to_entries[] ] | length
+            [ (.[] | select(type == "object") | to_entries[]),
+              (to_entries[] | select((.value | type) != "object")) ] | length
         ' "$PWT_DIR/meta.json" 2>/dev/null || echo 0)
         _MIG_META_CONVERTS=$(jq -r '
             [ .[] | select(type == "object") | to_entries[]

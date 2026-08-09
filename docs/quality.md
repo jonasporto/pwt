@@ -23,8 +23,8 @@ the pipeline is never noisy enough to be ignored.
 | Test suite, macOS system bash 3.2 | gate | 843 passing |
 | Test suite under `set -u` (CI) | gate | passing |
 | `shellcheck -S warning` | informational | 332 (301 of them SC2155) |
-| `shfmt` | informational | 4 files unformatted |
-| Coverage (kcov) | informational, Linux CI only | not yet reported |
+| `shfmt` | gate | clean (reformat landed 2026-08-09) |
+| Coverage (kcov) | informational, Linux CI only | **62.70%** (4,856/7,745 lines) |
 
 ## Why SC2155 is not "just fixed"
 
@@ -70,9 +70,14 @@ printer flags. **Passing any printer flag on the command line disables
 EditorConfig entirely**, so `scripts/check` and the hooks call bare
 `shfmt -l` / `shfmt -w`.
 
-The remaining unformatted files are a pending one-shot reformat
-(~2,300 lines). When it lands it should be a standalone commit, recorded in
-`.git-blame-ignore-revs`, after which `check_format` becomes a gate.
+The one-shot reformat landed on 2026-08-09 (58 files), as a standalone
+commit recorded in `.git-blame-ignore-revs`. Activate it locally with:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+`shfmt -w .` is now a no-op, so the stage is a gate.
 
 ## Test coverage
 
@@ -89,6 +94,57 @@ Two structural ceilings worth knowing before chasing a number: tests that use
 invisible to any line-coverage tool, and a coverage gate needs a test of its
 own — the only comparable project in the ecosystem, bats-core, has a gate
 that silently never fires because it compares against an undefined variable.
+
+### Measured baseline (2026-08-09, Linux container, kcov v43)
+
+**62.70% — 4,856 of 7,745 executable lines**, full suite.
+
+| File | % | covered/total |
+|---|---|---|
+| `bin/pwt` | 69.66 | 3254/4671 |
+| `lib/pwt/jobs.sh` | 77.30 | 218/282 |
+| `lib/pwt/plugin.sh` | 75.88 | 151/199 |
+| `lib/pwt/worktree.sh` | 67.47 | 589/873 |
+| `lib/pwt/migrate.sh` | 64.46 | 107/166 |
+| `lib/pwt/list.sh` | 55.02 | 318/578 |
+| `lib/pwt/project.sh` | 53.36 | 143/268 |
+| `lib/pwt/claude.sh` | 15.33 | 40/261 |
+| `lib/pwt/gateway.sh` | 8.05 | 36/447 |
+
+**Read these numbers with two corrections in mind.**
+
+*Daemonized paths are undercounted.* `pwt server --bg` double-forks a perl
+daemon that outlives the pwt process; kcov keeps tracing it and is killed
+before flushing. `gateway.sh` in particular is exercised by 10 passing tests
+yet reports 8% — the reverse-proxy body is genuinely unmeasured, but the
+figure overstates the gap.
+
+*Some tested code cannot register.* `portability.bats` covers
+`align_columns` and `pick_fallback`, but by `sed`-extracting them into a
+subshell, which no line-coverage tool can see.
+
+Genuinely untested, in order of risk:
+
+1. **Backup/restore** in `bin/pwt` — 147 lines, 0%. A destructive recovery
+   path with no test at all.
+2. **`cmd_auto_remove`** — 10/113. Also destructive, also untested.
+3. **`cmd_claude_setup`** — 38/247, the largest uncovered function.
+4. **Verbose list rendering** (`cmd_list_verbose` 0/135) — tests cover
+   `--names` and JSON but never the human-facing table.
+5. **Interactive/TTY paths** — `cmd_setup_shell`, `_use_interactive_select`,
+   `cmd_select`, `cmd_editor*`.
+
+Reproducing it needs a container: kcov must receive the *script path*
+(`kcov out bin/pwt --version` works; `kcov out bash bin/pwt` reports zero),
+and its bash engine does not follow exec'd children, so wrapping bats
+measures nothing. The working method injects a self-re-exec preamble into
+`bin/pwt` line 2 — keeping every line number identical — guarded so tests
+that `source` the binary do not re-exec inside the bats process. Run with
+`--cap-add=SYS_PTRACE --security-opt seccomp=unconfined`, or kcov dies with
+"Can't set personality".
+
+Six `--bg` tests fail *under instrumentation only*; the same container is
+843/843 green without kcov. Instrumented run: ~24 min against 90 s clean.
 
 ## Tools deliberately not used
 

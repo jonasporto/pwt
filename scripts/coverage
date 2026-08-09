@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Line coverage via kcov. Linux only - see docs/quality.md for why macOS
+# cannot work and for the current baseline.
+#
+#   scripts/coverage [test-file...]      # default: the whole suite
+#
+# Why this is not simply `kcov out bats tests/`:
+#
+#   kcov out bin/pwt --version     -> works
+#   kcov out bash bin/pwt ...      -> 0 lines (kcov needs the script path)
+#   kcov out parent-that-runs-pwt  -> 0 lines (its bash engine does not
+#                                     follow exec'd child scripts)
+#
+# Every bats test runs pwt as a child, so wrapping bats measures nothing.
+# Instead pwt re-execs itself under kcov when PWT_COV_DIR is set. The preamble
+# replaces line 2 (a comment) so every line number stays identical to the
+# original file, and the collectors are bucketed because kcov accumulates into
+# an existing --collect-only directory.
+
+set -uo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+
+REPO="$PWD"
+OUT="$REPO/coverage"
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+if [ "$(uname -s)" != Linux ]; then
+    echo "coverage: Linux only (kcov needs bash >= 4.2 for its trace fd;" >&2
+    echo "          bin/pwt runs under 3.2 on macOS). See docs/quality.md." >&2
+    exit 0
+fi
+
+command -v kcov >/dev/null 2>&1 || {
+    echo "coverage: kcov not installed (build v43 from source; distro" >&2
+    echo "          packages report 0%). See docs/quality.md." >&2
+    exit 0
+}
+
+rm -rf "$OUT"
+mkdir -p "$OUT/collect"
+
+# Instrumented copy: bin/pwt with the re-exec preamble on line 2.
+cp -R "$REPO" "$WORK/src"
+rm -rf "$WORK/src/.git" "$WORK/src/coverage"
+
+PREAMBLE='if [ -n "${PWT_COV_DIR:-}" ] && [ "${BASH_SOURCE[0]}" = "$0" ] && [ "${PWT_COV_ON:-}" != "$PPID" ] && [ "${PWT_COV_D:-0}" -lt 3 ]; then export PWT_COV_ON=$$ PWT_COV_D=$(( ${PWT_COV_D:-0} + 1 )); _kcd="$PWT_COV_DIR/b$(( $$ % 32 ))"; mkdir -p "$_kcd"; exec kcov --collect-only --bash-method=DEBUG --include-path=SRC/bin,SRC/lib "$_kcd" "$0" "$@"; fi'
+PREAMBLE="${PREAMBLE//SRC/$WORK/src}"
+
+# The BASH_SOURCE guard matters: without it, tests that `source` the binary
+# would re-exec kcov inside the bats process and kill the run mid-file.
+awk -v line="$PREAMBLE" 'NR == 2 { print line; next } { print }' \
+    "$REPO/bin/pwt" >"$WORK/src/bin/pwt"
+chmod +x "$WORK/src/bin/pwt"
+
+echo "Running suite under kcov (expect ~15x the normal runtime)..."
+(
+    cd "$WORK/src" || exit 1
+    PWT_COV_DIR="$OUT/collect" bats "${@:-tests/}"
+) || echo "note: some --bg tests fail under instrumentation; see docs/quality.md"
+
+echo "Merging collectors..."
+kcov --merge "$OUT/merged" "$OUT/collect"/b* >/dev/null 2>&1
+
+pct=$(grep -oE '"percent_covered": *"[0-9.]+"' "$OUT/merged"/*/coverage.json 2>/dev/null |
+    head -1 | grep -oE '[0-9.]+' || true)
+
+if [ -n "$pct" ]; then
+    echo "Line coverage: ${pct}%   (report: $OUT/merged/index.html)"
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] &&
+        echo "Line coverage: **${pct}%**" >>"$GITHUB_STEP_SUMMARY"
+else
+    echo "coverage: produced no percentage - see $OUT/merged" >&2
+    exit 1
+fi

@@ -96,7 +96,10 @@ check_format() {
     if [ "$unformatted" -eq 0 ]; then
         pass "shfmt (all files formatted)"
     else
-        info "shfmt: $unformatted file(s) unformatted — 'shfmt -w .' to fix"
+        # A gate since the 2026-08-09 reformat: the backlog is zero, so any
+        # drift is new and cheap to fix.
+        fail "shfmt: $unformatted file(s) unformatted — run 'shfmt -w .'"
+        shfmt -l "${SOURCES[@]}" completions/pwt.bash 2>/dev/null | sed 's/^/      /'
     fi
 }
 
@@ -153,22 +156,10 @@ check_coverage() {
         return
     fi
 
-    local out=coverage
-    rm -rf "$out"
-    mkdir -p "$out"
-    if kcov --include-path=bin/pwt,lib/pwt --bash-method=DEBUG \
-        "$out" bats tests/ >/tmp/pwt-check-cov.log 2>&1; then
-        local pct
-        pct=$(grep -oE '"percent_covered": *"[0-9.]+"' "$out"/*/coverage.json 2>/dev/null |
-            head -1 | grep -oE '[0-9.]+' || true)
-        if [ -n "$pct" ]; then
-            info "line coverage: ${pct}% (report: $out/index.html)"
-        else
-            info "coverage produced, percentage not parsed (report: $out/index.html)"
-        fi
-    else
-        info "kcov run failed — see /tmp/pwt-check-cov.log"
-    fi
+    # Delegates to scripts/coverage, which owns the kcov invocation
+    exec_out=$("$PWD/scripts/coverage" 2>&1) || true
+    printf '%s\n' "$exec_out" | tail -2 | sed 's/^/  /'
+    return 0
 }
 
 check_docs() {

@@ -19,8 +19,8 @@ the pipeline is never noisy enough to be ignored.
 | `bash -n` syntax | gate | clean |
 | `shellcheck -x -S error` | gate | **0** |
 | Docs consistency (man coverage, version match) | gate | clean |
-| Test suite, bash 5.x | gate | 843 passing |
-| Test suite, macOS system bash 3.2 | gate | 843 passing |
+| Test suite, bash 5.x | gate | 870 passing |
+| Test suite, macOS system bash 3.2 | gate | 870 passing |
 | Test suite under `set -u` (CI) | gate | passing |
 | `shellcheck -S warning` | informational | 332 (301 of them SC2155) |
 | `shfmt` | gate | clean (reformat landed 2026-08-09) |
@@ -125,9 +125,12 @@ subshell, which no line-coverage tool can see.
 
 Genuinely untested, in order of risk:
 
-1. **Backup/restore** in `bin/pwt` — 147 lines, 0%. A destructive recovery
-   path with no test at all.
-2. **`cmd_auto_remove`** — 10/113. Also destructive, also untested.
+1. ~~**Backup/restore** in `bin/pwt` — 147 lines, 0%~~ — **covered**
+   (`tests/restore.bats`, 14 tests: listing, patch apply, untracked copy,
+   never-overwrite, unappliable patch, legacy backups, round trip).
+2. ~~**`cmd_auto_remove`** — 10/113~~ — **covered** (`tests/auto_remove.bats`,
+   13 tests: dry-run default, merged/pending/dirty classification, execute,
+   aliases, missing remote).
 3. **`cmd_claude_setup`** — 38/247, the largest uncovered function.
 4. **Verbose list rendering** (`cmd_list_verbose` 0/135) — tests cover
    `--names` and JSON but never the human-facing table.

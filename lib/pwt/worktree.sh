@@ -803,6 +803,7 @@ cmd_auto_remove() {
 	local target_branch=""
 	local dry_run=true # SAFE DEFAULT: dry-run unless --execute
 	local force_execute=false
+	local explicit_dry_run=false
 
 	# Parse arguments
 	while [ $# -gt 0 ]; do
@@ -814,6 +815,7 @@ cmd_auto_remove() {
 			;;
 		--dry-run | -n)
 			dry_run=true
+			explicit_dry_run=true
 			shift
 			;;
 		-h | --help)
@@ -846,8 +848,12 @@ cmd_auto_remove() {
 		esac
 	done
 
-	# SAFETY: Require interactive terminal or --execute flag
-	if [ "$force_execute" = false ] && [ ! -t 0 ]; then
+	# SAFETY: without a terminal this command must be invoked deliberately -
+	# either --execute (remove) or --dry-run (preview). A bare `auto-remove`
+	# from a script still errors, so nobody reaches a bulk removal by
+	# accident; an explicit preview changes nothing and is exactly what a
+	# script or agent should be able to do before deciding.
+	if [ "$force_execute" = false ] && [ "$explicit_dry_run" = false ] && [ ! -t 0 ]; then
 		echo -e "${RED}⛔ SAFETY: auto-remove requires --execute flag when run non-interactively${NC}"
 		echo "This prevents accidental data loss from automated scripts."
 		echo ""

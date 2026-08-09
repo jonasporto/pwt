@@ -882,7 +882,12 @@ _state_unescape() {
         out+="$chunk"
         s="${s#*\\}"
         case "$s" in
+            # Every sequence _state_escape produces must be reversed here, or
+            # a value round-trips corrupted (a tab coming back as literal
+            # backslash-t). Keep the two functions edited together.
             n*)  out+=$'\n'; s="${s#n}" ;;
+            t*)  out+=$'\t'; s="${s#t}" ;;
+            r*)  out+=$'\r'; s="${s#r}" ;;
             \\*) out+='\';   s="${s#\\}" ;;
             *)   out+='\' ;;
         esac

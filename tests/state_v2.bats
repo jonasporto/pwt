@@ -631,3 +631,34 @@ META
     [[ "$output" == *'"converts":1'* ]]
     [[ "$output" == *'"skips":1'* ]]
 }
+
+# Regression: _state_escape gained \t and \r without _state_unescape learning
+# them, so a tab was written as "\t" and read back as a literal backslash-t.
+# Any sequence one produces the other must reverse.
+@test "state escape/unescape round-trips control characters" {
+    local v
+    for v in "a	b" "x
+y" "back\\slash" "plain-value" "mixed	and
+both"; do
+        local escaped restored
+        escaped=$(_state_escape "$v")
+        restored=$(_state_unescape "$escaped")
+        [ "$restored" = "$v" ]
+        # And the escaped form must be a single line
+        [ "$(printf '%s' "$escaped" | wc -l | tr -d ' ')" -eq 0 ]
+    done
+}
+
+@test "state_set/state_get round-trip a value with tab and newline" {
+    printf '' > "$STATE_FILE"
+    local v
+    v=$(printf 'line1\nline2\tcol')
+
+    state_set "$STATE_FILE" note "$v"
+    # Stored on exactly one line
+    run wc -l < "$STATE_FILE"
+    [ "${output// /}" -eq 1 ]
+
+    run state_get "$STATE_FILE" note
+    [ "$output" = "$v" ]
+}

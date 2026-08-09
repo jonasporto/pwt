@@ -18,7 +18,7 @@ setup() {
     cd "$SOURCE_REPO"
     git config user.email "test@test.com"
     git config user.name "Test User"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Initial commit"
     git remote add origin "$BARE_REPO"

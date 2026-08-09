@@ -15,7 +15,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/

@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -38,7 +38,7 @@ teardown() {
     cd "$TEST_REPO"
 
     # Create a Pwtfile that creates a marker file
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() {
     touch "$PWT_WORKTREE_PATH/.setup_ran"
     echo "SETUP: $PWT_WORKTREE" >> "$PWT_WORKTREE_PATH/.setup_log"
@@ -57,7 +57,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create a Pwtfile that logs all PWT variables
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() {
     echo "PWT_WORKTREE=$PWT_WORKTREE" >> "$PWT_WORKTREE_PATH/.env_log"
     echo "PWT_PORT=$PWT_PORT" >> "$PWT_WORKTREE_PATH/.env_log"
@@ -79,7 +79,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create a Pwtfile with only a server function
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "server would run here"
 }
@@ -101,7 +101,7 @@ EOF
     local teardown_log="$TEST_TEMP_DIR/teardown_ran.log"
 
     # Create a Pwtfile with teardown
-    cat > "$TEST_REPO/Pwtfile" << EOF
+    cat >"$TEST_REPO/Pwtfile" <<EOF
 setup() {
     touch "\$PWT_WORKTREE_PATH/.setup_ran"
 }
@@ -126,7 +126,7 @@ EOF
 
     local kill_log="$TEST_TEMP_DIR/kill_delegate.log"
 
-    cat > "$TEST_REPO/Pwtfile" << EOF
+    cat >"$TEST_REPO/Pwtfile" <<EOF
 worker() {
     echo "TARGET:\$PWT_KILL_TARGET" >> "$kill_log"
     echo "ARGS:\$PWT_ARGS" >> "$kill_log"
@@ -168,12 +168,12 @@ EOF
     cd "$TEST_REPO"
 
     # Create a file to modify
-    echo "DATABASE=original_db" > "$TEST_REPO/config.txt"
+    echo "DATABASE=original_db" >"$TEST_REPO/config.txt"
     git add config.txt
     git commit -q -m "Add config"
 
     # Create Pwtfile that uses replace_literal
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() {
     replace_literal "config.txt" "original_db" "modified_db_$PWT_PORT"
 }
@@ -190,12 +190,12 @@ EOF
     cd "$TEST_REPO"
 
     # Create a file with port number
-    echo "PORT=3000" > "$TEST_REPO/config.txt"
+    echo "PORT=3000" >"$TEST_REPO/config.txt"
     git add config.txt
     git commit -q -m "Add config"
 
     # Create Pwtfile that uses replace_re
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() {
     replace_re "config.txt" "PORT=[0-9]+" "PORT=$PWT_PORT"
 }
@@ -216,14 +216,14 @@ EOF
     cd "$TEST_REPO"
 
     # Create project Pwtfile
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() {
     echo "1:PROJECT" >> "$PWT_WORKTREE_PATH/.order_log"
 }
 EOF
 
     # Create global Pwtfile
-    cat > "$PWT_DIR/Pwtfile" << 'EOF'
+    cat >"$PWT_DIR/Pwtfile" <<'EOF'
 setup() {
     echo "2:GLOBAL" >> "$PWT_WORKTREE_PATH/.order_log"
 }
@@ -241,14 +241,14 @@ EOF
     cd "$TEST_REPO"
 
     # Project Pwtfile WITHOUT globalcmd
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 localonly() {
     echo "LOCAL_ONLY"
 }
 EOF
 
     # Global Pwtfile WITH globalcmd
-    cat > "$PWT_DIR/Pwtfile" << 'EOF'
+    cat >"$PWT_DIR/Pwtfile" <<'EOF'
 globalcmd() {
     echo "GLOBAL_CMD_RAN"
 }
@@ -265,13 +265,13 @@ EOF
     cd "$TEST_REPO"
 
     # Both have 'sharedcmd'
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 sharedcmd() {
     echo "PROJECT_VERSION"
 }
 EOF
 
-    cat > "$PWT_DIR/Pwtfile" << 'EOF'
+    cat >"$PWT_DIR/Pwtfile" <<'EOF'
 sharedcmd() {
     echo "GLOBAL_VERSION"
 }
@@ -292,7 +292,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create Pwtfile that fails
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() {
     touch "$PWT_WORKTREE_PATH/.before_error"
     false  # This will fail
@@ -332,7 +332,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create a Pwtfile with custom command
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 mycmd() {
     echo "MYCMD_RAN:$PWT_WORKTREE:$PWT_WORKTREE_PATH"
 }
@@ -347,7 +347,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create empty Pwtfile
-    echo "" > "$TEST_REPO/Pwtfile"
+    echo "" >"$TEST_REPO/Pwtfile"
 
     run "$PWT_BIN" nonexistent_cmd
     [ "$status" -ne 0 ]
@@ -357,7 +357,7 @@ EOF
 @test "pwt <custom_cmd> receives PWT_ARGS" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 argtest() {
     echo "ARGS:$PWT_ARGS"
 }
@@ -371,7 +371,7 @@ EOF
 @test "pwt <custom_cmd> receives params as positional args" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 argtest() {
     echo "ARG1:${1:-}"
     echo "ARG2:${2:-}"
@@ -390,7 +390,7 @@ EOF
     cd "$TEST_REPO"
     touch glob-one glob-two
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 argtest() {
     echo "COUNT:$#"
     echo "ARG1:${1:-}"
@@ -408,7 +408,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create Pwtfile that uses set -u (strict mode) and iterates over PWT_ARGS
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 stricttest() {
     set -u  # Enable strict mode - unbound variables will error
     echo "BEFORE_LOOP"
@@ -430,7 +430,7 @@ EOF
 @test "pwt <custom_cmd> in worktree gets correct context" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 ctxtest() {
     echo "CONTEXT_WT:$PWT_WORKTREE"
     echo "CONTEXT_DIR:$(basename "$PWT_WORKTREE_PATH")"
@@ -453,7 +453,7 @@ EOF
 @test "pwt for-each <custom_cmd> runs in all worktrees" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 listcmd() {
     echo "LISTED:$PWT_WORKTREE"
 }
@@ -472,7 +472,7 @@ EOF
 @test "pwt for-each <custom_cmd> passes args" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 argcmd() {
     echo "EACH_ARGS:$PWT_ARGS"
 }
@@ -489,7 +489,7 @@ EOF
 @test "pwt for-each detects Pwtfile vs shell command" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 pwtcmd() {
     echo "PWTCMD_RAN"
 }
@@ -515,7 +515,7 @@ EOF
 @test "pwt <project> <cmd> requires worktree context" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 projcmd() {
     echo "PROJ_CMD:$PWT_PROJECT"
 }
@@ -531,7 +531,7 @@ EOF
 @test "pwt <project> @ <cmd> runs in main app" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 projcmd() {
     echo "PROJ_CMD:$PWT_PROJECT:$PWT_WORKTREE"
 }
@@ -547,7 +547,7 @@ EOF
 @test "pwt <project> <worktree> <cmd> runs in specific worktree" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 projcmd() {
     echo "PROJ_CMD:$PWT_PROJECT:$PWT_WORKTREE"
 }
@@ -569,7 +569,7 @@ EOF
 @test "has_pwtfile_command detects function() syntax" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 funcstyle() {
     echo "found"
 }
@@ -583,7 +583,7 @@ EOF
 @test "has_pwtfile_command detects function keyword syntax" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 function keywordstyle {
     echo "found"
 }
@@ -597,7 +597,7 @@ EOF
 @test "has_pwtfile_command ignores commented functions" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 # commented() {
 #     echo "should not run"
 # }
@@ -622,7 +622,7 @@ EOF
 @test "pwt steps lists step_* functions" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 step_install_deps() {
     echo "installing"
 }
@@ -646,7 +646,7 @@ EOF
 @test "pwt step runs specific step" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 step_hello() {
     echo "HELLO_STEP_RAN"
 }
@@ -660,7 +660,7 @@ EOF
 @test "pwt step fails for unknown step" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 step_exists() {
     echo "exists"
 }
@@ -674,7 +674,7 @@ EOF
 @test "pwt step receives PWT_ARGS" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 step_argtest() {
     echo "ARGS:$PWT_ARGS"
 }
@@ -688,7 +688,7 @@ EOF
 @test "pwt steps shows message when no steps" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() {
     echo "no steps here"
 }
@@ -784,7 +784,7 @@ EOF
 
     # Create worktree using test environment
     local wt_name="TEST-DIRTY-CHECK"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() { :; }
 EOF
     run "$PWT_BIN" create "$wt_name" HEAD
@@ -794,7 +794,7 @@ EOF
     [ -d "$wt_dir" ]
 
     # Create uncommitted changes (untracked file)
-    echo "dirty content" > "$wt_dir/dirty_file.txt"
+    echo "dirty content" >"$wt_dir/dirty_file.txt"
 
     # Try to remove non-interactively (should fail)
     run "$PWT_BIN" remove "$wt_name" </dev/null
@@ -813,7 +813,7 @@ EOF
 
     # Create worktree
     local wt_name="TEST-BACKUP-CHECK"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() { :; }
 EOF
     run "$PWT_BIN" create "$wt_name" HEAD
@@ -823,7 +823,7 @@ EOF
     [ -d "$wt_dir" ]
 
     # Create untracked file
-    echo "untracked content" > "$wt_dir/untracked_file.txt"
+    echo "untracked content" >"$wt_dir/untracked_file.txt"
 
     # Remove with -y (should create backup)
     run "$PWT_BIN" remove "$wt_name" -y
@@ -850,7 +850,7 @@ EOF
 
     # Create a worktree
     local wt_name="TEST-DIRTY-AUTO"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() { :; }
 EOF
     run "$PWT_BIN" create "$wt_name" HEAD
@@ -860,7 +860,7 @@ EOF
     [ -d "$wt_dir" ]
 
     # Create dirty file
-    echo "dirty" > "$wt_dir/dirty.txt"
+    echo "dirty" >"$wt_dir/dirty.txt"
 
     # Run auto-remove in dry-run mode (default behavior now)
     run "$PWT_BIN" auto-remove

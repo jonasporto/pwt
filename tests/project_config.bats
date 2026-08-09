@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -22,7 +22,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -66,7 +66,7 @@ teardown() {
     git commit -q -m "Initial commit"
 
     mkdir -p "$PWT_DIR/projects/second-project"
-    cat > "$PWT_DIR/projects/second-project/config" << EOF
+    cat >"$PWT_DIR/projects/second-project/config" <<EOF
 path=$TEST_REPO2
 worktrees_dir=$TEST_TEMP_DIR/worktrees2
 branch_prefix=second/
@@ -191,7 +191,7 @@ EOF
 @test "pwt project alias prevents duplicate alias" {
     # Create a second project with its own alias
     mkdir -p "$PWT_DIR/projects/other-project"
-    cat > "$PWT_DIR/projects/other-project/config" << EOF
+    cat >"$PWT_DIR/projects/other-project/config" <<EOF
 path=$TEST_REPO
 alias=otheralias
 EOF

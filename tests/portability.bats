@@ -16,7 +16,7 @@ teardown() {
 # ============================================
 
 _load_align() {
-    sed -n '/^align_columns() {/,/^}/p' "$PWT_BIN" > "$BATS_TEST_TMPDIR/align.sh"
+    sed -n '/^align_columns() {/,/^}/p' "$PWT_BIN" >"$BATS_TEST_TMPDIR/align.sh"
     # shellcheck source=/dev/null
     source "$BATS_TEST_TMPDIR/align.sh"
 }

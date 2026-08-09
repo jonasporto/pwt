@@ -272,7 +272,7 @@ load test_helper
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-comp"
-    cat > "$PWT_DIR/projects/test-comp/config" << EOF
+    cat >"$PWT_DIR/projects/test-comp/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_TEMP_DIR/worktrees
 EOF
@@ -294,7 +294,7 @@ EOF
             echo "Invalid line in stdout: '$line'" >&2
             return 1
         }
-    done < "$stdout_file"
+    done <"$stdout_file"
 
     teardown_test_env
 }

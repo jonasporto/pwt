@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -52,7 +52,7 @@ teardown() {
 @test "pwt jobs list shows running job" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     sleep 30
 }
@@ -84,7 +84,7 @@ EOF
 @test "pwt jobs stop kills process" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     sleep 30
 }
@@ -137,7 +137,7 @@ EOF
 @test "pwt jobs clean removes stale entries" {
     # Create a fake stale job entry
     mkdir -p "$PWT_DIR/jobs"
-    cat > "$PWT_DIR/jobs/stale-job-123.job" << EOF
+    cat >"$PWT_DIR/jobs/stale-job-123.job" <<EOF
 id=stale-job-123
 pid=999999
 pgid=999999
@@ -162,7 +162,7 @@ EOF
 @test "pwt jobs logs shows output" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "LOG_LINE_1"
     echo "LOG_LINE_2"
@@ -225,7 +225,7 @@ EOF
 @test "pwt server --bg detects duplicate job" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     sleep 30
 }
@@ -256,7 +256,7 @@ EOF
 # "pid":abc - invalid JSON on the path blessed as the consumer API.
 @test "jobs list --porcelain emits null for a non-numeric pid" {
     mkdir -p "$PWT_DIR/jobs"
-    cat > "$PWT_DIR/jobs/corrupt.job" << 'JOB'
+    cat >"$PWT_DIR/jobs/corrupt.job" <<'JOB'
 id=corrupt
 pid=abc
 command=server

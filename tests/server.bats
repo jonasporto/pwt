@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -37,7 +37,7 @@ teardown() {
 @test "pwt server runs on main app when inside main dir" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "MAIN_SERVER: $PWT_WORKTREE on port $PWT_PORT"
 }
@@ -54,7 +54,7 @@ EOF
 @test "pwt server runs on main when current points to @" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "MAIN_VIA_CURRENT: $PWT_WORKTREE on port $PWT_PORT"
 }
@@ -70,7 +70,7 @@ EOF
 @test "pwt server @ runs on main from anywhere" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "MAIN_EXPLICIT: $PWT_WORKTREE on port $PWT_PORT"
 }
@@ -88,7 +88,7 @@ EOF
 @test "pwt server uses BASE_PORT for main app" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 PORT_BASE=5001
 server() {
     echo "PORT_IS: $PWT_PORT"
@@ -104,7 +104,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create Pwtfile with server that just echoes and exits
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "SERVER_RAN: $PWT_WORKTREE on port $PWT_PORT"
 }
@@ -124,7 +124,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create Pwtfile with server
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "SERVER_FROM_SYMLINK: $PWT_WORKTREE"
 }
@@ -148,7 +148,7 @@ EOF
 @test "pwt server uses port from metadata" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "PORT_IS: $PWT_PORT"
 }
@@ -173,7 +173,7 @@ EOF
 @test "pwt server calls Pwtfile server() function" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "CUSTOM_SERVER_FUNCTION"
     echo "WORKTREE=$PWT_WORKTREE"
@@ -196,7 +196,7 @@ EOF
     cd "$TEST_REPO"
 
     # Create Pwtfile without server function
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 setup() {
     echo "setup only"
 }
@@ -231,7 +231,7 @@ EOF
 @test "pwt server runs from worktree directory" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "PWD_IS: $(pwd)"
 }
@@ -255,7 +255,7 @@ EOF
 @test "pwt <project> server works from anywhere" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "REMOTE_SERVER: $PWT_WORKTREE"
 }
@@ -278,7 +278,7 @@ EOF
 @test "pwt server <worktree> runs server for specified worktree" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "SERVER_ARG: $PWT_WORKTREE on port $PWT_PORT"
 }
@@ -295,7 +295,7 @@ EOF
 @test "pwt server <worktree> works with partial match" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "PARTIAL: $PWT_WORKTREE"
 }
@@ -320,7 +320,7 @@ EOF
 @test "pwt <project> server <worktree> works from anywhere" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "PROJ_ARG: $PWT_WORKTREE"
 }
@@ -338,7 +338,7 @@ EOF
 @test "pwt <project> <worktree> server passes Pwtfile params" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "SERVER_PARAM_WT:$PWT_WORKTREE"
     echo "SERVER_PARAM_1:${1:-}"
@@ -359,7 +359,7 @@ EOF
 @test "pwt <worktree> server passes Pwtfile params inside project" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "SERVER_PARAM_WT:$PWT_WORKTREE"
     echo "SERVER_PARAM_1:${1:-}"
@@ -380,7 +380,7 @@ EOF
 @test "pwt server passes Pwtfile params inside worktree" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "SERVER_PARAM_WT:$PWT_WORKTREE"
     echo "SERVER_PARAM_1:${1:-}"
@@ -406,7 +406,7 @@ EOF
 # ============================================
 
 _seed_arg_echo_pwtfile() {
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "ARGS=[$PWT_ARGS]"
 }

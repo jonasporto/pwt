@@ -13,7 +13,7 @@ setup() {
 
     # Create main project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -33,7 +33,7 @@ EOF
     git commit -q -m "Initial commit"
 
     mkdir -p "$PWT_DIR/projects/other-project"
-    cat > "$PWT_DIR/projects/other-project/config" << EOF
+    cat >"$PWT_DIR/projects/other-project/config" <<EOF
 path=$TEST_REPO2
 worktrees_dir=$TEST_WORKTREES2
 branch_prefix=other/
@@ -81,7 +81,7 @@ teardown() {
 # ============================================
 
 @test "pwt resolves project by full name" {
-    cd "$TEST_TEMP_DIR"  # Outside any project
+    cd "$TEST_TEMP_DIR" # Outside any project
     run "$PWT_BIN" test-project list --porcelain
     [ "$status" -eq 0 ]
     local project=$(echo "$output" | jq -r '.project')

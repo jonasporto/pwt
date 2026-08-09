@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 
@@ -81,7 +81,7 @@ teardown() {
 @test "pwt run executes shell commands with pipes" {
     cd "$TEST_REPO"
     # Create a file in worktree
-    echo -e "line1\nline2\nline3" > "$TEST_WORKTREES/WT-RUN/test-lines.txt"
+    echo -e "line1\nline2\nline3" >"$TEST_WORKTREES/WT-RUN/test-lines.txt"
 
     run "$PWT_BIN" run WT-RUN sh -c "cat test-lines.txt | wc -l"
     [ "$status" -eq 0 ]
@@ -161,7 +161,7 @@ teardown() {
 
 @test "pwt run can read files from worktree" {
     cd "$TEST_REPO"
-    echo "test content" > "$TEST_WORKTREES/WT-RUN/readable.txt"
+    echo "test content" >"$TEST_WORKTREES/WT-RUN/readable.txt"
 
     run "$PWT_BIN" run WT-RUN cat readable.txt
     [ "$status" -eq 0 ]
@@ -177,8 +177,8 @@ teardown() {
     "$PWT_BIN" create WT-RUN2 HEAD
 
     # Create different files in each
-    echo "wt1" > "$TEST_WORKTREES/WT-RUN/marker.txt"
-    echo "wt2" > "$TEST_WORKTREES/WT-RUN2/marker.txt"
+    echo "wt1" >"$TEST_WORKTREES/WT-RUN/marker.txt"
+    echo "wt2" >"$TEST_WORKTREES/WT-RUN2/marker.txt"
 
     run "$PWT_BIN" run WT-RUN cat marker.txt
     [[ "$output" == *"wt1"* ]]
@@ -197,7 +197,7 @@ teardown() {
     # Clear current symlink to test fallback to main
     rm -f "$PWT_DIR/projects/test-project/current"
 
-    echo "main-marker" > "$TEST_REPO/main-file.txt"
+    echo "main-marker" >"$TEST_REPO/main-file.txt"
 
     # When no worktree specified and no current, should use main
     run "$PWT_BIN" run cat main-file.txt
@@ -212,7 +212,7 @@ teardown() {
     "$PWT_BIN" use WT-RUN
 
     # Create marker in worktree
-    echo "current-marker" > "$TEST_WORKTREES/WT-RUN/current-file.txt"
+    echo "current-marker" >"$TEST_WORKTREES/WT-RUN/current-file.txt"
 
     run "$PWT_BIN" run cat current-file.txt
     [ "$status" -eq 0 ]

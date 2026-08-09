@@ -32,7 +32,7 @@ fi
 
 mkdir -p "$HOOK_DIR"
 
-cat > "$HOOK_DIR/pre-commit" <<'HOOK'
+cat >"$HOOK_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 # pwt pre-commit: fast checks on staged shell files only.
 # Bypass with --no-verify when you genuinely need to.
@@ -70,7 +70,7 @@ fi
 }
 HOOK
 
-cat > "$HOOK_DIR/pre-push" <<'HOOK'
+cat >"$HOOK_DIR/pre-push" <<'HOOK'
 #!/usr/bin/env bash
 # pwt pre-push: the full local pipeline before anything leaves the machine.
 # Bypass with --no-verify.

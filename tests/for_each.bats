@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -87,9 +87,9 @@ teardown() {
     "$PWT_BIN" create WT-DIR HEAD
 
     # Create a marker file in the worktree
-    echo "marker-wt" > "$TEST_WORKTREES/WT-DIR/marker.txt"
+    echo "marker-wt" >"$TEST_WORKTREES/WT-DIR/marker.txt"
     # Also create in main to avoid failure there
-    echo "marker-main" > "$TEST_REPO/marker.txt"
+    echo "marker-main" >"$TEST_REPO/marker.txt"
 
     run "$PWT_BIN" for-each cat marker.txt
     [ "$status" -eq 0 ]
@@ -179,5 +179,5 @@ teardown() {
     run "$PWT_BIN" for-each echo "only main"
     [ "$status" -eq 0 ]
     [[ "$output" == *"only main"* ]]
-    [[ "$output" == *"1"* ]]  # Only 1 (main)
+    [[ "$output" == *"1"* ]] # Only 1 (main)
 }

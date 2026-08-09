@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -86,7 +86,7 @@ teardown() {
     [ "$status" -eq 0 ]
     # Extract the JSON part (after "Metadata for WT-JSON:")
     local json_output=$(echo "$output" | tail -n +2)
-    echo "$json_output" | jq . > /dev/null 2>&1
+    echo "$json_output" | jq . >/dev/null 2>&1
     [ "$?" -eq 0 ]
 }
 
@@ -236,7 +236,7 @@ teardown() {
 
     # Manually set description to empty string (simulating existing empty metadata)
     local meta_file="$PWT_DIR/state/test-project/WT-EMPTY.meta"
-    sed 's/^description=.*/description=/' "$meta_file" > "$meta_file.tmp"
+    sed 's/^description=.*/description=/' "$meta_file" >"$meta_file.tmp"
     mv "$meta_file.tmp" "$meta_file"
 
     run "$PWT_BIN" list --refresh
@@ -260,7 +260,7 @@ teardown() {
     "$PWT_BIN" create WT-NULL HEAD
 
     # Manually seed an empty-valued custom field (v2 analog of a null value)
-    echo 'customfield=' >> "$PWT_DIR/state/test-project/WT-NULL.meta"
+    echo 'customfield=' >>"$PWT_DIR/state/test-project/WT-NULL.meta"
 
     run "$PWT_BIN" list --refresh
     [ "$status" -eq 0 ]
@@ -280,7 +280,7 @@ teardown() {
     "$PWT_BIN" meta set WT-GETEXTRA env production
 
     # Manually seed empty notes
-    echo 'notes=' >> "$PWT_DIR/state/test-project/WT-GETEXTRA.meta"
+    echo 'notes=' >>"$PWT_DIR/state/test-project/WT-GETEXTRA.meta"
 
     # Check list output - empty "notes" should not appear
     run "$PWT_BIN" list --refresh

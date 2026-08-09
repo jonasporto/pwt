@@ -65,7 +65,7 @@ teardown() {
     _lsof_available="no"
 
     run is_port_free 80
-    [ "$status" -eq 0 ]  # Should assume free
+    [ "$status" -eq 0 ] # Should assume free
 }
 
 # ============================================
@@ -162,7 +162,7 @@ _test_confirm() {
 @test "pwtfile_replace_literal replaces literal string" {
     source_pwt_function pwtfile_replace_literal
 
-    echo "database: test_db" > "$TEST_TEMP_DIR/test.yml"
+    echo "database: test_db" >"$TEST_TEMP_DIR/test.yml"
     pwtfile_replace_literal "$TEST_TEMP_DIR/test.yml" "test_db" "test_db_wt5001"
 
     run cat "$TEST_TEMP_DIR/test.yml"
@@ -172,7 +172,7 @@ _test_confirm() {
 @test "pwtfile_replace_literal handles ERB syntax safely" {
     source_pwt_function pwtfile_replace_literal
 
-    echo "database: test<%= ENV['X']%>" > "$TEST_TEMP_DIR/test.yml"
+    echo "database: test<%= ENV['X']%>" >"$TEST_TEMP_DIR/test.yml"
     pwtfile_replace_literal "$TEST_TEMP_DIR/test.yml" "test<%= ENV['X']%>" "test_wt<%= ENV['X']%>"
 
     run cat "$TEST_TEMP_DIR/test.yml"
@@ -182,7 +182,7 @@ _test_confirm() {
 @test "pwtfile_replace_literal handles special regex chars" {
     source_pwt_function pwtfile_replace_literal
 
-    echo "url: http://localhost:3000/api" > "$TEST_TEMP_DIR/test.txt"
+    echo "url: http://localhost:3000/api" >"$TEST_TEMP_DIR/test.txt"
     pwtfile_replace_literal "$TEST_TEMP_DIR/test.txt" "localhost:3000" "localhost:5001"
 
     run cat "$TEST_TEMP_DIR/test.txt"
@@ -207,7 +207,7 @@ _test_confirm() {
 
     source_pwt_function pwtfile_replace_re
 
-    echo "PORT=3000" > "$TEST_TEMP_DIR/test.env"
+    echo "PORT=3000" >"$TEST_TEMP_DIR/test.env"
     pwtfile_replace_re "$TEST_TEMP_DIR/test.env" "PORT=\d+" "PORT=5001"
 
     run cat "$TEST_TEMP_DIR/test.env"
@@ -221,7 +221,7 @@ _test_confirm() {
 
     source_pwt_function pwtfile_replace_re
 
-    printf "port: 3000\nother_port: 3000\n" > "$TEST_TEMP_DIR/test.yml"
+    printf "port: 3000\nother_port: 3000\n" >"$TEST_TEMP_DIR/test.yml"
     pwtfile_replace_re "$TEST_TEMP_DIR/test.yml" "3000" "5001"
 
     run cat "$TEST_TEMP_DIR/test.yml"
@@ -252,7 +252,7 @@ _test_confirm() {
     source_pwt_functions confirm_action detect_submodules
 
     # Create a .gitmodules file
-    echo "[submodule \"vendor/lib\"]" > "$TEST_REPO/.gitmodules"
+    echo "[submodule \"vendor/lib\"]" >"$TEST_REPO/.gitmodules"
 
     run detect_submodules "$TEST_REPO"
     [[ "$output" == *"Submodules detected"* ]]

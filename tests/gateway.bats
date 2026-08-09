@@ -14,7 +14,7 @@ setup() {
     mkdir -p "$TEST_WORKTREES"
 
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -23,7 +23,7 @@ alias=tp
 EOF
 
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -43,7 +43,7 @@ teardown() {
 }
 
 write_http_server_pwtfile() {
-    cat > "$TEST_REPO/Pwtfile" <<'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     node -e '
 const http = require("http");
@@ -221,12 +221,12 @@ http.get({host: "127.0.0.1", port, path: "/"}, (res) => {
     git -C "$other_repo" init -q
     git -C "$other_repo" config user.email "test@test.com"
     git -C "$other_repo" config user.name "Test User"
-    echo "other" > "$other_repo/file.txt"
+    echo "other" >"$other_repo/file.txt"
     git -C "$other_repo" add file.txt
     git -C "$other_repo" commit -q -m "Initial commit"
 
     mkdir -p "$PWT_DIR/projects/other-project"
-    cat > "$PWT_DIR/projects/other-project/config" << EOF
+    cat >"$PWT_DIR/projects/other-project/config" <<EOF
 path=$other_repo
 worktrees_dir=$other_worktrees
 branch_prefix=other/

@@ -68,13 +68,13 @@ teardown() {
     make install PREFIX="$INSTALL_PREFIX"
 
     # Modify a module (simulate old version)
-    echo "# old version" > "$INSTALL_PREFIX/lib/pwt/project.sh"
+    echo "# old version" >"$INSTALL_PREFIX/lib/pwt/project.sh"
 
     # Update
     PATH="$INSTALL_PREFIX/bin:$PATH" make update
 
     # Should have new content (not just "# old version")
-    [ "$(wc -l < "$INSTALL_PREFIX/lib/pwt/project.sh")" -gt 10 ]
+    [ "$(wc -l <"$INSTALL_PREFIX/lib/pwt/project.sh")" -gt 10 ]
 }
 
 @test "make update fails when pwt not in PATH" {
@@ -93,7 +93,7 @@ teardown() {
     make install PREFIX="$custom_prefix"
 
     # Modify module to detect if it gets updated
-    echo "# MARKER_OLD_VERSION" >> "$custom_prefix/lib/pwt/project.sh"
+    echo "# MARKER_OLD_VERSION" >>"$custom_prefix/lib/pwt/project.sh"
 
     # Run update with pwt in PATH (should find custom prefix, not default /usr/local)
     PATH="$custom_prefix/bin:$PATH" make update

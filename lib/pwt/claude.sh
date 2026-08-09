@@ -18,351 +18,351 @@ _PWT_CLAUDE_LOADED=1
 # Command: claude-setup
 # Install Claude Code status line integration for pwt
 cmd_claude_setup() {
-    local action="${1:-install}"
-    local claude_dir="$HOME/.claude"
-    local script_file="$claude_dir/statusline-command.sh"
-    local config_file="$PWT_DIR/claude-statusline"
-    local default_format='[{worktree}] {project} ({branch}) [{server}] {arrow}'
+	local action="${1:-install}"
+	local claude_dir="$HOME/.claude"
+	local script_file="$claude_dir/statusline-command.sh"
+	local config_file="$PWT_DIR/claude-statusline"
+	local default_format='[{worktree}] {project} ({branch}) [{server}] {arrow}'
 
-    case "$action" in
-        -h|--help|help)
-            echo "Usage: pwt claude-setup [action]"
-            echo ""
-            echo "Manage Claude Code status line integration."
-            echo ""
-            echo "Actions:"
-            echo "  install              Install/update status line script (default)"
-            echo "  vars                 Show all available variables and colors"
-            echo "  format [fmt]         Show or set global format"
-            echo "  format --project [fmt]  Set format for current project only"
-            echo "  preview              Preview status line with current settings"
-            echo "  test                 Run color and template engine tests"
-            echo "  toggle               Toggle status line on/off globally"
-            echo "  toggle --session     Toggle for current session only"
-            echo "  on | off             Enable/disable globally"
-            echo "  on|off --session     Show command for session toggle"
-            echo "  pwt-only [on|off]    Only show in pwt projects/worktrees"
-            echo "  reset                Reset to default configuration"
-            echo ""
-            echo "Format Template:"
-            echo "  Use {variable} placeholders with any text around them."
-            echo "  Run 'pwt claude-setup vars' to see all variables."
-            echo ""
-            echo "Priority: Project format > Global format > Default"
-            echo ""
-            echo "Examples:"
-            echo "  pwt claude-setup                              # Install"
-            echo "  pwt claude-setup vars                         # List variables"
-            echo "  pwt claude-setup format                       # Show formats"
-            echo "  pwt claude-setup format '{project} ({branch}) {arrow}'"
-            echo "  pwt claude-setup format --project '{project} {arrow}'  # This project only"
-            echo "  pwt claude-setup preview                      # Test output"
-            return 0
-            ;;
+	case "$action" in
+	-h | --help | help)
+		echo "Usage: pwt claude-setup [action]"
+		echo ""
+		echo "Manage Claude Code status line integration."
+		echo ""
+		echo "Actions:"
+		echo "  install              Install/update status line script (default)"
+		echo "  vars                 Show all available variables and colors"
+		echo "  format [fmt]         Show or set global format"
+		echo "  format --project [fmt]  Set format for current project only"
+		echo "  preview              Preview status line with current settings"
+		echo "  test                 Run color and template engine tests"
+		echo "  toggle               Toggle status line on/off globally"
+		echo "  toggle --session     Toggle for current session only"
+		echo "  on | off             Enable/disable globally"
+		echo "  on|off --session     Show command for session toggle"
+		echo "  pwt-only [on|off]    Only show in pwt projects/worktrees"
+		echo "  reset                Reset to default configuration"
+		echo ""
+		echo "Format Template:"
+		echo "  Use {variable} placeholders with any text around them."
+		echo "  Run 'pwt claude-setup vars' to see all variables."
+		echo ""
+		echo "Priority: Project format > Global format > Default"
+		echo ""
+		echo "Examples:"
+		echo "  pwt claude-setup                              # Install"
+		echo "  pwt claude-setup vars                         # List variables"
+		echo "  pwt claude-setup format                       # Show formats"
+		echo "  pwt claude-setup format '{project} ({branch}) {arrow}'"
+		echo "  pwt claude-setup format --project '{project} {arrow}'  # This project only"
+		echo "  pwt claude-setup preview                      # Test output"
+		return 0
+		;;
 
-        vars)
-            echo "Available variables for status line format:"
-            echo ""
-            echo "  {worktree}   Worktree name (e.g., 'mobile-ux-fixes')"
-            echo "  {project}    Project name (e.g., 'dropflow-app')"
-            echo "  {branch}     Git branch name"
-            echo "  {server}     Server URL if running (e.g., 'localhost:4001')"
-            echo "  {port}       Just the port number (e.g., '4001')"
-            echo "  {arrow}      Arrow symbol (default: ❯)"
-            echo ""
-            echo "Named Colors:"
-            echo "  {magenta:...}   Magenta text"
-            echo "  {cyan:...}      Cyan text"
-            echo "  {yellow:...}    Yellow text"
-            echo "  {green:...}     Green text"
-            echo "  {blue:...}      Blue text"
-            echo "  {red:...}       Red text"
-            echo "  {dim:...}       Dimmed text"
-            echo "  {bold:...}      Bold text"
-            echo ""
-            echo "Custom Colors (24-bit true color):"
-            echo "  {rgb:R,G,B:...}    RGB values 0-255 (e.g., {rgb:255,100,0:text})"
-            echo "  {#RRGGBB:...}      Hex color (e.g., {#FF6400:text})"
-            echo ""
-            echo "Conditionals (show only if value exists):"
-            echo "  {?worktree:[...]}   Show [...] only if worktree exists"
-            echo "  {?server:[...]}     Show [...] only if server is running"
-            echo "  {?branch:(...)}     Show (...) only if branch exists"
-            echo ""
-            echo "Default format:"
-            echo "  $default_format"
-            echo ""
-            echo "Custom Variables (from Pwtfile):"
-            echo "  Static:   CLAUDE_ENV=\"staging\"     -> use as {env}"
-            echo "  Dynamic:  claude_env() { ... }      -> use as {env}"
-            echo ""
-            echo "  Available in functions: \$PWT_WORKTREE, \$PWT_PROJECT, \$PWT_PORT, \$PWT_BRANCH"
-            echo ""
-            echo "Example formats:"
-            echo "  '{project} {arrow}'                           # Minimal"
-            echo "  '{?worktree:[{worktree}] }{project} {arrow}'  # Conditional worktree"
-            echo "  '{project}/{worktree} ({branch}) {arrow}'     # Slash separator"
-            echo "  '{cyan:{project}} {yellow:({branch})} {arrow}' # Explicit colors"
-            echo "  '{project} [{env}] {arrow}'                   # Custom var from Pwtfile"
-            return 0
-            ;;
+	vars)
+		echo "Available variables for status line format:"
+		echo ""
+		echo "  {worktree}   Worktree name (e.g., 'mobile-ux-fixes')"
+		echo "  {project}    Project name (e.g., 'dropflow-app')"
+		echo "  {branch}     Git branch name"
+		echo "  {server}     Server URL if running (e.g., 'localhost:4001')"
+		echo "  {port}       Just the port number (e.g., '4001')"
+		echo "  {arrow}      Arrow symbol (default: ❯)"
+		echo ""
+		echo "Named Colors:"
+		echo "  {magenta:...}   Magenta text"
+		echo "  {cyan:...}      Cyan text"
+		echo "  {yellow:...}    Yellow text"
+		echo "  {green:...}     Green text"
+		echo "  {blue:...}      Blue text"
+		echo "  {red:...}       Red text"
+		echo "  {dim:...}       Dimmed text"
+		echo "  {bold:...}      Bold text"
+		echo ""
+		echo "Custom Colors (24-bit true color):"
+		echo "  {rgb:R,G,B:...}    RGB values 0-255 (e.g., {rgb:255,100,0:text})"
+		echo "  {#RRGGBB:...}      Hex color (e.g., {#FF6400:text})"
+		echo ""
+		echo "Conditionals (show only if value exists):"
+		echo "  {?worktree:[...]}   Show [...] only if worktree exists"
+		echo "  {?server:[...]}     Show [...] only if server is running"
+		echo "  {?branch:(...)}     Show (...) only if branch exists"
+		echo ""
+		echo "Default format:"
+		echo "  $default_format"
+		echo ""
+		echo "Custom Variables (from Pwtfile):"
+		echo "  Static:   CLAUDE_ENV=\"staging\"     -> use as {env}"
+		echo "  Dynamic:  claude_env() { ... }      -> use as {env}"
+		echo ""
+		echo "  Available in functions: \$PWT_WORKTREE, \$PWT_PROJECT, \$PWT_PORT, \$PWT_BRANCH"
+		echo ""
+		echo "Example formats:"
+		echo "  '{project} {arrow}'                           # Minimal"
+		echo "  '{?worktree:[{worktree}] }{project} {arrow}'  # Conditional worktree"
+		echo "  '{project}/{worktree} ({branch}) {arrow}'     # Slash separator"
+		echo "  '{cyan:{project}} {yellow:({branch})} {arrow}' # Explicit colors"
+		echo "  '{project} [{env}] {arrow}'                   # Custom var from Pwtfile"
+		return 0
+		;;
 
-        format)
-            local scope="${2:-}"
-            local new_format="${3:-}"
+	format)
+		local scope="${2:-}"
+		local new_format="${3:-}"
 
-            # Check if second arg is a format (not --project)
-            if [ -n "$scope" ] && [[ "$scope" != "--project" ]]; then
-                new_format="$scope"
-                scope=""
-            fi
+		# Check if second arg is a format (not --project)
+		if [ -n "$scope" ] && [[ "$scope" != "--project" ]]; then
+			new_format="$scope"
+			scope=""
+		fi
 
-            if [ "$scope" = "--project" ]; then
-                # Project-specific format
-                if [ -z "$CURRENT_PROJECT" ]; then
-                    pwt_error "Error: No project detected. Run from inside a project."
-                    return 1
-                fi
+		if [ "$scope" = "--project" ]; then
+			# Project-specific format
+			if [ -z "$CURRENT_PROJECT" ]; then
+				pwt_error "Error: No project detected. Run from inside a project."
+				return 1
+			fi
 
-                local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config"
+			local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config"
 
-                if [ -n "$new_format" ]; then
-                    state_set "$proj_config" "claude_format" "$new_format"
-                    echo -e "${GREEN}✓ Project format set for $CURRENT_PROJECT${NC}"
-                    echo "  $new_format"
-                else
-                    local proj_format=$(state_get "$proj_config" "claude_format")
-                    if [ -n "$proj_format" ]; then
-                        echo "Project format ($CURRENT_PROJECT):"
-                        echo "  $proj_format"
-                    else
-                        echo "No project-specific format for $CURRENT_PROJECT"
-                        echo "Using global format: $default_format"
-                    fi
-                fi
-                echo ""
-                echo "Run 'pwt claude-setup install' to apply."
-            elif [ -n "$new_format" ]; then
-                # Set global format
-                state_set "$config_file" "format" "$new_format"
-                echo -e "${GREEN}✓ Global format set${NC}"
-                echo "  $new_format"
-                echo ""
-                echo "Run 'pwt claude-setup install' to apply."
-            else
-                # Show current format
-                echo "Global format:"
-                local current_format="$default_format"
-                if [ -f "$config_file" ]; then
-                    current_format=$(state_get "$config_file" "format")
-                    [ -z "$current_format" ] && current_format="$default_format"
-                fi
-                echo "  $current_format"
+			if [ -n "$new_format" ]; then
+				state_set "$proj_config" "claude_format" "$new_format"
+				echo -e "${GREEN}✓ Project format set for $CURRENT_PROJECT${NC}"
+				echo "  $new_format"
+			else
+				local proj_format=$(state_get "$proj_config" "claude_format")
+				if [ -n "$proj_format" ]; then
+					echo "Project format ($CURRENT_PROJECT):"
+					echo "  $proj_format"
+				else
+					echo "No project-specific format for $CURRENT_PROJECT"
+					echo "Using global format: $default_format"
+				fi
+			fi
+			echo ""
+			echo "Run 'pwt claude-setup install' to apply."
+		elif [ -n "$new_format" ]; then
+			# Set global format
+			state_set "$config_file" "format" "$new_format"
+			echo -e "${GREEN}✓ Global format set${NC}"
+			echo "  $new_format"
+			echo ""
+			echo "Run 'pwt claude-setup install' to apply."
+		else
+			# Show current format
+			echo "Global format:"
+			local current_format="$default_format"
+			if [ -f "$config_file" ]; then
+				current_format=$(state_get "$config_file" "format")
+				[ -z "$current_format" ] && current_format="$default_format"
+			fi
+			echo "  $current_format"
 
-                # Show project format if inside a project
-                if [ -n "$CURRENT_PROJECT" ]; then
-                    local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config"
-                    if [ -f "$proj_config" ]; then
-                        local proj_format=$(state_get "$proj_config" "claude_format")
-                        if [ -n "$proj_format" ]; then
-                            echo ""
-                            echo "Project format ($CURRENT_PROJECT):"
-                            echo "  $proj_format"
-                        fi
-                    fi
-                fi
-                echo ""
-                echo "To change global:  pwt claude-setup format '<format>'"
-                echo "To change project: pwt claude-setup format --project '<format>'"
-                echo "See variables:     pwt claude-setup vars"
-            fi
-            return 0
-            ;;
+			# Show project format if inside a project
+			if [ -n "$CURRENT_PROJECT" ]; then
+				local proj_config="$PWT_PROJECTS_DIR/$CURRENT_PROJECT/config"
+				if [ -f "$proj_config" ]; then
+					local proj_format=$(state_get "$proj_config" "claude_format")
+					if [ -n "$proj_format" ]; then
+						echo ""
+						echo "Project format ($CURRENT_PROJECT):"
+						echo "  $proj_format"
+					fi
+				fi
+			fi
+			echo ""
+			echo "To change global:  pwt claude-setup format '<format>'"
+			echo "To change project: pwt claude-setup format --project '<format>'"
+			echo "See variables:     pwt claude-setup vars"
+		fi
+		return 0
+		;;
 
-        preview)
-            # Generate preview with current directory
-            local current_format="$default_format"
-            if [ -f "$config_file" ]; then
-                current_format=$(state_get "$config_file" "format")
-                [ -z "$current_format" ] && current_format="$default_format"
-            fi
+	preview)
+		# Generate preview with current directory
+		local current_format="$default_format"
+		if [ -f "$config_file" ]; then
+			current_format=$(state_get "$config_file" "format")
+			[ -z "$current_format" ] && current_format="$default_format"
+		fi
 
-            local cwd=$(pwd)
-            local worktree_name="" project_name=""
+		local cwd=$(pwd)
+		local worktree_name="" project_name=""
 
-            if [[ "$cwd" =~ ([^/]+)-worktrees/([^/]+) ]]; then
-                project_name="${BASH_REMATCH[1]}"
-                worktree_name="${BASH_REMATCH[2]}"
-            elif [[ "$cwd" =~ \.pwt/([^/]+) ]]; then
-                worktree_name="${BASH_REMATCH[1]}"
-            fi
-            [ -z "$project_name" ] && project_name=$(basename "$cwd")
+		if [[ "$cwd" =~ ([^/]+)-worktrees/([^/]+) ]]; then
+			project_name="${BASH_REMATCH[1]}"
+			worktree_name="${BASH_REMATCH[2]}"
+		elif [[ "$cwd" =~ \.pwt/([^/]+) ]]; then
+			worktree_name="${BASH_REMATCH[1]}"
+		fi
+		[ -z "$project_name" ] && project_name=$(basename "$cwd")
 
-            local branch=""
-            if git rev-parse --git-dir >/dev/null 2>&1; then
-                branch=$(git branch --show-current 2>/dev/null)
-            fi
+		local branch=""
+		if git rev-parse --git-dir >/dev/null 2>&1; then
+			branch=$(git branch --show-current 2>/dev/null)
+		fi
 
-            local port="" server=""
-            if [ -n "$worktree_name" ]; then
-                local _pmf
-                for _pmf in "$PWT_DIR/state"/*/"${worktree_name}.meta"; do
-                    [ -f "$_pmf" ] || continue
-                    port=$(state_get "$_pmf" "port")
-                    [ -n "$port" ] && break
-                done
-                if [ -n "$port" ] && ! is_port_free "$port"; then
-                    server="localhost:$port"
-                fi
-            fi
+		local port="" server=""
+		if [ -n "$worktree_name" ]; then
+			local _pmf
+			for _pmf in "$PWT_DIR/state"/*/"${worktree_name}.meta"; do
+				[ -f "$_pmf" ] || continue
+				port=$(state_get "$_pmf" "port")
+				[ -n "$port" ] && break
+			done
+			if [ -n "$port" ] && ! is_port_free "$port"; then
+				server="localhost:$port"
+			fi
+		fi
 
-            echo "Preview with current directory:"
-            echo "  worktree: ${worktree_name:-<none>}"
-            echo "  project:  $project_name"
-            echo "  branch:   ${branch:-<none>}"
-            echo "  server:   ${server:-<not running>}"
-            echo "  port:     ${port:-<none>}"
-            echo ""
-            echo "Format: $current_format"
-            echo ""
-            echo -n "Output: "
-            # Simple preview (without full template engine)
-            local output="$current_format"
-            output="${output//\{worktree\}/$worktree_name}"
-            output="${output//\{project\}/$project_name}"
-            output="${output//\{branch\}/$branch}"
-            output="${output//\{server\}/$server}"
-            output="${output//\{port\}/$port}"
-            output="${output//\{arrow\}/❯}"
-            echo -e "$output"
-            return 0
-            ;;
+		echo "Preview with current directory:"
+		echo "  worktree: ${worktree_name:-<none>}"
+		echo "  project:  $project_name"
+		echo "  branch:   ${branch:-<none>}"
+		echo "  server:   ${server:-<not running>}"
+		echo "  port:     ${port:-<none>}"
+		echo ""
+		echo "Format: $current_format"
+		echo ""
+		echo -n "Output: "
+		# Simple preview (without full template engine)
+		local output="$current_format"
+		output="${output//\{worktree\}/$worktree_name}"
+		output="${output//\{project\}/$project_name}"
+		output="${output//\{branch\}/$branch}"
+		output="${output//\{server\}/$server}"
+		output="${output//\{port\}/$port}"
+		output="${output//\{arrow\}/❯}"
+		echo -e "$output"
+		return 0
+		;;
 
-        reset)
-            rm -f "$config_file"
-            echo -e "${GREEN}✓ Configuration reset to defaults${NC}"
-            echo "Run 'pwt claude-setup install' to apply."
-            return 0
-            ;;
+	reset)
+		rm -f "$config_file"
+		echo -e "${GREEN}✓ Configuration reset to defaults${NC}"
+		echo "Run 'pwt claude-setup install' to apply."
+		return 0
+		;;
 
-        test)
-            local test_script="$PWT_DIR/tests/statusline-test.sh"
-            if [ -f "$test_script" ]; then
-                bash "$test_script"
-            else
-                echo -e "${RED}Test script not found at $test_script${NC}"
-                echo "Tests may not be installed yet."
-                return 1
-            fi
-            return 0
-            ;;
+	test)
+		local test_script="$PWT_DIR/tests/statusline-test.sh"
+		if [ -f "$test_script" ]; then
+			bash "$test_script"
+		else
+			echo -e "${RED}Test script not found at $test_script${NC}"
+			echo "Tests may not be installed yet."
+			return 1
+		fi
+		return 0
+		;;
 
-        toggle)
-            local scope="${2:-}"
-            if [ "$scope" = "--session" ]; then
-                # Session toggle - just show the command to run
-                if [ "${PWT_STATUSLINE_OFF:-}" = "1" ]; then
-                    echo -e "${GREEN}To enable for this session:${NC}"
-                    echo "  unset PWT_STATUSLINE_OFF"
-                else
-                    echo -e "${YELLOW}To disable for this session:${NC}"
-                    echo "  export PWT_STATUSLINE_OFF=1"
-                fi
-                echo ""
-                echo "Add to your shell to persist: ~/.zshrc or ~/.bashrc"
-            else
-                # Global toggle
-                local current=$(state_get "$config_file" "enabled")
-                [ -z "$current" ] && current="true"
-                local new_state="true"
-                [ "$current" = "true" ] && new_state="false"
-                state_set "$config_file" "enabled" "$new_state"
-                if [ "$new_state" = "true" ]; then
-                    echo -e "${GREEN}✓ Status line enabled (all sessions)${NC}"
-                else
-                    echo -e "${YELLOW}✓ Status line disabled (all sessions)${NC}"
-                fi
-                echo "Run 'pwt claude-setup install' to apply."
-            fi
-            return 0
-            ;;
+	toggle)
+		local scope="${2:-}"
+		if [ "$scope" = "--session" ]; then
+			# Session toggle - just show the command to run
+			if [ "${PWT_STATUSLINE_OFF:-}" = "1" ]; then
+				echo -e "${GREEN}To enable for this session:${NC}"
+				echo "  unset PWT_STATUSLINE_OFF"
+			else
+				echo -e "${YELLOW}To disable for this session:${NC}"
+				echo "  export PWT_STATUSLINE_OFF=1"
+			fi
+			echo ""
+			echo "Add to your shell to persist: ~/.zshrc or ~/.bashrc"
+		else
+			# Global toggle
+			local current=$(state_get "$config_file" "enabled")
+			[ -z "$current" ] && current="true"
+			local new_state="true"
+			[ "$current" = "true" ] && new_state="false"
+			state_set "$config_file" "enabled" "$new_state"
+			if [ "$new_state" = "true" ]; then
+				echo -e "${GREEN}✓ Status line enabled (all sessions)${NC}"
+			else
+				echo -e "${YELLOW}✓ Status line disabled (all sessions)${NC}"
+			fi
+			echo "Run 'pwt claude-setup install' to apply."
+		fi
+		return 0
+		;;
 
-        on)
-            local scope="${2:-}"
-            if [ "$scope" = "--session" ]; then
-                echo -e "${GREEN}To enable for this session:${NC}"
-                echo "  unset PWT_STATUSLINE_OFF"
-            else
-                state_set "$config_file" "enabled" "true"
-                echo -e "${GREEN}✓ Status line enabled (all sessions)${NC}"
-                echo "Run 'pwt claude-setup install' to apply."
-            fi
-            return 0
-            ;;
+	on)
+		local scope="${2:-}"
+		if [ "$scope" = "--session" ]; then
+			echo -e "${GREEN}To enable for this session:${NC}"
+			echo "  unset PWT_STATUSLINE_OFF"
+		else
+			state_set "$config_file" "enabled" "true"
+			echo -e "${GREEN}✓ Status line enabled (all sessions)${NC}"
+			echo "Run 'pwt claude-setup install' to apply."
+		fi
+		return 0
+		;;
 
-        off)
-            local scope="${2:-}"
-            if [ "$scope" = "--session" ]; then
-                echo -e "${YELLOW}To disable for this session:${NC}"
-                echo "  export PWT_STATUSLINE_OFF=1"
-            else
-                state_set "$config_file" "enabled" "false"
-                echo -e "${YELLOW}✓ Status line disabled (all sessions)${NC}"
-                echo "Run 'pwt claude-setup install' to apply."
-            fi
-            return 0
-            ;;
+	off)
+		local scope="${2:-}"
+		if [ "$scope" = "--session" ]; then
+			echo -e "${YELLOW}To disable for this session:${NC}"
+			echo "  export PWT_STATUSLINE_OFF=1"
+		else
+			state_set "$config_file" "enabled" "false"
+			echo -e "${YELLOW}✓ Status line disabled (all sessions)${NC}"
+			echo "Run 'pwt claude-setup install' to apply."
+		fi
+		return 0
+		;;
 
-        pwt-only)
-            local state="${2:-}"
-            if [ -z "$state" ]; then
-                # Show current state
-                local current=$(state_get "$config_file" "pwt_only")
-                [ -z "$current" ] && current="false"
-                if [ "$current" = "true" ]; then
-                    echo "pwt-only: ${GREEN}on${NC} (status line only shows in pwt projects/worktrees)"
-                else
-                    echo "pwt-only: ${YELLOW}off${NC} (status line shows everywhere)"
-                fi
-            elif [ "$state" = "on" ]; then
-                state_set "$config_file" "pwt_only" "true"
-                echo -e "${GREEN}✓ pwt-only enabled${NC}"
-                echo "Status line will only show in pwt projects/worktrees."
-                echo "Run 'pwt claude-setup install' to apply."
-            elif [ "$state" = "off" ]; then
-                state_set "$config_file" "pwt_only" "false"
-                echo -e "${YELLOW}✓ pwt-only disabled${NC}"
-                echo "Status line will show in all directories."
-                echo "Run 'pwt claude-setup install' to apply."
-            else
-                echo -e "${RED}Usage: pwt claude-setup pwt-only [on|off]${NC}"
-                return 1
-            fi
-            return 0
-            ;;
+	pwt-only)
+		local state="${2:-}"
+		if [ -z "$state" ]; then
+			# Show current state
+			local current=$(state_get "$config_file" "pwt_only")
+			[ -z "$current" ] && current="false"
+			if [ "$current" = "true" ]; then
+				echo "pwt-only: ${GREEN}on${NC} (status line only shows in pwt projects/worktrees)"
+			else
+				echo "pwt-only: ${YELLOW}off${NC} (status line shows everywhere)"
+			fi
+		elif [ "$state" = "on" ]; then
+			state_set "$config_file" "pwt_only" "true"
+			echo -e "${GREEN}✓ pwt-only enabled${NC}"
+			echo "Status line will only show in pwt projects/worktrees."
+			echo "Run 'pwt claude-setup install' to apply."
+		elif [ "$state" = "off" ]; then
+			state_set "$config_file" "pwt_only" "false"
+			echo -e "${YELLOW}✓ pwt-only disabled${NC}"
+			echo "Status line will show in all directories."
+			echo "Run 'pwt claude-setup install' to apply."
+		else
+			echo -e "${RED}Usage: pwt claude-setup pwt-only [on|off]${NC}"
+			return 1
+		fi
+		return 0
+		;;
 
-        install|"")
-            ;;
+	install | "")
+		;;
 
-        *)
-            echo -e "${RED}Unknown action: $action${NC}"
-            echo "Run 'pwt claude-setup help' for usage"
-            return 1
-            ;;
-    esac
+	*)
+		echo -e "${RED}Unknown action: $action${NC}"
+		echo "Run 'pwt claude-setup help' for usage"
+		return 1
+		;;
+	esac
 
-    # Create .claude directory if needed
-    mkdir -p "$claude_dir"
+	# Create .claude directory if needed
+	mkdir -p "$claude_dir"
 
-    # Read config
-    local format="$default_format"
-    if [ -f "$config_file" ]; then
-        local cfg_format=$(state_get "$config_file" "format")
-        [ -n "$cfg_format" ] && format="$cfg_format"
-    fi
+	# Read config
+	local format="$default_format"
+	if [ -f "$config_file" ]; then
+		local cfg_format=$(state_get "$config_file" "format")
+		[ -n "$cfg_format" ] && format="$cfg_format"
+	fi
 
-    # Write the status line script with template engine
-    cat > "$script_file" << 'STATUSLINE_EOF'
+	# Write the status line script with template engine
+	cat >"$script_file" <<'STATUSLINE_EOF'
 #!/bin/bash
 # Claude Code Status Line for pwt (Power Worktrees)
 # Generated by: pwt claude-setup
@@ -624,20 +624,20 @@ output=$(echo "$output" | sed 's/\[\]//g; s/()//g; s/  */ /g; s/^ *//; s/ *$//')
 echo -en "$output"
 STATUSLINE_EOF
 
-    # Insert the actual format into the script
-    # sed_inplace picks BSD/GNU syntax; bare `sed -i ''` fails on Linux
-    sed_inplace "s|__FORMAT_PLACEHOLDER__|$format|g" "$script_file"
+	# Insert the actual format into the script
+	# sed_inplace picks BSD/GNU syntax; bare `sed -i ''` fails on Linux
+	sed_inplace "s|__FORMAT_PLACEHOLDER__|$format|g" "$script_file"
 
-    chmod +x "$script_file"
+	chmod +x "$script_file"
 
-    echo -e "${GREEN}✓ Claude Code status line installed${NC}"
-    echo ""
-    echo "Format: $format"
-    echo ""
-    echo "Commands:"
-    echo "  pwt claude-setup vars      # See all variables"
-    echo "  pwt claude-setup format    # Change format"
-    echo "  pwt claude-setup preview   # Test output"
-    echo ""
-    echo "Restart Claude Code or run /statusline to apply."
+	echo -e "${GREEN}✓ Claude Code status line installed${NC}"
+	echo ""
+	echo "Format: $format"
+	echo ""
+	echo "Commands:"
+	echo "  pwt claude-setup vars      # See all variables"
+	echo "  pwt claude-setup format    # Change format"
+	echo "  pwt claude-setup preview   # Test output"
+	echo ""
+	echo "Restart Claude Code or run /statusline to apply."
 }

@@ -16,7 +16,7 @@ setup() {
     # test files running in parallel (same pattern as gateway.bats)
     export TEST_BASE_PORT=$((43000 + RANDOM % 1000))
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 base_port=$TEST_BASE_PORT
@@ -60,7 +60,7 @@ teardown() {
     "$PWT_BIN" create CP-SRC HEAD
     "$PWT_BIN" create CP-DST HEAD
     mkdir -p "$TEST_WORKTREES/CP-SRC/src"
-    echo "x" > "$TEST_WORKTREES/CP-SRC/src/index.js"
+    echo "x" >"$TEST_WORKTREES/CP-SRC/src/index.js"
 
     run "$PWT_BIN" copy CP-SRC CP-DST "src/*.js"
     [ "$status" -eq 0 ]
@@ -72,8 +72,8 @@ teardown() {
     "$PWT_BIN" create CP-GIT-SRC HEAD
     "$PWT_BIN" create CP-GIT-DST HEAD
     mkdir -p "$TEST_WORKTREES/CP-GIT-SRC/nested/.git"
-    echo "x" > "$TEST_WORKTREES/CP-GIT-SRC/nested/.git/metadata.js"
-    echo "y" > "$TEST_WORKTREES/CP-GIT-SRC/app.js"
+    echo "x" >"$TEST_WORKTREES/CP-GIT-SRC/nested/.git/metadata.js"
+    echo "y" >"$TEST_WORKTREES/CP-GIT-SRC/app.js"
 
     run "$PWT_BIN" copy CP-GIT-SRC CP-GIT-DST "*.js"
     [ "$status" -eq 0 ]
@@ -143,7 +143,7 @@ teardown() {
 @test "project index ignores empty worktrees_dir when detecting project" {
     mkdir -p "$TEST_TEMP_DIR/partial-main"
     mkdir -p "$PWT_DIR/projects/partial-project"
-    cat > "$PWT_DIR/projects/partial-project/config" << EOF
+    cat >"$PWT_DIR/projects/partial-project/config" <<EOF
 path=$TEST_TEMP_DIR/partial-main
 EOF
 
@@ -159,7 +159,7 @@ EOF
 # ============================================
 
 @test "use runs Pwtfile post_use hook with PWT_WORKTREE set" {
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 post_use() {
     echo "POST_USE:$PWT_WORKTREE"
 }
@@ -171,7 +171,7 @@ EOF
 }
 
 @test "use @ also runs post_use hook" {
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 post_use() {
     echo "POST_USE:$PWT_WORKTREE"
 }
@@ -241,7 +241,7 @@ EOF
 # ============================================
 
 @test "custom command --bg --count N spawns N registered jobs" {
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 worker() {
     echo "worker $PWT_JOB_INDEX up"
     sleep 30
@@ -264,7 +264,7 @@ PWTEOF
 }
 
 @test "server already running warns about ignored flags" {
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 server() {
     sleep 30
 }
@@ -280,7 +280,7 @@ PWTEOF
 }
 
 @test "server --help shows Pwtfile flag docs" {
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 # Usage: pwt server [--fancy]
 #   --fancy   Enables fancy mode
 server() {
@@ -299,7 +299,7 @@ PWTEOF
     command -v node >/dev/null 2>&1 || skip "node is required for gateway tests"
     command -v python3 >/dev/null 2>&1 || skip "python3 is required for this fixture server"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 server() {
     exec python3 -m http.server "$PWT_PORT"
 }
@@ -347,7 +347,7 @@ PWTEOF
 }
 
 @test "pwt logs picks the worktree server job without a job id" {
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 server() {
     echo "SERVER_LOG_LINE"
     sleep 30
@@ -405,7 +405,7 @@ PWTEOF
 
 @test "unreadable sibling config does not break project resolution" {
     mkdir -p "$PWT_DIR/projects/broken-project"
-    echo 'garbage without equals' > "$PWT_DIR/projects/broken-project/config"
+    echo 'garbage without equals' >"$PWT_DIR/projects/broken-project/config"
     rm -f "$PWT_DIR/cache/project-index"
 
     cd "$HOME"

@@ -12,34 +12,34 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 
     # Mock AI commands
     mkdir -p "$TEST_TEMP_DIR/bin"
-    cat > "$TEST_TEMP_DIR/bin/claude" << 'EOF'
+    cat >"$TEST_TEMP_DIR/bin/claude" <<'EOF'
 #!/bin/bash
 echo "mock-claude: $@"
 echo "pwd: $(pwd)"
 EOF
     chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    cat > "$TEST_TEMP_DIR/bin/gemini" << 'EOF'
+    cat >"$TEST_TEMP_DIR/bin/gemini" <<'EOF'
 #!/bin/bash
 echo "mock-gemini: $@"
 echo "pwd: $(pwd)"
 EOF
     chmod +x "$TEST_TEMP_DIR/bin/gemini"
 
-    cat > "$TEST_TEMP_DIR/bin/codex" << 'EOF'
+    cat >"$TEST_TEMP_DIR/bin/codex" <<'EOF'
 #!/bin/bash
 echo "mock-codex: $@"
 echo "pwd: $(pwd)"

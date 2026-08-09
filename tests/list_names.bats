@@ -15,7 +15,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-repo"
-    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -93,7 +93,7 @@ teardown() {
     cd "$TEST_REPO"
 
     # Add aliases array to the project config
-    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -117,7 +117,7 @@ EOF
     cd "$TEST_REPO"
 
     # Add single alias string to the project config
-    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -138,7 +138,7 @@ EOF
 }
 
 @test "list --names works with project name as first arg" {
-    cd "$HOME"  # Outside any project
+    cd "$HOME" # Outside any project
 
     # Create a worktree in test-repo
     cd "$TEST_REPO"
@@ -159,7 +159,7 @@ EOF
     cd "$TEST_REPO"
 
     # Add alias to config
-    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -277,7 +277,7 @@ EOF
     local other_worktrees="$TEST_TEMP_DIR/other-worktrees"
     mkdir -p "$other_worktrees"
 
-    cat > "$PWT_DIR/projects/other-project/config" << EOF
+    cat >"$PWT_DIR/projects/other-project/config" <<EOF
 path=$other_repo
 worktrees_dir=$other_worktrees
 branch_prefix=feature/
@@ -314,7 +314,7 @@ EOF
     local second_worktrees="$TEST_TEMP_DIR/second-worktrees"
     mkdir -p "$second_worktrees"
 
-    cat > "$PWT_DIR/projects/second-proj/config" << EOF
+    cat >"$PWT_DIR/projects/second-proj/config" <<EOF
 path=$second_repo
 worktrees_dir=$second_worktrees
 branch_prefix=dev/

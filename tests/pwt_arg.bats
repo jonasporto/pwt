@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -37,7 +37,7 @@ teardown() {
 @test "pwt_arg extracts -p value" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 mycmd() {
     local port=$(pwt_arg -p)
     echo "PORT=${port}" > "$PWT_WORKTREE_PATH/.result"
@@ -54,7 +54,7 @@ PWTEOF
 @test "pwt_arg extracts --port=value syntax" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 mycmd() {
     local port=$(pwt_arg --port)
     echo "PORT=${port}" > "$PWT_WORKTREE_PATH/.result"
@@ -71,7 +71,7 @@ PWTEOF
 @test "pwt_arg returns true for boolean flag" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 mycmd() {
     local worker=$(pwt_arg --worker)
     echo "WORKER=${worker}" > "$PWT_WORKTREE_PATH/.result"
@@ -88,7 +88,7 @@ PWTEOF
 @test "pwt_arg returns true for boolean flag followed by another flag" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 mycmd() {
     local worker=$(pwt_arg --worker)
     local env=$(pwt_arg -e)
@@ -108,7 +108,7 @@ PWTEOF
 @test "pwt_arg returns empty for missing flag" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 mycmd() {
     local port=$(pwt_arg -p || true)
     echo "PORT=${port}" > "$PWT_WORKTREE_PATH/.result"
@@ -125,7 +125,7 @@ PWTEOF
 @test "pwt_arg works with set -u (strict mode)" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 set -u
 mycmd() {
     local port=$(pwt_arg -p || true)
@@ -143,7 +143,7 @@ PWTEOF
 @test "pwt_arg coalesce pattern works" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 mycmd() {
     local override_port=$(pwt_arg -p || true)
     local port=${override_port:-$PWT_PORT}
@@ -166,7 +166,7 @@ PWTEOF
 @test "pwt_arg extracts from multiple mixed flags" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'PWTEOF'
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
 mycmd() {
     local port=$(pwt_arg -p || true)
     local env=$(pwt_arg -e || true)

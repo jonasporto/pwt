@@ -8,122 +8,122 @@
 _PWT_GATEWAY_LOADED=1
 
 _gateway_project_dir() {
-    echo "$PROJECTS_DIR/$CURRENT_PROJECT"
+	echo "$PROJECTS_DIR/$CURRENT_PROJECT"
 }
 
 _gateway_config_file() {
-    echo "$PROJECTS_DIR/$CURRENT_PROJECT/config"
+	echo "$PROJECTS_DIR/$CURRENT_PROJECT/config"
 }
 
 # Suggest a command the user actually has for finding a port's owner
 _port_owner_hint() {
-    local port="$1"
-    if command -v lsof >/dev/null 2>&1; then
-        echo "lsof -i :$port"
-    elif command -v ss >/dev/null 2>&1; then
-        echo "ss -lntp sport = :$port"
-    elif command -v fuser >/dev/null 2>&1; then
-        echo "fuser -n tcp $port"
-    else
-        echo "(install lsof or ss to identify the owner of port $port)"
-    fi
+	local port="$1"
+	if command -v lsof >/dev/null 2>&1; then
+		echo "lsof -i :$port"
+	elif command -v ss >/dev/null 2>&1; then
+		echo "ss -lntp sport = :$port"
+	elif command -v fuser >/dev/null 2>&1; then
+		echo "fuser -n tcp $port"
+	else
+		echo "(install lsof or ss to identify the owner of port $port)"
+	fi
 }
 
 _gateway_state_file() {
-    echo "$(_gateway_project_dir)/gateway.state"
+	echo "$(_gateway_project_dir)/gateway.state"
 }
 
 _gateway_pid_file() {
-    echo "$(_gateway_project_dir)/gateway.pid"
+	echo "$(_gateway_project_dir)/gateway.pid"
 }
 
 _gateway_log_file() {
-    echo "$(_gateway_project_dir)/gateway.log"
+	echo "$(_gateway_project_dir)/gateway.log"
 }
 
 _gateway_proxy_script() {
-    echo "$(_gateway_project_dir)/gateway-proxy.js"
+	echo "$(_gateway_project_dir)/gateway-proxy.js"
 }
 
 _gateway_port() {
-    get_project_config "$CURRENT_PROJECT" "gateway_port"
+	get_project_config "$CURRENT_PROJECT" "gateway_port"
 }
 
 _gateway_host() {
-    local host
-    host=$(get_project_config "$CURRENT_PROJECT" "gateway_host")
-    echo "${host:-localhost}"
+	local host
+	host=$(get_project_config "$CURRENT_PROJECT" "gateway_host")
+	echo "${host:-localhost}"
 }
 
 _gateway_validate_host() {
-    local host="$1"
-    if [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] || [[ "$host" =~ ^[A-Za-z0-9]$ ]]; then
-        return 0
-    fi
+	local host="$1"
+	if [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] || [[ "$host" =~ ^[A-Za-z0-9]$ ]]; then
+		return 0
+	fi
 
-    pwt_error "Error: gateway host must be a hostname or IP without protocol, port, or path"
-    return $EXIT_USAGE
+	pwt_error "Error: gateway host must be a hostname or IP without protocol, port, or path"
+	return $EXIT_USAGE
 }
 
 _gateway_require_port() {
-    local port
-    port=$(_gateway_port)
-    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-        pwt_error "Error: Gateway port is not configured for project '$CURRENT_PROJECT'"
-        echo "Run: pwt gateway init --port <port>"
-        return $EXIT_USAGE
-    fi
-    echo "$port"
+	local port
+	port=$(_gateway_port)
+	if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+		pwt_error "Error: Gateway port is not configured for project '$CURRENT_PROJECT'"
+		echo "Run: pwt gateway init --port <port>"
+		return $EXIT_USAGE
+	fi
+	echo "$port"
 }
 
 _gateway_url() {
-    local port="$1"
-    local host
-    host=$(_gateway_host)
-    echo "http://$host:$port"
+	local port="$1"
+	local host
+	host=$(_gateway_host)
+	echo "http://$host:$port"
 }
 
 _gateway_set_port() {
-    local port="$1"
-    local config_file=$(_gateway_config_file)
+	local port="$1"
+	local config_file=$(_gateway_config_file)
 
-    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-        pwt_error "Error: gateway port must be numeric"
-        return $EXIT_USAGE
-    fi
+	if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+		pwt_error "Error: gateway port must be numeric"
+		return $EXIT_USAGE
+	fi
 
-    state_set "$config_file" "gateway_port" "$port" && invalidate_project_index
+	state_set "$config_file" "gateway_port" "$port" && invalidate_project_index
 }
 
 _gateway_set_host() {
-    local host="$1"
-    local config_file=$(_gateway_config_file)
+	local host="$1"
+	local config_file=$(_gateway_config_file)
 
-    _gateway_validate_host "$host" || return $?
+	_gateway_validate_host "$host" || return $?
 
-    state_set "$config_file" "gateway_host" "$host"
+	state_set "$config_file" "gateway_host" "$host"
 }
 
 _gateway_is_running() {
-    local pid_file=$(_gateway_pid_file)
-    [ -f "$pid_file" ] || return 1
-    local pid
-    pid=$(cat "$pid_file" 2>/dev/null || true)
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+	local pid_file=$(_gateway_pid_file)
+	[ -f "$pid_file" ] || return 1
+	local pid
+	pid=$(cat "$pid_file" 2>/dev/null || true)
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
 _gateway_target_name() {
-    state_get "$(_gateway_state_file)" "target"
+	state_get "$(_gateway_state_file)" "target"
 }
 
 _gateway_target_port() {
-    state_get "$(_gateway_state_file)" "target_port"
+	state_get "$(_gateway_state_file)" "target_port"
 }
 
 _gateway_write_proxy_script() {
-    local script=$(_gateway_proxy_script)
-    mkdir -p "$(dirname "$script")"
-    cat > "$script" <<'NODE'
+	local script=$(_gateway_proxy_script)
+	mkdir -p "$(dirname "$script")"
+	cat >"$script" <<'NODE'
 #!/usr/bin/env node
 const net = require("net");
 const fs = require("fs");
@@ -190,44 +190,44 @@ server.listen(listenPort, listenHost, () => {
 process.on("SIGTERM", () => server.close(() => process.exit(0)));
 process.on("SIGINT", () => server.close(() => process.exit(0)));
 NODE
-    chmod +x "$script"
+	chmod +x "$script"
 }
 
 _gateway_start() {
-    local port="$1"
+	local port="$1"
 
-    if _gateway_is_running; then
-        return 0
-    fi
-    # Our gateway is not running, so anything listening on the port is another
-    # process — spawning would EADDRINUSE and traffic would hit the wrong server.
-    if _gateway_port_listening "$port"; then
-        pwt_error "Error: Gateway port $port is already in use by another process"
-        echo "  Find the owner with: $(_port_owner_hint "$port")" >&2
-        return $EXIT_ERROR
-    fi
-    if ! command -v node >/dev/null 2>&1; then
-        pwt_error "Error: node is required for pwt gateway"
-        return $EXIT_DEPENDENCY
-    fi
+	if _gateway_is_running; then
+		return 0
+	fi
+	# Our gateway is not running, so anything listening on the port is another
+	# process — spawning would EADDRINUSE and traffic would hit the wrong server.
+	if _gateway_port_listening "$port"; then
+		pwt_error "Error: Gateway port $port is already in use by another process"
+		echo "  Find the owner with: $(_port_owner_hint "$port")" >&2
+		return $EXIT_ERROR
+	fi
+	if ! command -v node >/dev/null 2>&1; then
+		pwt_error "Error: node is required for pwt gateway"
+		return $EXIT_DEPENDENCY
+	fi
 
-    local project_dir=$(_gateway_project_dir)
-    local pid_file=$(_gateway_pid_file)
-    local log_file=$(_gateway_log_file)
-    local state_file=$(_gateway_state_file)
-    local script=$(_gateway_proxy_script)
+	local project_dir=$(_gateway_project_dir)
+	local pid_file=$(_gateway_pid_file)
+	local log_file=$(_gateway_log_file)
+	local state_file=$(_gateway_state_file)
+	local script=$(_gateway_proxy_script)
 
-    mkdir -p "$project_dir"
-    [ -f "$state_file" ] || : > "$state_file"
-    _gateway_write_proxy_script
+	mkdir -p "$project_dir"
+	[ -f "$state_file" ] || : >"$state_file"
+	_gateway_write_proxy_script
 
-    local pid
-    pid=$(
-        PWT_GATEWAY_HOST="127.0.0.1" \
-        PWT_GATEWAY_PORT="$port" \
-        PWT_GATEWAY_STATE="$state_file" \
-        PWT_GATEWAY_PROJECT="$CURRENT_PROJECT" \
-            node - "$script" "$log_file" <<'NODE'
+	local pid
+	pid=$(
+		PWT_GATEWAY_HOST="127.0.0.1" \
+			PWT_GATEWAY_PORT="$port" \
+			PWT_GATEWAY_STATE="$state_file" \
+			PWT_GATEWAY_PROJECT="$CURRENT_PROJECT" \
+			node - "$script" "$log_file" <<'NODE'
 const { spawn } = require("child_process");
 const fs = require("fs");
 
@@ -243,530 +243,548 @@ const child = spawn(process.execPath, [script], {
 child.unref();
 console.log(child.pid);
 NODE
-    )
-    if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
-        pwt_error "Error: Gateway failed to spawn"
-        return $EXIT_ERROR
-    fi
-    echo "$pid" > "$pid_file"
+	)
+	if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+		pwt_error "Error: Gateway failed to spawn"
+		return $EXIT_ERROR
+	fi
+	echo "$pid" >"$pid_file"
 
-    # Poll until the proxy listens or the process dies — no fixed sleep, so
-    # 'gateway up'/'gateway use' return as soon as the port is live (~50-100ms)
-    local waited_ms=0
-    local max_wait_ms=$(( ${PWT_GATEWAY_WAIT_SECONDS:-30} * 1000 ))
-    while ! _gateway_port_listening "$port"; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-            rm -f "$pid_file"
-            pwt_error "Error: Gateway failed to start"
-            tail -20 "$log_file" 2>/dev/null || true
-            return $EXIT_ERROR
-        fi
-        if [ "$waited_ms" -ge "$max_wait_ms" ]; then
-            kill -TERM "$pid" 2>/dev/null || true
-            rm -f "$pid_file"
-            pwt_error "Error: Gateway did not start listening on port $port"
-            tail -20 "$log_file" 2>/dev/null || true
-            return $EXIT_ERROR
-        fi
-        sleep 0.05
-        waited_ms=$((waited_ms + 50))
-    done
+	# Poll until the proxy listens or the process dies — no fixed sleep, so
+	# 'gateway up'/'gateway use' return as soon as the port is live (~50-100ms)
+	local waited_ms=0
+	local max_wait_ms=$((${PWT_GATEWAY_WAIT_SECONDS:-30} * 1000))
+	while ! _gateway_port_listening "$port"; do
+		if ! kill -0 "$pid" 2>/dev/null; then
+			rm -f "$pid_file"
+			pwt_error "Error: Gateway failed to start"
+			tail -20 "$log_file" 2>/dev/null || true
+			return $EXIT_ERROR
+		fi
+		if [ "$waited_ms" -ge "$max_wait_ms" ]; then
+			kill -TERM "$pid" 2>/dev/null || true
+			rm -f "$pid_file"
+			pwt_error "Error: Gateway did not start listening on port $port"
+			tail -20 "$log_file" 2>/dev/null || true
+			return $EXIT_ERROR
+		fi
+		sleep 0.05
+		waited_ms=$((waited_ms + 50))
+	done
 }
 
 _gateway_stop() {
-    local pid_file=$(_gateway_pid_file)
-    if ! _gateway_is_running; then
-        rm -f "$pid_file"
-        echo "Gateway is not running"
-        return 0
-    fi
+	local pid_file=$(_gateway_pid_file)
+	if ! _gateway_is_running; then
+		rm -f "$pid_file"
+		echo "Gateway is not running"
+		return 0
+	fi
 
-    local pid
-    pid=$(cat "$pid_file")
-    kill -TERM "$pid" 2>/dev/null || true
-    # Poll up to 0.5s for graceful exit before escalating to SIGKILL
-    local tries=10
-    while [ "$tries" -gt 0 ] && kill -0 "$pid" 2>/dev/null; do
-        sleep 0.05
-        tries=$((tries - 1))
-    done
-    if kill -0 "$pid" 2>/dev/null; then
-        kill -9 "$pid" 2>/dev/null || true
-    fi
-    rm -f "$pid_file"
-    echo "Gateway stopped"
+	local pid
+	pid=$(cat "$pid_file")
+	kill -TERM "$pid" 2>/dev/null || true
+	# Poll up to 0.5s for graceful exit before escalating to SIGKILL
+	local tries=10
+	while [ "$tries" -gt 0 ] && kill -0 "$pid" 2>/dev/null; do
+		sleep 0.05
+		tries=$((tries - 1))
+	done
+	if kill -0 "$pid" 2>/dev/null; then
+		kill -9 "$pid" 2>/dev/null || true
+	fi
+	rm -f "$pid_file"
+	echo "Gateway stopped"
 }
 
 _gateway_resolve_target() {
-    local target="$1"
-    local name path port branch
+	local target="$1"
+	local name path port branch
 
-    if [ -z "$target" ]; then
-        pwt_error "Error: Worktree target required"
-        return $EXIT_USAGE
-    fi
+	if [ -z "$target" ]; then
+		pwt_error "Error: Worktree target required"
+		return $EXIT_USAGE
+	fi
 
-    if [ "$target" = "@" ]; then
-        name="@"
-        path="$MAIN_APP"
-        port="${BASE_PORT:-5000}"
-        branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "")
-    else
-        path=$(resolve_worktree_path "$target" 2>/dev/null || true)
-        if [ -z "$path" ] || [ ! -d "$path" ]; then
-            pwt_error "Error: Worktree not found: $target"
-            return $EXIT_NOT_FOUND
-        fi
-        name=$(basename "$path")
-        port=$(get_metadata "$name" "port")
-        branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "")
-    fi
+	if [ "$target" = "@" ]; then
+		name="@"
+		path="$MAIN_APP"
+		port="${BASE_PORT:-5000}"
+		branch=$(git -C "$MAIN_APP" branch --show-current 2>/dev/null || echo "")
+	else
+		path=$(resolve_worktree_path "$target" 2>/dev/null || true)
+		if [ -z "$path" ] || [ ! -d "$path" ]; then
+			pwt_error "Error: Worktree not found: $target"
+			return $EXIT_NOT_FOUND
+		fi
+		name=$(basename "$path")
+		port=$(get_metadata "$name" "port")
+		branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "")
+	fi
 
-    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-        pwt_error "Error: No numeric port found for worktree: $name"
-        return $EXIT_USAGE
-    fi
+	if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+		pwt_error "Error: No numeric port found for worktree: $name"
+		return $EXIT_USAGE
+	fi
 
-    printf '%s\t%s\t%s\t%s\n' "$name" "$path" "$port" "$branch"
+	printf '%s\t%s\t%s\t%s\n' "$name" "$path" "$port" "$branch"
 }
 
 _gateway_wait_for_port() {
-    local port="$1"
-    local seconds="${PWT_GATEWAY_WAIT_SECONDS:-30}"
-    local attempts=$((seconds * 20))
-    [ "$attempts" -lt 1 ] && attempts=1
+	local port="$1"
+	local seconds="${PWT_GATEWAY_WAIT_SECONDS:-30}"
+	local attempts=$((seconds * 20))
+	[ "$attempts" -lt 1 ] && attempts=1
 
-    while [ "$attempts" -gt 0 ]; do
-        if _gateway_port_listening "$port"; then
-            return 0
-        fi
-        sleep 0.05
-        attempts=$((attempts - 1))
-    done
-    return 1
+	while [ "$attempts" -gt 0 ]; do
+		if _gateway_port_listening "$port"; then
+			return 0
+		fi
+		sleep 0.05
+		attempts=$((attempts - 1))
+	done
+	return 1
 }
 
 _gateway_port_listening() {
-    local port="$1"
-    [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] || return 1
-    if has_lsof; then
-        [ -n "$(get_pids_on_port "$port")" ]
-        return $?
-    fi
-    (echo > "/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
+	local port="$1"
+	[ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] || return 1
+	if has_lsof; then
+		[ -n "$(get_pids_on_port "$port")" ]
+		return $?
+	fi
+	(echo >"/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
 }
 
 _gateway_save_target() {
-    local name="$1"
-    local path="$2"
-    local port="$3"
-    local branch="$4"
-    local state_file=$(_gateway_state_file)
+	local name="$1"
+	local path="$2"
+	local port="$3"
+	local branch="$4"
+	local state_file=$(_gateway_state_file)
 
-    mkdir -p "$(dirname "$state_file")"
-    local tmp="${state_file}.tmp.$$"
-    {
-        printf 'project=%s\n' "$(_state_escape "$CURRENT_PROJECT")"
-        printf 'target=%s\n' "$(_state_escape "$name")"
-        printf 'target_path=%s\n' "$(_state_escape "$path")"
-        printf 'target_port=%s\n' "$port"
-        printf 'branch=%s\n' "$(_state_escape "$branch")"
-        printf 'updated_at=%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    } > "$tmp" && mv "$tmp" "$state_file"
+	mkdir -p "$(dirname "$state_file")"
+	local tmp="${state_file}.tmp.$$"
+	{
+		printf 'project=%s\n' "$(_state_escape "$CURRENT_PROJECT")"
+		printf 'target=%s\n' "$(_state_escape "$name")"
+		printf 'target_path=%s\n' "$(_state_escape "$path")"
+		printf 'target_port=%s\n' "$port"
+		printf 'branch=%s\n' "$(_state_escape "$branch")"
+		printf 'updated_at=%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+	} >"$tmp" && mv "$tmp" "$state_file"
 }
 
 _gateway_use() {
-    local target="$1"
-    shift || true
-    local server_args=()
+	local target="$1"
+	shift || true
+	local server_args=()
 
-    if [ "${1:-}" = "--" ]; then
-        shift
-        server_args=("$@")
-    elif [ "$#" -gt 0 ]; then
-        server_args=("$@")
-    fi
+	if [ "${1:-}" = "--" ]; then
+		shift
+		server_args=("$@")
+	elif [ "$#" -gt 0 ]; then
+		server_args=("$@")
+	fi
 
-    local gateway_port
-    gateway_port=$(_gateway_require_port) || return $?
+	local gateway_port
+	gateway_port=$(_gateway_require_port) || return $?
 
-    local resolved
-    resolved=$(_gateway_resolve_target "$target") || return $?
-    local name path port branch
-    IFS=$'\t' read -r name path port branch <<< "$resolved"
+	local resolved
+	resolved=$(_gateway_resolve_target "$target") || return $?
+	local name path port branch
+	IFS=$'\t' read -r name path port branch <<<"$resolved"
 
-    if ! _gateway_port_listening "$port"; then
-        if has_pwtfile_command "server"; then
-            if [ "${#server_args[@]}" -gt 0 ]; then
-                echo "Starting server for $name on port $port (flags: ${server_args[*]})..."
-            else
-                echo "Starting server for $name on port $port with DEFAULT flags"
-                echo "  (pass Pwtfile flags through: pwt gateway use $name -- --worker)"
-            fi
-            local old_bg="$PWT_BG"
-            local old_no_input="$PWT_NO_INPUT"
-            PWT_BG=true
-            PWT_NO_INPUT=true
-            local server_status=0
-            if [ "${#server_args[@]}" -gt 0 ]; then
-                cmd_server "$name" "${server_args[@]}" || server_status=$?
-            else
-                cmd_server "$name" || server_status=$?
-            fi
-            if [ "$server_status" -ne 0 ]; then
-                PWT_BG="$old_bg"
-                PWT_NO_INPUT="$old_no_input"
-                return "$server_status"
-            fi
-            PWT_BG="$old_bg"
-            PWT_NO_INPUT="$old_no_input"
-            if ! _gateway_wait_for_port "$port"; then
-                pwt_error "Error: Server for $name did not start listening on port $port"
-                return $EXIT_ERROR
-            fi
-        else
-            pwt_error "Error: Target port $port is not listening and no Pwtfile server command is configured"
-            return $EXIT_USAGE
-        fi
-    fi
+	if ! _gateway_port_listening "$port"; then
+		if has_pwtfile_command "server"; then
+			if [ "${#server_args[@]}" -gt 0 ]; then
+				echo "Starting server for $name on port $port (flags: ${server_args[*]})..."
+			else
+				echo "Starting server for $name on port $port with DEFAULT flags"
+				echo "  (pass Pwtfile flags through: pwt gateway use $name -- --worker)"
+			fi
+			local old_bg="$PWT_BG"
+			local old_no_input="$PWT_NO_INPUT"
+			PWT_BG=true
+			PWT_NO_INPUT=true
+			local server_status=0
+			if [ "${#server_args[@]}" -gt 0 ]; then
+				cmd_server "$name" "${server_args[@]}" || server_status=$?
+			else
+				cmd_server "$name" || server_status=$?
+			fi
+			if [ "$server_status" -ne 0 ]; then
+				PWT_BG="$old_bg"
+				PWT_NO_INPUT="$old_no_input"
+				return "$server_status"
+			fi
+			PWT_BG="$old_bg"
+			PWT_NO_INPUT="$old_no_input"
+			if ! _gateway_wait_for_port "$port"; then
+				pwt_error "Error: Server for $name did not start listening on port $port"
+				return $EXIT_ERROR
+			fi
+		else
+			pwt_error "Error: Target port $port is not listening and no Pwtfile server command is configured"
+			return $EXIT_USAGE
+		fi
+	fi
 
-    _gateway_start "$gateway_port" || return $?
-    _gateway_save_target "$name" "$path" "$port" "$branch"
+	_gateway_start "$gateway_port" || return $?
+	_gateway_save_target "$name" "$path" "$port" "$branch"
 
-    echo "Gateway target: $name -> 127.0.0.1:$port"
-    echo "Gateway URL:    $(_gateway_url "$gateway_port")"
+	echo "Gateway target: $name -> 127.0.0.1:$port"
+	echo "Gateway URL:    $(_gateway_url "$gateway_port")"
 }
 
 _gateway_status() {
-    local json=false
-    [ "${1:-}" = "--json" ] && json=true
+	local json=false
+	[ "${1:-}" = "--json" ] && json=true
 
-    local port
-    port=$(_gateway_port)
-    local host
-    host=$(_gateway_host)
-    local running=false
-    _gateway_is_running && running=true
-    local target=$(_gateway_target_name)
-    local target_port=$(_gateway_target_port)
-    local pid=""
-    [ -f "$(_gateway_pid_file)" ] && pid=$(cat "$(_gateway_pid_file)" 2>/dev/null || true)
+	local port
+	port=$(_gateway_port)
+	local host
+	host=$(_gateway_host)
+	local running=false
+	_gateway_is_running && running=true
+	local target=$(_gateway_target_name)
+	local target_port=$(_gateway_target_port)
+	local pid=""
+	[ -f "$(_gateway_pid_file)" ] && pid=$(cat "$(_gateway_pid_file)" 2>/dev/null || true)
 
-    if [ "$json" = true ]; then
-        local _configured="false" _url="null"
-        if [ -n "$port" ]; then
-            _configured="true"
-            _url=$(json_str "http://$host:$port")
-        fi
-        printf '{"project":%s,"configured":%s,"port":%s,"host":%s,"url":%s,"running":%s,"pid":%s,"target":%s,"target_port":%s}\n' \
-            "$(json_str "$CURRENT_PROJECT")" \
-            "$_configured" \
-            "$(json_num_or_null "$port")" \
-            "$(json_str "$host")" \
-            "$_url" \
-            "$running" \
-            "$(json_num_or_null "$pid")" \
-            "$(json_str_or_null "$target")" \
-            "$(json_num_or_null "$target_port")"
-        return 0
-    fi
+	if [ "$json" = true ]; then
+		local _configured="false" _url="null"
+		if [ -n "$port" ]; then
+			_configured="true"
+			_url=$(json_str "http://$host:$port")
+		fi
+		printf '{"project":%s,"configured":%s,"port":%s,"host":%s,"url":%s,"running":%s,"pid":%s,"target":%s,"target_port":%s}\n' \
+			"$(json_str "$CURRENT_PROJECT")" \
+			"$_configured" \
+			"$(json_num_or_null "$port")" \
+			"$(json_str "$host")" \
+			"$_url" \
+			"$running" \
+			"$(json_num_or_null "$pid")" \
+			"$(json_str_or_null "$target")" \
+			"$(json_num_or_null "$target_port")"
+		return 0
+	fi
 
-    echo "Gateway ($CURRENT_PROJECT)"
-    if [[ "$port" =~ ^[0-9]+$ ]]; then
-        echo "  URL:     $(_gateway_url "$port")"
-    else
-        echo "  URL:     (not configured)"
-    fi
-    echo "  Status:  $([ "$running" = true ] && echo "running" || echo "stopped")"
-    [ -n "$pid" ] && echo "  PID:     $pid"
-    if [ -n "$target" ]; then
-        echo "  Target:  $target :$target_port"
-    else
-        echo "  Target:  (none)"
-    fi
+	echo "Gateway ($CURRENT_PROJECT)"
+	if [[ "$port" =~ ^[0-9]+$ ]]; then
+		echo "  URL:     $(_gateway_url "$port")"
+	else
+		echo "  URL:     (not configured)"
+	fi
+	echo "  Status:  $([ "$running" = true ] && echo "running" || echo "stopped")"
+	[ -n "$pid" ] && echo "  PID:     $pid"
+	if [ -n "$target" ]; then
+		echo "  Target:  $target :$target_port"
+	else
+		echo "  Target:  (none)"
+	fi
 }
 
 _servers_job_status_for() {
-    local name="$1"
-    local status=""
-    load_module jobs
+	local name="$1"
+	local status=""
+	load_module jobs
 
-    local json_file
-    for json_file in "$PWT_JOBS_DIR"/*.job; do
-        [ -f "$json_file" ] || continue
-        local j_wt j_cmd j_id j_status
-        j_wt=$(state_get "$json_file" "worktree")
-        j_cmd=$(state_get "$json_file" "command")
-        j_id=$(state_get "$json_file" "id")
-        j_status=$(state_get "$json_file" "status")
-        [ "$j_wt" = "$name" ] && [ "$j_cmd" = "server" ] || continue
-        if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
-            status="job:$j_id"
-            break
-        fi
-    done
-    echo "$status"
+	local json_file
+	for json_file in "$PWT_JOBS_DIR"/*.job; do
+		[ -f "$json_file" ] || continue
+		local j_wt j_cmd j_id j_status
+		j_wt=$(state_get "$json_file" "worktree")
+		j_cmd=$(state_get "$json_file" "command")
+		j_id=$(state_get "$json_file" "id")
+		j_status=$(state_get "$json_file" "status")
+		[ "$j_wt" = "$name" ] && [ "$j_cmd" = "server" ] || continue
+		if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
+			status="job:$j_id"
+			break
+		fi
+	done
+	echo "$status"
 }
 
 _servers_print_row() {
-    local name="$1"
-    local path="$2"
-    local port="$3"
-    local branch="$4"
-    local markers="$5"
-    local listening="stopped"
-    local job_status
+	local name="$1"
+	local path="$2"
+	local port="$3"
+	local branch="$4"
+	local markers="$5"
+	local listening="stopped"
+	local job_status
 
-    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && _gateway_port_listening "$port"; then
-        listening="listening"
-    fi
-    job_status=$(_servers_job_status_for "$name")
-    [ -z "$job_status" ] && job_status="-"
+	if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && _gateway_port_listening "$port"; then
+		listening="listening"
+	fi
+	job_status=$(_servers_job_status_for "$name")
+	[ -z "$job_status" ] && job_status="-"
 
-    printf "%-24s %-8s %-10s %-18s %s\n" "$name" "${port:-"-"}" "$listening" "$job_status" "$markers"
-    [ -n "$branch" ] && printf "  branch: %s\n" "$branch"
-    printf "  path:   %s\n" "$path"
+	printf "%-24s %-8s %-10s %-18s %s\n" "$name" "${port:-"-"}" "$listening" "$job_status" "$markers"
+	[ -n "$branch" ] && printf "  branch: %s\n" "$branch"
+	printf "  path:   %s\n" "$path"
 
-    # Other running jobs for this worktree (workers, custom commands)
-    load_module jobs
-    local extra_jobs=""
-    local json_file
-    for json_file in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
-        [ -f "$json_file" ] || continue
-        local j_wt j_cmd j_id j_status
-        j_wt=$(state_get "$json_file" "worktree")
-        j_cmd=$(state_get "$json_file" "command")
-        j_id=$(state_get "$json_file" "id")
-        j_status=$(state_get "$json_file" "status")
-        [ "$j_wt" = "$name" ] && [ "$j_cmd" != "server" ] || continue
-        if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
-            extra_jobs="${extra_jobs:+$extra_jobs, }$j_cmd ($j_id)"
-        fi
-    done
-    [ -n "$extra_jobs" ] && printf "  jobs:   %s\n" "$extra_jobs"
-    return 0
+	# Other running jobs for this worktree (workers, custom commands)
+	load_module jobs
+	local extra_jobs=""
+	local json_file
+	for json_file in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
+		[ -f "$json_file" ] || continue
+		local j_wt j_cmd j_id j_status
+		j_wt=$(state_get "$json_file" "worktree")
+		j_cmd=$(state_get "$json_file" "command")
+		j_id=$(state_get "$json_file" "id")
+		j_status=$(state_get "$json_file" "status")
+		[ "$j_wt" = "$name" ] && [ "$j_cmd" != "server" ] || continue
+		if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
+			extra_jobs="${extra_jobs:+$extra_jobs, }$j_cmd ($j_id)"
+		fi
+	done
+	[ -n "$extra_jobs" ] && printf "  jobs:   %s\n" "$extra_jobs"
+	return 0
 }
 
 cmd_servers() {
-    local show_all=false
-    local json=false
+	local show_all=false
+	local json=false
 
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --all|-a) show_all=true; shift ;;
-            --json) json=true; shift ;;
-            -h|--help|help)
-                echo "Usage: pwt servers [--all] [--json]"
-                echo ""
-                echo "Show development server status for the current project."
-                echo ""
-                echo "Options:"
-                echo "  --all, -a   Include stopped worktrees"
-                echo "  --json      Output machine-readable JSON"
-                echo "  -h, --help  Show this help"
-                return 0
-                ;;
-            *) shift ;;
-        esac
-    done
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--all | -a)
+			show_all=true
+			shift
+			;;
+		--json)
+			json=true
+			shift
+			;;
+		-h | --help | help)
+			echo "Usage: pwt servers [--all] [--json]"
+			echo ""
+			echo "Show development server status for the current project."
+			echo ""
+			echo "Options:"
+			echo "  --all, -a   Include stopped worktrees"
+			echo "  --json      Output machine-readable JSON"
+			echo "  -h, --help  Show this help"
+			return 0
+			;;
+		*) shift ;;
+		esac
+	done
 
-    local gateway_port=$(_gateway_port)
-    local gateway_running=false
-    _gateway_is_running && gateway_running=true
-    local gateway_target=$(_gateway_target_name)
-    local current=""
-    current=$(get_current_from_symlink 2>/dev/null || true)
-    local has_server=false
-    has_pwtfile_command "server" && has_server=true
+	local gateway_port=$(_gateway_port)
+	local gateway_running=false
+	_gateway_is_running && gateway_running=true
+	local gateway_target=$(_gateway_target_name)
+	local current=""
+	current=$(get_current_from_symlink 2>/dev/null || true)
+	local has_server=false
+	has_pwtfile_command "server" && has_server=true
 
-    if [ "$json" = true ]; then
-        local rows=""
-        local name path port branch listening job marker row
-        while IFS=$'\t' read -r name path; do
-            [ -n "$name" ] && [ -d "$path" ] || continue
-            port=$(get_metadata "$name" "port")
-            branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "")
-            listening=false
-            [ -n "$port" ] && _gateway_port_listening "$port" && listening=true
-            job=$(_servers_job_status_for "$name")
-            marker=""
-            [ "$name" = "$gateway_target" ] && marker="${marker}gateway "
-            [ "$name" = "$current" ] && marker="${marker}current "
-            if [ "$show_all" = true ] || [ "$listening" = true ] || [ -n "$job" ] || [ -n "$marker" ]; then
-                row=$(printf '{"name":%s,"path":%s,"port":%s,"branch":%s,"listening":%s,"job":%s,"marker":%s}' \
-                    "$(json_str "$name")" \
-                    "$(json_str "$path")" \
-                    "$(json_num_or_null "$port")" \
-                    "$(json_str "$branch")" \
-                    "$listening" \
-                    "$(json_str_or_null "$job")" \
-                    "$(json_str "${marker% }")")
-                rows="${rows:+$rows,}$row"
-            fi
-        done < <(list_known_worktree_entries)
-        local _gw_configured="false"
-        [ -n "$gateway_port" ] && _gw_configured="true"
-        printf '{"project":%s,"pwtfile_server":%s,"gateway":{"configured":%s,"port":%s,"running":%s,"target":%s},"current":%s,"servers":[%s]}\n' \
-            "$(json_str "$CURRENT_PROJECT")" \
-            "$has_server" \
-            "$_gw_configured" \
-            "$(json_num_or_null "$gateway_port")" \
-            "$gateway_running" \
-            "$(json_str_or_null "$gateway_target")" \
-            "$(json_str_or_null "$current")" \
-            "$rows"
-        return 0
-    fi
+	if [ "$json" = true ]; then
+		local rows=""
+		local name path port branch listening job marker row
+		while IFS=$'\t' read -r name path; do
+			[ -n "$name" ] && [ -d "$path" ] || continue
+			port=$(get_metadata "$name" "port")
+			branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "")
+			listening=false
+			[ -n "$port" ] && _gateway_port_listening "$port" && listening=true
+			job=$(_servers_job_status_for "$name")
+			marker=""
+			[ "$name" = "$gateway_target" ] && marker="${marker}gateway "
+			[ "$name" = "$current" ] && marker="${marker}current "
+			if [ "$show_all" = true ] || [ "$listening" = true ] || [ -n "$job" ] || [ -n "$marker" ]; then
+				row=$(printf '{"name":%s,"path":%s,"port":%s,"branch":%s,"listening":%s,"job":%s,"marker":%s}' \
+					"$(json_str "$name")" \
+					"$(json_str "$path")" \
+					"$(json_num_or_null "$port")" \
+					"$(json_str "$branch")" \
+					"$listening" \
+					"$(json_str_or_null "$job")" \
+					"$(json_str "${marker% }")")
+				rows="${rows:+$rows,}$row"
+			fi
+		done < <(list_known_worktree_entries)
+		local _gw_configured="false"
+		[ -n "$gateway_port" ] && _gw_configured="true"
+		printf '{"project":%s,"pwtfile_server":%s,"gateway":{"configured":%s,"port":%s,"running":%s,"target":%s},"current":%s,"servers":[%s]}\n' \
+			"$(json_str "$CURRENT_PROJECT")" \
+			"$has_server" \
+			"$_gw_configured" \
+			"$(json_num_or_null "$gateway_port")" \
+			"$gateway_running" \
+			"$(json_str_or_null "$gateway_target")" \
+			"$(json_str_or_null "$current")" \
+			"$rows"
+		return 0
+	fi
 
-    echo "Servers ($CURRENT_PROJECT)"
-    if [ -n "$gateway_port" ]; then
-        echo "  Gateway: $(_gateway_url "$gateway_port") ($([ "$gateway_running" = true ] && echo "running" || echo "stopped"))"
-        [ -n "$gateway_target" ] && echo "  Target:  $gateway_target"
-    else
-        echo "  Gateway: not configured (pwt gateway init --port <port>)"
-    fi
-    echo "  Pwtfile server: $([ "$has_server" = true ] && echo "configured" || echo "not configured")"
-    [ -n "$current" ] && echo "  Current: $current"
-    echo ""
+	echo "Servers ($CURRENT_PROJECT)"
+	if [ -n "$gateway_port" ]; then
+		echo "  Gateway: $(_gateway_url "$gateway_port") ($([ "$gateway_running" = true ] && echo "running" || echo "stopped"))"
+		[ -n "$gateway_target" ] && echo "  Target:  $gateway_target"
+	else
+		echo "  Gateway: not configured (pwt gateway init --port <port>)"
+	fi
+	echo "  Pwtfile server: $([ "$has_server" = true ] && echo "configured" || echo "not configured")"
+	[ -n "$current" ] && echo "  Current: $current"
+	echo ""
 
-    printf "%-24s %-8s %-10s %-18s %s\n" "WORKTREE" "PORT" "STATUS" "JOB" "MARKERS"
-    printf "%-24s %-8s %-10s %-18s %s\n" "--------" "----" "------" "---" "-------"
+	printf "%-24s %-8s %-10s %-18s %s\n" "WORKTREE" "PORT" "STATUS" "JOB" "MARKERS"
+	printf "%-24s %-8s %-10s %-18s %s\n" "--------" "----" "------" "---" "-------"
 
-    local found=false
-    local name path port branch markers listening job
-    while IFS=$'\t' read -r name path; do
-        [ -n "$name" ] && [ -d "$path" ] || continue
-        port=$(get_metadata "$name" "port")
-        branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "")
-        markers=""
-        [ "$name" = "$gateway_target" ] && markers="${markers}gateway "
-        [ "$name" = "$current" ] && markers="${markers}current "
-        listening=false
-        [ -n "$port" ] && _gateway_port_listening "$port" && listening=true
-        job=$(_servers_job_status_for "$name")
+	local found=false
+	local name path port branch markers listening job
+	while IFS=$'\t' read -r name path; do
+		[ -n "$name" ] && [ -d "$path" ] || continue
+		port=$(get_metadata "$name" "port")
+		branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "")
+		markers=""
+		[ "$name" = "$gateway_target" ] && markers="${markers}gateway "
+		[ "$name" = "$current" ] && markers="${markers}current "
+		listening=false
+		[ -n "$port" ] && _gateway_port_listening "$port" && listening=true
+		job=$(_servers_job_status_for "$name")
 
-        if [ "$show_all" = true ] || [ "$listening" = true ] || [ -n "$job" ] || [ -n "$markers" ]; then
-            _servers_print_row "$name" "$path" "$port" "$branch" "${markers% }"
-            found=true
-        fi
-    done < <(list_known_worktree_entries)
+		if [ "$show_all" = true ] || [ "$listening" = true ] || [ -n "$job" ] || [ -n "$markers" ]; then
+			_servers_print_row "$name" "$path" "$port" "$branch" "${markers% }"
+			found=true
+		fi
+	done < <(list_known_worktree_entries)
 
-    if [ "$found" = false ]; then
-        echo "(no active servers; use --all to show stopped worktrees)"
-    fi
+	if [ "$found" = false ]; then
+		echo "(no active servers; use --all to show stopped worktrees)"
+	fi
 }
 
 cmd_gateway() {
-    local subcmd="${1:-status}"
-    shift || true
+	local subcmd="${1:-status}"
+	shift || true
 
-    case "$subcmd" in
-        -h|--help|help)
-            echo "Usage: pwt gateway <command> [args]"
-            echo ""
-            echo "Manage a stable per-project gateway URL that forwards to a worktree server."
-            echo ""
-            echo "Commands:"
-            echo "  init --port <port> [--host <host>]"
-            echo "                              Configure gateway port and public host"
-            echo "  up [--port <port>] [--host <host>]"
-            echo "                              Start gateway proxy daemon"
-            echo "  down                      Stop gateway proxy"
-            echo "  start                     Alias for up"
-            echo "  stop                      Alias for down"
-            echo "  restart                   Restart gateway proxy"
-            echo "  status [--json]           Show gateway status"
-            echo "  use <worktree|@> [-- ...] Point gateway at a worktree; auto-starts server if needed"
-            echo "  url                       Print gateway URL"
-            echo "  logs [-f]                 Show gateway logs"
-            return 0
-            ;;
-        init)
-            local port=""
-            local host=""
-            while [ $# -gt 0 ]; do
-                case "$1" in
-                    --port|-p) port="${2:-}"; shift 2 ;;
-                    --host|-H) host="${2:-}"; shift 2 ;;
-                    *) port="$1"; shift ;;
-                esac
-            done
-            if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-                pwt_error "Error: gateway init requires --port <port>"
-                return $EXIT_USAGE
-            fi
-            # Refuse a port already owned by another process (unless it's this
-            # project's own gateway already listening there)
-            if _gateway_port_listening "$port"; then
-                local cur_port=$(_gateway_port 2>/dev/null || echo "")
-                if ! { _gateway_is_running && [ "$cur_port" = "$port" ]; }; then
-                    pwt_error "Error: Port $port is already in use by another process"
-                    echo "  Pick a free port, or find the owner with: $(_port_owner_hint "$port")" >&2
-                    return $EXIT_USAGE
-                fi
-            fi
-            _gateway_set_port "$port" || return $?
-            if [ -n "$host" ]; then
-                _gateway_set_host "$host" || return $?
-            fi
-            echo "Gateway port set to $port"
-            if [ -n "$host" ]; then
-                echo "Gateway host set to $host"
-            fi
-            ;;
-        up|start)
-            local port
-            while [ $# -gt 0 ]; do
-                case "$1" in
-                    --port|-p)
-                        _gateway_set_port "${2:-}" || return $?
-                        shift 2
-                        ;;
-                    --host|-H)
-                        _gateway_set_host "${2:-}" || return $?
-                        shift 2
-                        ;;
-                    *) shift ;;
-                esac
-            done
-            port=$(_gateway_require_port) || return $?
-            _gateway_start "$port"
-            echo "Gateway running at $(_gateway_url "$port")"
-            ;;
-        down|stop)
-            _gateway_stop
-            ;;
-        restart)
-            _gateway_stop >/dev/null || true
-            local port
-            port=$(_gateway_require_port) || return $?
-            _gateway_start "$port"
-            echo "Gateway running at $(_gateway_url "$port")"
-            ;;
-        status)
-            _gateway_status "$@"
-            ;;
-        use)
-            _gateway_use "${1:-}" "${@:2}"
-            ;;
-        url)
-            local port
-            port=$(_gateway_require_port) || return $?
-            echo "$(_gateway_url "$port")"
-            ;;
-        logs|log)
-            local log_file=$(_gateway_log_file)
-            [ -f "$log_file" ] || { echo "No gateway log found"; return 0; }
-            if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--follow" ]; then
-                tail -f "$log_file"
-            else
-                tail -50 "$log_file"
-            fi
-            ;;
-        *)
-            pwt_error "Unknown gateway command: $subcmd"
-            echo "Run 'pwt gateway help' for usage"
-            return $EXIT_USAGE
-            ;;
-    esac
+	case "$subcmd" in
+	-h | --help | help)
+		echo "Usage: pwt gateway <command> [args]"
+		echo ""
+		echo "Manage a stable per-project gateway URL that forwards to a worktree server."
+		echo ""
+		echo "Commands:"
+		echo "  init --port <port> [--host <host>]"
+		echo "                              Configure gateway port and public host"
+		echo "  up [--port <port>] [--host <host>]"
+		echo "                              Start gateway proxy daemon"
+		echo "  down                      Stop gateway proxy"
+		echo "  start                     Alias for up"
+		echo "  stop                      Alias for down"
+		echo "  restart                   Restart gateway proxy"
+		echo "  status [--json]           Show gateway status"
+		echo "  use <worktree|@> [-- ...] Point gateway at a worktree; auto-starts server if needed"
+		echo "  url                       Print gateway URL"
+		echo "  logs [-f]                 Show gateway logs"
+		return 0
+		;;
+	init)
+		local port=""
+		local host=""
+		while [ $# -gt 0 ]; do
+			case "$1" in
+			--port | -p)
+				port="${2:-}"
+				shift 2
+				;;
+			--host | -H)
+				host="${2:-}"
+				shift 2
+				;;
+			*)
+				port="$1"
+				shift
+				;;
+			esac
+		done
+		if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+			pwt_error "Error: gateway init requires --port <port>"
+			return $EXIT_USAGE
+		fi
+		# Refuse a port already owned by another process (unless it's this
+		# project's own gateway already listening there)
+		if _gateway_port_listening "$port"; then
+			local cur_port=$(_gateway_port 2>/dev/null || echo "")
+			if ! { _gateway_is_running && [ "$cur_port" = "$port" ]; }; then
+				pwt_error "Error: Port $port is already in use by another process"
+				echo "  Pick a free port, or find the owner with: $(_port_owner_hint "$port")" >&2
+				return $EXIT_USAGE
+			fi
+		fi
+		_gateway_set_port "$port" || return $?
+		if [ -n "$host" ]; then
+			_gateway_set_host "$host" || return $?
+		fi
+		echo "Gateway port set to $port"
+		if [ -n "$host" ]; then
+			echo "Gateway host set to $host"
+		fi
+		;;
+	up | start)
+		local port
+		while [ $# -gt 0 ]; do
+			case "$1" in
+			--port | -p)
+				_gateway_set_port "${2:-}" || return $?
+				shift 2
+				;;
+			--host | -H)
+				_gateway_set_host "${2:-}" || return $?
+				shift 2
+				;;
+			*) shift ;;
+			esac
+		done
+		port=$(_gateway_require_port) || return $?
+		_gateway_start "$port"
+		echo "Gateway running at $(_gateway_url "$port")"
+		;;
+	down | stop)
+		_gateway_stop
+		;;
+	restart)
+		_gateway_stop >/dev/null || true
+		local port
+		port=$(_gateway_require_port) || return $?
+		_gateway_start "$port"
+		echo "Gateway running at $(_gateway_url "$port")"
+		;;
+	status)
+		_gateway_status "$@"
+		;;
+	use)
+		_gateway_use "${1:-}" "${@:2}"
+		;;
+	url)
+		local port
+		port=$(_gateway_require_port) || return $?
+		echo "$(_gateway_url "$port")"
+		;;
+	logs | log)
+		local log_file=$(_gateway_log_file)
+		[ -f "$log_file" ] || {
+			echo "No gateway log found"
+			return 0
+		}
+		if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--follow" ]; then
+			tail -f "$log_file"
+		else
+			tail -50 "$log_file"
+		fi
+		;;
+	*)
+		pwt_error "Unknown gateway command: $subcmd"
+		echo "Run 'pwt gateway help' for usage"
+		return $EXIT_USAGE
+		;;
+	esac
 }

@@ -25,13 +25,13 @@ create_repo() {
     cd "$path"
     git config user.email "test@test.com"
     git config user.name "Test User"
-    echo "content" > README.md
+    echo "content" >README.md
     git add README.md
     git commit -q -m "Initial commit"
     if [ -n "$remote" ]; then
         git remote add origin "$remote"
     fi
-    cd - > /dev/null
+    cd - >/dev/null
 }
 
 # ============================================
@@ -215,7 +215,7 @@ create_repo() {
     mkdir -p vendor/sub
 
     # Create .gitmodules file
-    cat > .gitmodules << 'EOF'
+    cat >.gitmodules <<'EOF'
 [submodule "vendor/sub"]
     path = vendor/sub
     url = git@github.com:user/sub.git
@@ -226,7 +226,7 @@ EOF
     cd vendor/sub
     git config user.email "test@test.com"
     git config user.name "Test User"
-    echo "sub content" > README.md
+    echo "sub content" >README.md
     git add README.md
     git commit -q -m "Initial"
 
@@ -235,7 +235,7 @@ EOF
     mkdir -p "$git_dir"
     mv .git/* "$git_dir/" 2>/dev/null || true
     rm -rf .git
-    echo "gitdir: $git_dir" > .git
+    echo "gitdir: $git_dir" >.git
 
     run "$PWT_BIN" discover "$PROJECTS_DIR"
     [ "$status" -eq 0 ]
@@ -253,7 +253,7 @@ EOF
     mkdir -p vendor/sub
 
     # Create .gitmodules file
-    cat > .gitmodules << 'EOF'
+    cat >.gitmodules <<'EOF'
 [submodule "vendor/sub"]
     path = vendor/sub
     url = git@github.com:user/sub.git
@@ -264,7 +264,7 @@ EOF
     cd vendor/sub
     git config user.email "test@test.com"
     git config user.name "Test User"
-    echo "sub content" > README.md
+    echo "sub content" >README.md
     git add README.md
     git commit -q -m "Initial"
 
@@ -273,7 +273,7 @@ EOF
     mkdir -p "$git_dir"
     mv .git/* "$git_dir/" 2>/dev/null || true
     rm -rf .git
-    echo "gitdir: $git_dir" > .git
+    echo "gitdir: $git_dir" >.git
 
     run "$PWT_BIN" discover "$PROJECTS_DIR" --include-submodules
     [ "$status" -eq 0 ]

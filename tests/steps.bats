@@ -11,14 +11,14 @@ setup() {
     mkdir -p "$TEST_WORKTREES"
 
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
 EOF
 
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -31,7 +31,7 @@ teardown() {
 # its setup() calls with an argument needs the same argument here; pwt cannot
 # invent project-specific values such as a database suffix.
 @test "step forwards positional arguments to the function" {
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 step_echo_args() {
     echo "POS1=[${1:-<none>}] ARGS=[$PWT_ARGS]"
 }
@@ -45,7 +45,7 @@ EOF
 }
 
 @test "step forwards several positional arguments in order" {
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 step_pair() {
     echo "ONE=[${1:-}] TWO=[${2:-}]"
 }
@@ -58,7 +58,7 @@ EOF
 }
 
 @test "step runs a function that takes no arguments" {
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 step_plain() {
     echo "PLAIN_RAN"
 }
@@ -78,7 +78,7 @@ EOF
 }
 
 @test "steps lists step_ functions without the prefix" {
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 step_alpha() { :; }
 step_beta() { :; }
 server() { :; }

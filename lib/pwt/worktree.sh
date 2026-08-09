@@ -19,718 +19,718 @@
 _PWT_WORKTREE_LOADED=1
 
 _pwt_local_branch_for_remote() {
-    local remote_ref="$1"
-    remote_ref="${remote_ref#refs/remotes/}"
-    echo "${remote_ref#*/}"
+	local remote_ref="$1"
+	remote_ref="${remote_ref#refs/remotes/}"
+	echo "${remote_ref#*/}"
 }
 
 _pwt_track_worktree_name() {
-    local branch="$1"
+	local branch="$1"
 
-    if [[ "$branch" =~ ([A-Z][A-Z0-9]+-[0-9]+) ]]; then
-        echo "${BASH_REMATCH[1]}"
-        return 0
-    fi
+	if [[ "$branch" =~ ([A-Z][A-Z0-9]+-[0-9]+) ]]; then
+		echo "${BASH_REMATCH[1]}"
+		return 0
+	fi
 
-    extract_worktree_name "$branch"
+	extract_worktree_name "$branch"
 }
 
 _pwt_fetch_remote_ref() {
-    local remote_ref="$1"
-    local remote="${remote_ref%%/*}"
-    local remote_branch="${remote_ref#*/}"
+	local remote_ref="$1"
+	local remote="${remote_ref%%/*}"
+	local remote_branch="${remote_ref#*/}"
 
-    if [ -n "$remote" ] && [ "$remote" != "$remote_branch" ]; then
-        echo -e "${BLUE}Updating reference:${NC} $remote_ref"
-        git fetch "$remote" "$remote_branch" --quiet 2>/dev/null || true
-    fi
+	if [ -n "$remote" ] && [ "$remote" != "$remote_branch" ]; then
+		echo -e "${BLUE}Updating reference:${NC} $remote_ref"
+		git fetch "$remote" "$remote_branch" --quiet 2>/dev/null || true
+	fi
 }
 
 _pwt_set_tracking_if_remote() {
-    local worktree_dir="$1"
-    local local_branch="$2"
-    local remote_ref="$3"
+	local worktree_dir="$1"
+	local local_branch="$2"
+	local remote_ref="$3"
 
-    [ -n "$remote_ref" ] || return 0
-    [[ "$remote_ref" == */* ]] || return 0
+	[ -n "$remote_ref" ] || return 0
+	[[ "$remote_ref" == */* ]] || return 0
 
-    local remote_local_branch=$(_pwt_local_branch_for_remote "$remote_ref")
-    [ "$local_branch" = "$remote_local_branch" ] || return 0
+	local remote_local_branch=$(_pwt_local_branch_for_remote "$remote_ref")
+	[ "$local_branch" = "$remote_local_branch" ] || return 0
 
-    if git -C "$worktree_dir" rev-parse --verify --quiet "$remote_ref^{commit}" >/dev/null 2>&1; then
-        git -C "$worktree_dir" branch --set-upstream-to="$remote_ref" "$local_branch" >/dev/null 2>&1 || true
-        echo -e "  ${GREEN}✓ Tracking:${NC} $remote_ref"
-    fi
+	if git -C "$worktree_dir" rev-parse --verify --quiet "$remote_ref^{commit}" >/dev/null 2>&1; then
+		git -C "$worktree_dir" branch --set-upstream-to="$remote_ref" "$local_branch" >/dev/null 2>&1 || true
+		echo -e "  ${GREEN}✓ Tracking:${NC} $remote_ref"
+	fi
 }
 
 _pwt_run_standard_setup() {
-    local worktree_name="$1"
-    local worktree_dir="$2"
-    local final_branch="$3"
-    local port="$4"
-    local final_base="$5"
-    local final_desc="$6"
+	local worktree_name="$1"
+	local worktree_dir="$2"
+	local final_branch="$3"
+	local port="$4"
+	local final_base="$5"
+	local final_desc="$6"
 
-    export PWT_WORKTREE="$worktree_name"
-    export PWT_WORKTREE_PATH="$worktree_dir"
-    export PWT_BRANCH="$final_branch"
-    export PWT_PORT="$port"
-    export PWT_TICKET="$worktree_name"
-    export PWT_BASE="$final_base"
-    export PWT_DESC="$final_desc"
-    export PWT_PROJECT="$CURRENT_PROJECT"
-    export MAIN_APP="$MAIN_APP"
+	export PWT_WORKTREE="$worktree_name"
+	export PWT_WORKTREE_PATH="$worktree_dir"
+	export PWT_BRANCH="$final_branch"
+	export PWT_PORT="$port"
+	export PWT_TICKET="$worktree_name"
+	export PWT_BASE="$final_base"
+	export PWT_DESC="$final_desc"
+	export PWT_PROJECT="$CURRENT_PROJECT"
+	export MAIN_APP="$MAIN_APP"
 
-    run_pwtfile "setup"
-    run_hook "post-create"
-    set_current_worktree "$worktree_name" 2>/dev/null || true
-    clear_list_cache
+	run_pwtfile "setup"
+	run_hook "post-create"
+	set_current_worktree "$worktree_name" 2>/dev/null || true
+	clear_list_cache
 }
 
 cmd_create() {
-    local branch=""
-    local base_ref=""
-    local description=""
-    local dry_run=false
-    local open_editor=false
-    local start_ai=false
-    local from_current=false
-    local use_clone=false
-    local explicit_branch=""
-    local track_existing_ref=""
+	local branch=""
+	local base_ref=""
+	local description=""
+	local dry_run=false
+	local open_editor=false
+	local start_ai=false
+	local from_current=false
+	local use_clone=false
+	local explicit_branch=""
+	local track_existing_ref=""
 
-    # Parse arguments
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --dry-run|-n)
-                dry_run=true
-                shift
-                ;;
-            -e|--editor)
-                open_editor=true
-                shift
-                ;;
-            -a|--ai)
-                start_ai=true
-                shift
-                ;;
-            --clone)
-                use_clone=true
-                shift
-                ;;
-            --from)
-                if [ -z "${2:-}" ]; then
-                    pwt_error "Error: --from requires a ref"
-                    exit 1
-                fi
-                base_ref="$2"
-                shift 2
-                ;;
-            --branch)
-                if [ -z "${2:-}" ]; then
-                    pwt_error "Error: --branch requires a branch name"
-                    exit 1
-                fi
-                explicit_branch="$2"
-                shift 2
-                ;;
-            --track|--track-existing)
-                if [ -z "${2:-}" ]; then
-                    pwt_error "Error: $1 requires a remote ref"
-                    exit 1
-                fi
-                track_existing_ref="$2"
-                shift 2
-                ;;
-            --from-current)
-                from_current=true
-                shift
-                ;;
-            --)
-                # Everything after -- is the description
-                shift
-                description="$*"
-                break
-                ;;
-            -h|--help)
-                echo "Usage: pwt create|add <branch> [base] [\"description\"]"
-                echo ""
-                echo "Arguments:"
-                echo "  branch          Branch name or ticket (e.g., TICKET-1234)"
-                echo "  base            Base branch (default: master)"
-                echo "  \"description\"   Quoted text with spaces is treated as description"
-                echo ""
-                echo "Options:"
-                echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
-                echo "  --from-current    Create from current branch"
-                echo "  --branch <name>   Use exact Git branch name (directory still uses <branch>)"
-                echo "  --track <remote/ref>"
-                echo "  --track-existing <remote/ref>"
-                echo "                    Create local branch tracking an existing remote branch"
-                echo "  --clone           Use git clone instead of worktree"
-                echo "  -e, --editor      Open in editor after creation"
-                echo "  -a, --ai          Start AI assistant after creation"
-                echo "  -n, --dry-run     Show what would be done"
-                echo "  -h, --help        Show this help"
-                echo ""
-                echo "Examples:"
-                echo "  pwt create TICKET-1234                        # no description"
-                echo "  pwt create TICKET-1234 \"auth login bug\"       # with description"
-                echo "  pwt create TICKET-1234 develop \"auth login\"   # custom base + description"
-                echo "  pwt create --track origin/team/TICKET-1234"
-                echo "  pwt track origin/team/TICKET-1234"
-                echo "  pwt create TICKET-1234 --branch team/TICKET-1234 --from origin/team/TICKET-1234"
-                return 0
-                ;;
-            -*)
-                echo -e "${RED}Unknown option: $1${NC}"
-                exit 1
-                ;;
-            *)
-                # Positional arguments: branch, base_ref, description
-                # Heuristic: if arg contains spaces, it's a description
-                # (git branch names cannot have spaces)
-                if [ -z "$branch" ]; then
-                    branch="$1"
-                elif [ -z "$base_ref" ]; then
-                    if [[ "$1" == *" "* ]]; then
-                        # Has spaces → description, not a branch
-                        # Default to DEFAULT_BRANCH as base
-                        description="$1"
-                        base_ref="$DEFAULT_BRANCH"
-                    else
-                        base_ref="$1"
-                    fi
-                else
-                    # Accumulate all remaining positional args as description
-                    if [ -z "$description" ]; then
-                        description="$1"
-                    else
-                        description="$description $1"
-                    fi
-                fi
-                shift
-                ;;
-        esac
-    done
+	# Parse arguments
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--dry-run | -n)
+			dry_run=true
+			shift
+			;;
+		-e | --editor)
+			open_editor=true
+			shift
+			;;
+		-a | --ai)
+			start_ai=true
+			shift
+			;;
+		--clone)
+			use_clone=true
+			shift
+			;;
+		--from)
+			if [ -z "${2:-}" ]; then
+				pwt_error "Error: --from requires a ref"
+				exit 1
+			fi
+			base_ref="$2"
+			shift 2
+			;;
+		--branch)
+			if [ -z "${2:-}" ]; then
+				pwt_error "Error: --branch requires a branch name"
+				exit 1
+			fi
+			explicit_branch="$2"
+			shift 2
+			;;
+		--track | --track-existing)
+			if [ -z "${2:-}" ]; then
+				pwt_error "Error: $1 requires a remote ref"
+				exit 1
+			fi
+			track_existing_ref="$2"
+			shift 2
+			;;
+		--from-current)
+			from_current=true
+			shift
+			;;
+		--)
+			# Everything after -- is the description
+			shift
+			description="$*"
+			break
+			;;
+		-h | --help)
+			echo "Usage: pwt create|add <branch> [base] [\"description\"]"
+			echo ""
+			echo "Arguments:"
+			echo "  branch          Branch name or ticket (e.g., TICKET-1234)"
+			echo "  base            Base branch (default: master)"
+			echo "  \"description\"   Quoted text with spaces is treated as description"
+			echo ""
+			echo "Options:"
+			echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
+			echo "  --from-current    Create from current branch"
+			echo "  --branch <name>   Use exact Git branch name (directory still uses <branch>)"
+			echo "  --track <remote/ref>"
+			echo "  --track-existing <remote/ref>"
+			echo "                    Create local branch tracking an existing remote branch"
+			echo "  --clone           Use git clone instead of worktree"
+			echo "  -e, --editor      Open in editor after creation"
+			echo "  -a, --ai          Start AI assistant after creation"
+			echo "  -n, --dry-run     Show what would be done"
+			echo "  -h, --help        Show this help"
+			echo ""
+			echo "Examples:"
+			echo "  pwt create TICKET-1234                        # no description"
+			echo "  pwt create TICKET-1234 \"auth login bug\"       # with description"
+			echo "  pwt create TICKET-1234 develop \"auth login\"   # custom base + description"
+			echo "  pwt create --track origin/team/TICKET-1234"
+			echo "  pwt track origin/team/TICKET-1234"
+			echo "  pwt create TICKET-1234 --branch team/TICKET-1234 --from origin/team/TICKET-1234"
+			return 0
+			;;
+		-*)
+			echo -e "${RED}Unknown option: $1${NC}"
+			exit 1
+			;;
+		*)
+			# Positional arguments: branch, base_ref, description
+			# Heuristic: if arg contains spaces, it's a description
+			# (git branch names cannot have spaces)
+			if [ -z "$branch" ]; then
+				branch="$1"
+			elif [ -z "$base_ref" ]; then
+				if [[ "$1" == *" "* ]]; then
+					# Has spaces → description, not a branch
+					# Default to DEFAULT_BRANCH as base
+					description="$1"
+					base_ref="$DEFAULT_BRANCH"
+				else
+					base_ref="$1"
+				fi
+			else
+				# Accumulate all remaining positional args as description
+				if [ -z "$description" ]; then
+					description="$1"
+				else
+					description="$description $1"
+				fi
+			fi
+			shift
+			;;
+		esac
+	done
 
-    # Handle --from-current: use current branch as base
-    if [ "$from_current" = true ]; then
-        cd "$MAIN_APP"
-        base_ref=$(git branch --show-current 2>/dev/null)
-        if [ -z "$base_ref" ]; then
-            pwt_error "Error: Could not detect current branch"
-            exit 1
-        fi
-    fi
+	# Handle --from-current: use current branch as base
+	if [ "$from_current" = true ]; then
+		cd "$MAIN_APP"
+		base_ref=$(git branch --show-current 2>/dev/null)
+		if [ -z "$base_ref" ]; then
+			pwt_error "Error: Could not detect current branch"
+			exit 1
+		fi
+	fi
 
-    if [ -n "$track_existing_ref" ]; then
-        if [ -n "$explicit_branch" ]; then
-            pwt_error "Error: --track-existing already derives the local branch; do not combine with --branch"
-            exit 1
-        fi
-        explicit_branch=$(_pwt_local_branch_for_remote "$track_existing_ref")
-        base_ref="$track_existing_ref"
-        if [ -z "$branch" ]; then
-            branch="$explicit_branch"
-        fi
-    elif [ -z "$branch" ] && [ -n "$explicit_branch" ]; then
-        branch="$explicit_branch"
-    fi
+	if [ -n "$track_existing_ref" ]; then
+		if [ -n "$explicit_branch" ]; then
+			pwt_error "Error: --track-existing already derives the local branch; do not combine with --branch"
+			exit 1
+		fi
+		explicit_branch=$(_pwt_local_branch_for_remote "$track_existing_ref")
+		base_ref="$track_existing_ref"
+		if [ -z "$branch" ]; then
+			branch="$explicit_branch"
+		fi
+	elif [ -z "$branch" ] && [ -n "$explicit_branch" ]; then
+		branch="$explicit_branch"
+	fi
 
-    if [ -z "$branch" ]; then
-        pwt_error "Error: Branch/ticket not specified"
-        echo "Usage: pwt create <branch> [base-ref] [description...] [options]"
-        echo "       pwt create <branch> [options] -- description with spaces"
-        echo ""
-        echo "Options:"
-        echo "  --dry-run, -n     Show what would be created without creating"
-        echo "  -e, --editor      Open editor after creating"
-        echo "  -a, --ai          Start AI tool after creating"
-        echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
-        echo "  --from-current    Create from current branch"
-        echo "  --branch <name>   Use exact Git branch name"
-        echo "  --track <remote/ref>"
-        echo "  --track-existing <remote/ref>"
-        echo "                    Create local branch tracking an existing remote branch"
-        echo "  --                Everything after is the description"
-        echo ""
-        echo "Examples:"
-        echo "  pwt create feature/my-feature"
-        echo "  pwt create PROJ-123 master"
-        echo "  pwt create PROJ-123 master \"add auth flow\""
-        echo "  pwt create PROJ-123 master add auth flow        # works too"
-        echo "  pwt create PROJ-123 --from v1.2.3 -- hotfix for bug"
-        echo "  pwt create hotfix --from-current"
-        echo "  pwt create --track origin/team/PROJ-123"
-        echo "  pwt track origin/team/PROJ-123"
-        echo "  pwt create PROJ-123 --branch team/PROJ-123 --from origin/team/PROJ-123"
-        echo "  pwt create PROJ-123 master -e -a"
-        exit 1
-    fi
+	if [ -z "$branch" ]; then
+		pwt_error "Error: Branch/ticket not specified"
+		echo "Usage: pwt create <branch> [base-ref] [description...] [options]"
+		echo "       pwt create <branch> [options] -- description with spaces"
+		echo ""
+		echo "Options:"
+		echo "  --dry-run, -n     Show what would be created without creating"
+		echo "  -e, --editor      Open editor after creating"
+		echo "  -a, --ai          Start AI tool after creating"
+		echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
+		echo "  --from-current    Create from current branch"
+		echo "  --branch <name>   Use exact Git branch name"
+		echo "  --track <remote/ref>"
+		echo "  --track-existing <remote/ref>"
+		echo "                    Create local branch tracking an existing remote branch"
+		echo "  --                Everything after is the description"
+		echo ""
+		echo "Examples:"
+		echo "  pwt create feature/my-feature"
+		echo "  pwt create PROJ-123 master"
+		echo "  pwt create PROJ-123 master \"add auth flow\""
+		echo "  pwt create PROJ-123 master add auth flow        # works too"
+		echo "  pwt create PROJ-123 --from v1.2.3 -- hotfix for bug"
+		echo "  pwt create hotfix --from-current"
+		echo "  pwt create --track origin/team/PROJ-123"
+		echo "  pwt track origin/team/PROJ-123"
+		echo "  pwt create PROJ-123 --branch team/PROJ-123 --from origin/team/PROJ-123"
+		echo "  pwt create PROJ-123 master -e -a"
+		exit 1
+	fi
 
-    # Ensure worktrees_dir exists
-    mkdir -p "$WORKTREES_DIR"
+	# Ensure worktrees_dir exists
+	mkdir -p "$WORKTREES_DIR"
 
-    pwt_debug "Creating worktree: branch=$branch, git_branch=${explicit_branch:-default}, base=${base_ref:-default}, from_current=${from_current:-false}"
-    pwt_debug "Options: dry_run=${dry_run:-false}, open_editor=${open_editor:-false}, start_ai=${start_ai:-false}"
+	pwt_debug "Creating worktree: branch=$branch, git_branch=${explicit_branch:-default}, base=${base_ref:-default}, from_current=${from_current:-false}"
+	pwt_debug "Options: dry_run=${dry_run:-false}, open_editor=${open_editor:-false}, start_ai=${start_ai:-false}"
 
-    if [ -n "$base_ref" ] && [ -z "$explicit_branch" ] && [ -z "$track_existing_ref" ] && [[ "$base_ref" == */* ]]; then
-        local suggested_local=$(_pwt_local_branch_for_remote "$base_ref")
-        local suggested_name=$(_pwt_track_worktree_name "$suggested_local")
-        echo -e "${YELLOW}Remote branch detected:${NC} $base_ref"
-        echo -e "  To edit that branch directly: ${DIM}pwt track $base_ref${NC}"
-        echo -e "  Equivalent explicit form:     ${DIM}pwt create $suggested_name --branch $suggested_local --from $base_ref${NC}"
-        echo -e "  Current command will create a new prefixed branch from that ref."
-        echo ""
-    fi
+	if [ -n "$base_ref" ] && [ -z "$explicit_branch" ] && [ -z "$track_existing_ref" ] && [[ "$base_ref" == */* ]]; then
+		local suggested_local=$(_pwt_local_branch_for_remote "$base_ref")
+		local suggested_name=$(_pwt_track_worktree_name "$suggested_local")
+		echo -e "${YELLOW}Remote branch detected:${NC} $base_ref"
+		echo -e "  To edit that branch directly: ${DIM}pwt track $base_ref${NC}"
+		echo -e "  Equivalent explicit form:     ${DIM}pwt create $suggested_name --branch $suggested_local --from $base_ref${NC}"
+		echo -e "  Current command will create a new prefixed branch from that ref."
+		echo ""
+	fi
 
-    # Extract worktree name from branch (removes path prefix, sanitizes)
-    local worktree_name=$(extract_worktree_name "$branch")
-    local worktree_dir="$WORKTREES_DIR/$worktree_name"
+	# Extract worktree name from branch (removes path prefix, sanitizes)
+	local worktree_name=$(extract_worktree_name "$branch")
+	local worktree_dir="$WORKTREES_DIR/$worktree_name"
 
-    # Check if worktree already exists
-    if [ -d "$worktree_dir" ]; then
-        pwt_error "Error: Worktree already exists: $worktree_name"
-        echo ""
-        echo "Options:"
-        echo "  1. Remove existing: pwt remove $worktree_name"
-        echo "  2. Use a different branch name"
-        exit $EXIT_CONFLICT
-    fi
+	# Check if worktree already exists
+	if [ -d "$worktree_dir" ]; then
+		pwt_error "Error: Worktree already exists: $worktree_name"
+		echo ""
+		echo "Options:"
+		echo "  1. Remove existing: pwt remove $worktree_name"
+		echo "  2. Use a different branch name"
+		exit $EXIT_CONFLICT
+	fi
 
-    # Read PORT_BASE from Pwtfile (if defined)
-    read_port_base
+	# Read PORT_BASE from Pwtfile (if defined)
+	read_port_base
 
-    # Acquire lock to prevent port allocation race condition
-    # Lock is held until metadata is saved
-    if ! acquire_metadata_lock; then
-        pwt_error "Error: Could not acquire lock for port allocation"
-        exit 1
-    fi
-    # Ensure lock is released on exit
-    trap 'release_metadata_lock' EXIT
+	# Acquire lock to prevent port allocation race condition
+	# Lock is held until metadata is saved
+	if ! acquire_metadata_lock; then
+		pwt_error "Error: Could not acquire lock for port allocation"
+		exit 1
+	fi
+	# Ensure lock is released on exit
+	trap 'release_metadata_lock' EXIT
 
-    # Allocate port (stored in metadata only)
-    local port=$(next_available_port)
+	# Allocate port (stored in metadata only)
+	local port=$(next_available_port)
 
-    cd "$MAIN_APP"
+	cd "$MAIN_APP"
 
-    # Determine if need to create new branch or use existing
-    local new_branch_name=""
-    local git_worktree_args=()
+	# Determine if need to create new branch or use existing
+	local new_branch_name=""
+	local git_worktree_args=()
 
-    if [ -n "$base_ref" ]; then
-        # Base ref provided: create new branch from it
-        # Format: [prefix]ticket-name or [prefix]ticket-name-description-slug
-        if [ -n "$explicit_branch" ]; then
-            new_branch_name="$explicit_branch"
-        elif [ -n "$description" ]; then
-            # Convert description to slug: lowercase, spaces -> hyphens, remove special chars
-            local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
-            new_branch_name="${BRANCH_PREFIX}${worktree_name}-${slug}"
-        else
-            new_branch_name="${BRANCH_PREFIX}${worktree_name}"
-        fi
+	if [ -n "$base_ref" ]; then
+		# Base ref provided: create new branch from it
+		# Format: [prefix]ticket-name or [prefix]ticket-name-description-slug
+		if [ -n "$explicit_branch" ]; then
+			new_branch_name="$explicit_branch"
+		elif [ -n "$description" ]; then
+			# Convert description to slug: lowercase, spaces -> hyphens, remove special chars
+			local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+			new_branch_name="${BRANCH_PREFIX}${worktree_name}-${slug}"
+		else
+			new_branch_name="${BRANCH_PREFIX}${worktree_name}"
+		fi
 
-        # Fetch base ref if remote
-        if [ -n "$track_existing_ref" ]; then
-            _pwt_fetch_remote_ref "$track_existing_ref"
-            if ! git rev-parse --verify --quiet "$track_existing_ref^{commit}" >/dev/null 2>&1; then
-                release_metadata_lock
-                trap - EXIT
-                pwt_error "Error: Remote ref not found: $track_existing_ref"
-                exit $EXIT_NOT_FOUND
-            fi
-        elif [[ "$base_ref" == origin/* ]] || [[ "$base_ref" == "master" ]] || [[ "$base_ref" == "main" ]]; then
-            local remote_ref="origin/${base_ref#origin/}"
-            if git remote get-url origin >/dev/null 2>&1; then
-                echo -e "${BLUE}Updating reference:${NC} $remote_ref"
-                git fetch origin "${base_ref#origin/}" --quiet 2>/dev/null || true
-            fi
-            if git rev-parse --verify --quiet "$remote_ref^{commit}" >/dev/null 2>&1; then
-                base_ref="$remote_ref"
-            elif [[ "$base_ref" == origin/* ]]; then
-                release_metadata_lock
-                trap - EXIT
-                pwt_error "Error: Remote ref not found: $base_ref"
-                exit $EXIT_NOT_FOUND
-            elif git rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null 2>&1; then
-                # No usable origin/<base>: repos without a remote fall back to the local branch
-                echo -e "${YELLOW}No $remote_ref found, using local $base_ref${NC}"
-            else
-                release_metadata_lock
-                trap - EXIT
-                pwt_error "Error: Base ref not found: $base_ref (no local branch or $remote_ref)"
-                exit $EXIT_NOT_FOUND
-            fi
-        fi
+		# Fetch base ref if remote
+		if [ -n "$track_existing_ref" ]; then
+			_pwt_fetch_remote_ref "$track_existing_ref"
+			if ! git rev-parse --verify --quiet "$track_existing_ref^{commit}" >/dev/null 2>&1; then
+				release_metadata_lock
+				trap - EXIT
+				pwt_error "Error: Remote ref not found: $track_existing_ref"
+				exit $EXIT_NOT_FOUND
+			fi
+		elif [[ "$base_ref" == origin/* ]] || [[ "$base_ref" == "master" ]] || [[ "$base_ref" == "main" ]]; then
+			local remote_ref="origin/${base_ref#origin/}"
+			if git remote get-url origin >/dev/null 2>&1; then
+				echo -e "${BLUE}Updating reference:${NC} $remote_ref"
+				git fetch origin "${base_ref#origin/}" --quiet 2>/dev/null || true
+			fi
+			if git rev-parse --verify --quiet "$remote_ref^{commit}" >/dev/null 2>&1; then
+				base_ref="$remote_ref"
+			elif [[ "$base_ref" == origin/* ]]; then
+				release_metadata_lock
+				trap - EXIT
+				pwt_error "Error: Remote ref not found: $base_ref"
+				exit $EXIT_NOT_FOUND
+			elif git rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null 2>&1; then
+				# No usable origin/<base>: repos without a remote fall back to the local branch
+				echo -e "${YELLOW}No $remote_ref found, using local $base_ref${NC}"
+			else
+				release_metadata_lock
+				trap - EXIT
+				pwt_error "Error: Base ref not found: $base_ref (no local branch or $remote_ref)"
+				exit $EXIT_NOT_FOUND
+			fi
+		fi
 
-        local mode_label="worktree"
-        [ "$use_clone" = true ] && mode_label="clone"
+		local mode_label="worktree"
+		[ "$use_clone" = true ] && mode_label="clone"
 
-        echo -e "${BLUE}Creating $mode_label:${NC} $worktree_name"
-        echo -e "  New branch: $new_branch_name"
-        echo -e "  Base:   $base_ref"
-        echo -e "  Port:   $port"
-        echo -e "  Dir:    $worktree_dir"
-        echo ""
+		echo -e "${BLUE}Creating $mode_label:${NC} $worktree_name"
+		echo -e "  New branch: $new_branch_name"
+		echo -e "  Base:   $base_ref"
+		echo -e "  Port:   $port"
+		echo -e "  Dir:    $worktree_dir"
+		echo ""
 
-        if git show-ref --verify --quiet "refs/heads/$new_branch_name"; then
-            # Branch already exists locally: reuse it instead of failing on -b.
-            # (e.g. 'pwt create latest-master --branch master --from origin/master'
-            # with a local 'master' — common when tracking the default branch)
-            if [ -z "$track_existing_ref" ]; then
-                echo -e "${YELLOW}Branch '$new_branch_name' already exists — using it as-is${NC}"
-                local _behind
-                _behind=$(git rev-list --count "$new_branch_name..$base_ref" 2>/dev/null || echo "0")
-                if [ "${_behind:-0}" -gt 0 ]; then
-                    echo -e "${YELLOW}  Note: it is $_behind commit(s) behind $base_ref${NC}"
-                    echo -e "${DIM}  Update it after: pwt run $worktree_name git merge --ff-only $base_ref${NC}"
-                fi
-            fi
-            git_worktree_args=("$worktree_dir" "$new_branch_name")
-        else
-            git_worktree_args=(-b "$new_branch_name" "$worktree_dir" "$base_ref")
-        fi
-    else
-        # No base ref: use existing branch
-        local mode_label="worktree"
-        [ "$use_clone" = true ] && mode_label="clone"
+		if git show-ref --verify --quiet "refs/heads/$new_branch_name"; then
+			# Branch already exists locally: reuse it instead of failing on -b.
+			# (e.g. 'pwt create latest-master --branch master --from origin/master'
+			# with a local 'master' — common when tracking the default branch)
+			if [ -z "$track_existing_ref" ]; then
+				echo -e "${YELLOW}Branch '$new_branch_name' already exists — using it as-is${NC}"
+				local _behind
+				_behind=$(git rev-list --count "$new_branch_name..$base_ref" 2>/dev/null || echo "0")
+				if [ "${_behind:-0}" -gt 0 ]; then
+					echo -e "${YELLOW}  Note: it is $_behind commit(s) behind $base_ref${NC}"
+					echo -e "${DIM}  Update it after: pwt run $worktree_name git merge --ff-only $base_ref${NC}"
+				fi
+			fi
+			git_worktree_args=("$worktree_dir" "$new_branch_name")
+		else
+			git_worktree_args=(-b "$new_branch_name" "$worktree_dir" "$base_ref")
+		fi
+	else
+		# No base ref: use existing branch
+		local mode_label="worktree"
+		[ "$use_clone" = true ] && mode_label="clone"
 
-        echo -e "${BLUE}Creating $mode_label:${NC} $worktree_name"
-        echo -e "  Branch: $branch"
-        echo -e "  Port:   $port"
-        echo -e "  Dir:    $worktree_dir"
-        echo ""
+		echo -e "${BLUE}Creating $mode_label:${NC} $worktree_name"
+		echo -e "  Branch: $branch"
+		echo -e "  Port:   $port"
+		echo -e "  Dir:    $worktree_dir"
+		echo ""
 
-        # --guess-remote: auto-detect remote tracking branch (e.g., origin/branch)
-        git_worktree_args=("--guess-remote" "$worktree_dir" "$branch")
-    fi
+		# --guess-remote: auto-detect remote tracking branch (e.g., origin/branch)
+		git_worktree_args=("--guess-remote" "$worktree_dir" "$branch")
+	fi
 
-    # Dry-run mode: show what would be created without creating
-    if [ "$dry_run" = true ]; then
-        local mode_str="worktree"
-        [ "$use_clone" = true ] && mode_str="clone"
-        echo -e "${YELLOW}[DRY-RUN] Would create $mode_str with above settings${NC}"
-        echo -e "${DIM}pwt setup hooks, metadata, port allocation, and local files run only when pwt creates/adopts the worktree.${NC}"
-        echo -e "${DIM}Raw 'git worktree add' skips project setup such as local config, generated files, and runtime directories.${NC}"
-        echo ""
-        echo "Run without --dry-run to create."
-        exit 0
-    fi
+	# Dry-run mode: show what would be created without creating
+	if [ "$dry_run" = true ]; then
+		local mode_str="worktree"
+		[ "$use_clone" = true ] && mode_str="clone"
+		echo -e "${YELLOW}[DRY-RUN] Would create $mode_str with above settings${NC}"
+		echo -e "${DIM}pwt setup hooks, metadata, port allocation, and local files run only when pwt creates/adopts the worktree.${NC}"
+		echo -e "${DIM}Raw 'git worktree add' skips project setup such as local config, generated files, and runtime directories.${NC}"
+		echo ""
+		echo "Run without --dry-run to create."
+		exit 0
+	fi
 
-    # Check for submodules (warn but don't block) - only for worktree mode
-    if [ "$use_clone" = false ]; then
-        if ! detect_submodules "$MAIN_APP"; then
-            release_metadata_lock
-            exit 1
-        fi
-    fi
+	# Check for submodules (warn but don't block) - only for worktree mode
+	if [ "$use_clone" = false ]; then
+		if ! detect_submodules "$MAIN_APP"; then
+			release_metadata_lock
+			exit 1
+		fi
+	fi
 
-    # Create workspace (worktree or clone)
-    local workspace_mode="worktree"
-    if [ "$use_clone" = true ]; then
-        workspace_mode="clone"
-        echo "Cloning repository..."
-        git clone --quiet "$MAIN_APP" "$worktree_dir"
+	# Create workspace (worktree or clone)
+	local workspace_mode="worktree"
+	if [ "$use_clone" = true ]; then
+		workspace_mode="clone"
+		echo "Cloning repository..."
+		git clone --quiet "$MAIN_APP" "$worktree_dir"
 
-        # Checkout the correct branch
-        cd "$worktree_dir"
-        local final_branch="${new_branch_name:-$branch}"
+		# Checkout the correct branch
+		cd "$worktree_dir"
+		local final_branch="${new_branch_name:-$branch}"
 
-        if [ -n "$new_branch_name" ]; then
-            # Create new branch from base
-            local checkout_base="${base_ref:-HEAD}"
-            # If base is remote ref, fetch it first
-            if [[ "$checkout_base" == origin/* ]]; then
-                git fetch origin "${checkout_base#origin/}" --quiet 2>/dev/null || true
-            fi
-            git checkout -b "$new_branch_name" "$checkout_base" --quiet 2>/dev/null || \
-                git checkout -b "$new_branch_name" "origin/${checkout_base#origin/}" --quiet 2>/dev/null || \
-                git checkout -b "$new_branch_name" --quiet
-        else
-            # Checkout existing branch
-            git checkout "$branch" --quiet 2>/dev/null || \
-                git checkout -b "$branch" "origin/$branch" --quiet 2>/dev/null || true
-        fi
-        cd - > /dev/null
-        echo -e "  ${GREEN}✓ Clone created${NC}"
-    else
-        # Create worktree (original logic)
-        git worktree add "${git_worktree_args[@]}"
-    fi
+		if [ -n "$new_branch_name" ]; then
+			# Create new branch from base
+			local checkout_base="${base_ref:-HEAD}"
+			# If base is remote ref, fetch it first
+			if [[ "$checkout_base" == origin/* ]]; then
+				git fetch origin "${checkout_base#origin/}" --quiet 2>/dev/null || true
+			fi
+			git checkout -b "$new_branch_name" "$checkout_base" --quiet 2>/dev/null ||
+				git checkout -b "$new_branch_name" "origin/${checkout_base#origin/}" --quiet 2>/dev/null ||
+				git checkout -b "$new_branch_name" --quiet
+		else
+			# Checkout existing branch
+			git checkout "$branch" --quiet 2>/dev/null ||
+				git checkout -b "$branch" "origin/$branch" --quiet 2>/dev/null || true
+		fi
+		cd - >/dev/null
+		echo -e "  ${GREEN}✓ Clone created${NC}"
+	else
+		# Create worktree (original logic)
+		git worktree add "${git_worktree_args[@]}"
+	fi
 
-    _pwt_set_tracking_if_remote "$worktree_dir" "${new_branch_name:-$branch}" "$base_ref"
+	_pwt_set_tracking_if_remote "$worktree_dir" "${new_branch_name:-$branch}" "$base_ref"
 
-    # Save metadata
-    local final_branch="${new_branch_name:-$branch}"
-    local final_base="${base_ref:-master}"
-    local final_base_commit=$(git -C "$worktree_dir" merge-base HEAD "origin/${final_base#origin/}" 2>/dev/null || git -C "$worktree_dir" rev-parse HEAD 2>/dev/null)
-    local final_base_short=$(git -C "$worktree_dir" rev-parse --short "$final_base_commit" 2>/dev/null || echo "?")
-    local final_desc="${description:-}"
+	# Save metadata
+	local final_branch="${new_branch_name:-$branch}"
+	local final_base="${base_ref:-master}"
+	local final_base_commit=$(git -C "$worktree_dir" merge-base HEAD "origin/${final_base#origin/}" 2>/dev/null || git -C "$worktree_dir" rev-parse HEAD 2>/dev/null)
+	local final_base_short=$(git -C "$worktree_dir" rev-parse --short "$final_base_commit" 2>/dev/null || echo "?")
+	local final_desc="${description:-}"
 
-    save_metadata "$worktree_name" "$worktree_dir" "$final_branch" "$final_base" "$final_base_short" "$port" "$final_desc" "$workspace_mode"
-    events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "create" "branch=$final_branch port=$port"
-    echo -e "  ${GREEN}✓ Metadata saved${NC}"
+	save_metadata "$worktree_name" "$worktree_dir" "$final_branch" "$final_base" "$final_base_short" "$port" "$final_desc" "$workspace_mode"
+	events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "create" "branch=$final_branch port=$port"
+	echo -e "  ${GREEN}✓ Metadata saved${NC}"
 
-    # Release port allocation lock now that metadata is saved
-    release_metadata_lock
-    trap - EXIT  # Clear the exit trap
+	# Release port allocation lock now that metadata is saved
+	release_metadata_lock
+	trap - EXIT # Clear the exit trap
 
-    _pwt_run_standard_setup "$worktree_name" "$worktree_dir" "$final_branch" "$port" "$final_base" "$final_desc"
+	_pwt_run_standard_setup "$worktree_name" "$worktree_dir" "$final_branch" "$port" "$final_base" "$final_desc"
 
-    local mode_label="Worktree"
-    [ "$workspace_mode" = "clone" ] && mode_label="Clone" || true
+	local mode_label="Worktree"
+	[ "$workspace_mode" = "clone" ] && mode_label="Clone" || true
 
-    echo -e "\n${GREEN}✓ $mode_label created successfully!${NC}"
-    clear_list_cache  # Invalidate cache so next list shows new worktree
-    echo ""
-    echo -e "${BLUE}Next steps:${NC}"
-    echo ""
-    echo -e "  Navigate:    ${DIM}pwt cd ${worktree_name}${NC}  or  ${DIM}cd $worktree_dir${NC}"
-    echo -e "  Open editor: ${DIM}pwt editor ${worktree_name}${NC}"
-    echo -e "  Start AI:    ${DIM}pwt ai ${worktree_name}${NC}"
-    echo -e "  Run server:  ${DIM}pwt server ${worktree_name}${NC}  (port ${port})"
-    echo ""
-    echo -e "  ${DIM}Tip: Set as current with 'pwt use ${worktree_name}' for quick access${NC}"
+	echo -e "\n${GREEN}✓ $mode_label created successfully!${NC}"
+	clear_list_cache # Invalidate cache so next list shows new worktree
+	echo ""
+	echo -e "${BLUE}Next steps:${NC}"
+	echo ""
+	echo -e "  Navigate:    ${DIM}pwt cd ${worktree_name}${NC}  or  ${DIM}cd $worktree_dir${NC}"
+	echo -e "  Open editor: ${DIM}pwt editor ${worktree_name}${NC}"
+	echo -e "  Start AI:    ${DIM}pwt ai ${worktree_name}${NC}"
+	echo -e "  Run server:  ${DIM}pwt server ${worktree_name}${NC}  (port ${port})"
+	echo ""
+	echo -e "  ${DIM}Tip: Set as current with 'pwt use ${worktree_name}' for quick access${NC}"
 
-    # Open editor if requested
-    if [ "$open_editor" = true ]; then
-        echo ""
-        cmd_editor "$worktree_name"
-    fi
+	# Open editor if requested
+	if [ "$open_editor" = true ]; then
+		echo ""
+		cmd_editor "$worktree_name"
+	fi
 
-    # Start AI tool if requested
-    if [ "$start_ai" = true ]; then
-        echo ""
-        cmd_ai "$worktree_name"
-    fi
+	# Start AI tool if requested
+	if [ "$start_ai" = true ]; then
+		echo ""
+		cmd_ai "$worktree_name"
+	fi
 
-    return 0
+	return 0
 }
 
 cmd_track() {
-    local remote_ref=""
-    local worktree_name=""
-    local passthrough=()
+	local remote_ref=""
+	local worktree_name=""
+	local passthrough=()
 
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --name)
-                if [ -z "${2:-}" ]; then
-                    pwt_error "Error: --name requires a worktree name"
-                    exit 1
-                fi
-                worktree_name="$2"
-                shift 2
-                ;;
-            -e|--editor|-a|--ai|-n|--dry-run|--clone)
-                passthrough+=("$1")
-                shift
-                ;;
-            -h|--help)
-                echo "Usage: pwt track <remote-branch> [--name <worktree>] [options]"
-                echo ""
-                echo "Create a pwt-managed worktree that tracks an existing remote branch."
-                echo "The local branch matches the remote branch name without applying branch_prefix."
-                echo ""
-                echo "Arguments:"
-                echo "  remote-branch   Remote branch, e.g. origin/team/TICKET-1234"
-                echo ""
-                echo "Options:"
-                echo "  --name <name>   Override worktree directory/metadata name"
-                echo "  -e, --editor    Open editor after creation"
-                echo "  -a, --ai        Start AI assistant after creation"
-                echo "  -n, --dry-run   Show what would be done"
-                echo "  --clone         Use git clone instead of worktree"
-                echo "  -h, --help      Show this help"
-                echo ""
-                echo "Examples:"
-                echo "  pwt track origin/team/PROJ-1234"
-                echo "  pwt track origin/team/fix-login-flow --name login-flow"
-                return 0
-                ;;
-            -*)
-                echo -e "${RED}Unknown option: $1${NC}"
-                exit 1
-                ;;
-            *)
-                if [ -z "$remote_ref" ]; then
-                    remote_ref="$1"
-                else
-                    pwt_error "Error: Unexpected argument: $1"
-                    echo "Usage: pwt track <remote-branch> [--name <worktree>]"
-                    exit $EXIT_USAGE
-                fi
-                shift
-                ;;
-        esac
-    done
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--name)
+			if [ -z "${2:-}" ]; then
+				pwt_error "Error: --name requires a worktree name"
+				exit 1
+			fi
+			worktree_name="$2"
+			shift 2
+			;;
+		-e | --editor | -a | --ai | -n | --dry-run | --clone)
+			passthrough+=("$1")
+			shift
+			;;
+		-h | --help)
+			echo "Usage: pwt track <remote-branch> [--name <worktree>] [options]"
+			echo ""
+			echo "Create a pwt-managed worktree that tracks an existing remote branch."
+			echo "The local branch matches the remote branch name without applying branch_prefix."
+			echo ""
+			echo "Arguments:"
+			echo "  remote-branch   Remote branch, e.g. origin/team/TICKET-1234"
+			echo ""
+			echo "Options:"
+			echo "  --name <name>   Override worktree directory/metadata name"
+			echo "  -e, --editor    Open editor after creation"
+			echo "  -a, --ai        Start AI assistant after creation"
+			echo "  -n, --dry-run   Show what would be done"
+			echo "  --clone         Use git clone instead of worktree"
+			echo "  -h, --help      Show this help"
+			echo ""
+			echo "Examples:"
+			echo "  pwt track origin/team/PROJ-1234"
+			echo "  pwt track origin/team/fix-login-flow --name login-flow"
+			return 0
+			;;
+		-*)
+			echo -e "${RED}Unknown option: $1${NC}"
+			exit 1
+			;;
+		*)
+			if [ -z "$remote_ref" ]; then
+				remote_ref="$1"
+			else
+				pwt_error "Error: Unexpected argument: $1"
+				echo "Usage: pwt track <remote-branch> [--name <worktree>]"
+				exit $EXIT_USAGE
+			fi
+			shift
+			;;
+		esac
+	done
 
-    if [ -z "$remote_ref" ]; then
-        pwt_error "Error: Remote branch not specified"
-        echo "Usage: pwt track <remote-branch> [--name <worktree>]"
-        exit $EXIT_USAGE
-    fi
+	if [ -z "$remote_ref" ]; then
+		pwt_error "Error: Remote branch not specified"
+		echo "Usage: pwt track <remote-branch> [--name <worktree>]"
+		exit $EXIT_USAGE
+	fi
 
-    if [[ "$remote_ref" != */* ]]; then
-        pwt_error "Error: Expected remote branch like origin/feature"
-        exit $EXIT_USAGE
-    fi
+	if [[ "$remote_ref" != */* ]]; then
+		pwt_error "Error: Expected remote branch like origin/feature"
+		exit $EXIT_USAGE
+	fi
 
-    local local_branch=$(_pwt_local_branch_for_remote "$remote_ref")
-    if [ -z "$worktree_name" ]; then
-        worktree_name=$(_pwt_track_worktree_name "$local_branch")
-    fi
+	local local_branch=$(_pwt_local_branch_for_remote "$remote_ref")
+	if [ -z "$worktree_name" ]; then
+		worktree_name=$(_pwt_track_worktree_name "$local_branch")
+	fi
 
-    if [ ${#passthrough[@]} -gt 0 ]; then
-        cmd_create "$worktree_name" --branch "$local_branch" --from "$remote_ref" "${passthrough[@]}"
-    else
-        cmd_create "$worktree_name" --branch "$local_branch" --from "$remote_ref"
-    fi
+	if [ ${#passthrough[@]} -gt 0 ]; then
+		cmd_create "$worktree_name" --branch "$local_branch" --from "$remote_ref" "${passthrough[@]}"
+	else
+		cmd_create "$worktree_name" --branch "$local_branch" --from "$remote_ref"
+	fi
 }
 
 cmd_adopt() {
-    local worktree_dir="${1:-}"
+	local worktree_dir="${1:-}"
 
-    if [[ "$worktree_dir" == "-h" || "$worktree_dir" == "--help" ]]; then
-        echo "Usage: pwt adopt [path]"
-        echo "       pwt adopt --all [dir]"
-        echo "       pwt setup [path]"
-        echo ""
-        echo "Register an existing git worktree with pwt and run standard setup."
-        echo ""
-        echo "Arguments:"
-        echo "  path        Existing worktree path (default: current directory)"
-        echo "  --all [dir] Adopt every unregistered worktree in dir (default: worktrees_dir)"
-        echo ""
-        echo "This allocates/records metadata, exports PWT_* context, runs Pwtfile setup,"
-        echo "runs the post-create hook, and sets the worktree as current."
-        return 0
-    fi
+	if [[ "$worktree_dir" == "-h" || "$worktree_dir" == "--help" ]]; then
+		echo "Usage: pwt adopt [path]"
+		echo "       pwt adopt --all [dir]"
+		echo "       pwt setup [path]"
+		echo ""
+		echo "Register an existing git worktree with pwt and run standard setup."
+		echo ""
+		echo "Arguments:"
+		echo "  path        Existing worktree path (default: current directory)"
+		echo "  --all [dir] Adopt every unregistered worktree in dir (default: worktrees_dir)"
+		echo ""
+		echo "This allocates/records metadata, exports PWT_* context, runs Pwtfile setup,"
+		echo "runs the post-create hook, and sets the worktree as current."
+		return 0
+	fi
 
-    # Batch mode: adopt every unregistered git worktree in a directory
-    if [ "$worktree_dir" = "--all" ]; then
-        local scan_dir="${2:-$WORKTREES_DIR}"
-        scan_dir="${scan_dir/#\~/$HOME}"
-        if [ ! -d "$scan_dir" ]; then
-            pwt_error "Error: Directory not found: $scan_dir"
-            exit $EXIT_NOT_FOUND
-        fi
+	# Batch mode: adopt every unregistered git worktree in a directory
+	if [ "$worktree_dir" = "--all" ]; then
+		local scan_dir="${2:-$WORKTREES_DIR}"
+		scan_dir="${scan_dir/#\~/$HOME}"
+		if [ ! -d "$scan_dir" ]; then
+			pwt_error "Error: Directory not found: $scan_dir"
+			exit $EXIT_NOT_FOUND
+		fi
 
-        local adopted=0 skipped=0 failed=0
-        local dir name existing
-        for dir in "$scan_dir"/*/; do
-            [ -d "$dir" ] || continue
-            dir="${dir%/}"
-            name=$(basename "$dir")
-            if ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-                continue
-            fi
-            existing=$(get_metadata "$name" "path" 2>/dev/null || true)
-            if [ -n "$existing" ]; then
-                skipped=$((skipped + 1))
-                continue
-            fi
-            echo -e "${BLUE}Adopting:${NC} $name"
-            # Subshell: each adopt exits on error; keep scanning the rest
-            if (cmd_adopt "$dir") >/dev/null 2>&1; then
-                adopted=$((adopted + 1))
-                echo -e "  ${GREEN}✓ $name adopted${NC}"
-            else
-                failed=$((failed + 1))
-                echo -e "  ${RED}✗ $name failed (run 'pwt adopt $dir' for details)${NC}"
-            fi
-        done
+		local adopted=0 skipped=0 failed=0
+		local dir name existing
+		for dir in "$scan_dir"/*/; do
+			[ -d "$dir" ] || continue
+			dir="${dir%/}"
+			name=$(basename "$dir")
+			if ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+				continue
+			fi
+			existing=$(get_metadata "$name" "path" 2>/dev/null || true)
+			if [ -n "$existing" ]; then
+				skipped=$((skipped + 1))
+				continue
+			fi
+			echo -e "${BLUE}Adopting:${NC} $name"
+			# Subshell: each adopt exits on error; keep scanning the rest
+			if (cmd_adopt "$dir") >/dev/null 2>&1; then
+				adopted=$((adopted + 1))
+				echo -e "  ${GREEN}✓ $name adopted${NC}"
+			else
+				failed=$((failed + 1))
+				echo -e "  ${RED}✗ $name failed (run 'pwt adopt $dir' for details)${NC}"
+			fi
+		done
 
-        echo ""
-        echo -e "${GREEN}Adopted: $adopted${NC}  Skipped (already registered): $skipped  Failed: $failed"
-        [ "$failed" -eq 0 ] || exit 1
-        return 0
-    fi
+		echo ""
+		echo -e "${GREEN}Adopted: $adopted${NC}  Skipped (already registered): $skipped  Failed: $failed"
+		[ "$failed" -eq 0 ] || exit 1
+		return 0
+	fi
 
-    if [ -z "$worktree_dir" ]; then
-        worktree_dir=$(pwd -P)
-    fi
+	if [ -z "$worktree_dir" ]; then
+		worktree_dir=$(pwd -P)
+	fi
 
-    worktree_dir="${worktree_dir/#\~/$HOME}"
-    if [[ "$worktree_dir" != /* ]]; then
-        worktree_dir="$(pwd -P)/$worktree_dir"
-    fi
+	worktree_dir="${worktree_dir/#\~/$HOME}"
+	if [[ "$worktree_dir" != /* ]]; then
+		worktree_dir="$(pwd -P)/$worktree_dir"
+	fi
 
-    if [ ! -d "$worktree_dir" ]; then
-        pwt_error "Error: Path not found: $worktree_dir"
-        exit $EXIT_NOT_FOUND
-    fi
+	if [ ! -d "$worktree_dir" ]; then
+		pwt_error "Error: Path not found: $worktree_dir"
+		exit $EXIT_NOT_FOUND
+	fi
 
-    worktree_dir=$(cd "$worktree_dir" && pwd -P)
-    local main_resolved=$(cd "$MAIN_APP" && pwd -P)
-    if [ "$worktree_dir" = "$main_resolved" ]; then
-        pwt_error "Error: Refusing to adopt the main app as a worktree"
-        exit $EXIT_USAGE
-    fi
+	worktree_dir=$(cd "$worktree_dir" && pwd -P)
+	local main_resolved=$(cd "$MAIN_APP" && pwd -P)
+	if [ "$worktree_dir" = "$main_resolved" ]; then
+		pwt_error "Error: Refusing to adopt the main app as a worktree"
+		exit $EXIT_USAGE
+	fi
 
-    if ! git -C "$worktree_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        pwt_error "Error: Not a git worktree: $worktree_dir"
-        exit $EXIT_USAGE
-    fi
+	if ! git -C "$worktree_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		pwt_error "Error: Not a git worktree: $worktree_dir"
+		exit $EXIT_USAGE
+	fi
 
-    local worktree_name=$(basename "$worktree_dir")
-    local existing_path=$(get_metadata "$worktree_name" "path")
-    if [ -n "$existing_path" ] && [ -d "$existing_path" ]; then
-        local existing_resolved=$(cd "$existing_path" && pwd -P)
-        if [ "$existing_resolved" != "$worktree_dir" ]; then
-            pwt_error "Error: Metadata for '$worktree_name' already points to: $existing_resolved"
-            exit $EXIT_CONFLICT
-        fi
-    fi
+	local worktree_name=$(basename "$worktree_dir")
+	local existing_path=$(get_metadata "$worktree_name" "path")
+	if [ -n "$existing_path" ] && [ -d "$existing_path" ]; then
+		local existing_resolved=$(cd "$existing_path" && pwd -P)
+		if [ "$existing_resolved" != "$worktree_dir" ]; then
+			pwt_error "Error: Metadata for '$worktree_name' already points to: $existing_resolved"
+			exit $EXIT_CONFLICT
+		fi
+	fi
 
-    read_port_base
-    if ! acquire_metadata_lock; then
-        pwt_error "Error: Could not acquire lock for port allocation"
-        exit 1
-    fi
-    trap 'release_metadata_lock' EXIT
+	read_port_base
+	if ! acquire_metadata_lock; then
+		pwt_error "Error: Could not acquire lock for port allocation"
+		exit 1
+	fi
+	trap 'release_metadata_lock' EXIT
 
-    local branch=$(git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "")
-    [ -n "$branch" ] || branch="detached"
+	local branch=$(git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "")
+	[ -n "$branch" ] || branch="detached"
 
-    local port=$(get_metadata "$worktree_name" "port")
-    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-        port=$(next_available_port)
-    fi
+	local port=$(get_metadata "$worktree_name" "port")
+	if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+		port=$(next_available_port)
+	fi
 
-    local final_base=$(get_metadata "$worktree_name" "base")
-    [ -n "$final_base" ] || final_base="${DEFAULT_BRANCH:-master}"
-    local final_base_commit=$(git -C "$worktree_dir" merge-base HEAD "origin/${final_base#origin/}" 2>/dev/null || git -C "$worktree_dir" rev-parse HEAD 2>/dev/null)
-    local final_base_short=$(git -C "$worktree_dir" rev-parse --short "$final_base_commit" 2>/dev/null || echo "?")
-    local final_desc=$(get_metadata "$worktree_name" "description")
+	local final_base=$(get_metadata "$worktree_name" "base")
+	[ -n "$final_base" ] || final_base="${DEFAULT_BRANCH:-master}"
+	local final_base_commit=$(git -C "$worktree_dir" merge-base HEAD "origin/${final_base#origin/}" 2>/dev/null || git -C "$worktree_dir" rev-parse HEAD 2>/dev/null)
+	local final_base_short=$(git -C "$worktree_dir" rev-parse --short "$final_base_commit" 2>/dev/null || echo "?")
+	local final_desc=$(get_metadata "$worktree_name" "description")
 
-    echo -e "${BLUE}Adopting worktree:${NC} $worktree_name"
-    echo -e "  Branch: $branch"
-    echo -e "  Port:   $port"
-    echo -e "  Dir:    $worktree_dir"
-    echo ""
+	echo -e "${BLUE}Adopting worktree:${NC} $worktree_name"
+	echo -e "  Branch: $branch"
+	echo -e "  Port:   $port"
+	echo -e "  Dir:    $worktree_dir"
+	echo ""
 
-    save_metadata "$worktree_name" "$worktree_dir" "$branch" "$final_base" "$final_base_short" "$port" "$final_desc" "worktree"
-    events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "adopt" "branch=$branch port=$port"
-    echo -e "  ${GREEN}✓ Metadata saved${NC}"
+	save_metadata "$worktree_name" "$worktree_dir" "$branch" "$final_base" "$final_base_short" "$port" "$final_desc" "worktree"
+	events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "adopt" "branch=$branch port=$port"
+	echo -e "  ${GREEN}✓ Metadata saved${NC}"
 
-    release_metadata_lock
-    trap - EXIT
+	release_metadata_lock
+	trap - EXIT
 
-    _pwt_run_standard_setup "$worktree_name" "$worktree_dir" "$branch" "$port" "$final_base" "$final_desc"
+	_pwt_run_standard_setup "$worktree_name" "$worktree_dir" "$branch" "$port" "$final_base" "$final_desc"
 
-    echo -e "\n${GREEN}✓ Worktree setup complete!${NC}"
-    echo ""
-    echo -e "${BLUE}Next steps:${NC}"
-    echo -e "  Navigate:    ${DIM}pwt cd ${worktree_name}${NC}  or  ${DIM}cd $worktree_dir${NC}"
-    echo -e "  Run server:  ${DIM}pwt server ${worktree_name}${NC}  (port ${port})"
+	echo -e "\n${GREEN}✓ Worktree setup complete!${NC}"
+	echo ""
+	echo -e "${BLUE}Next steps:${NC}"
+	echo -e "  Navigate:    ${DIM}pwt cd ${worktree_name}${NC}  or  ${DIM}cd $worktree_dir${NC}"
+	echo -e "  Run server:  ${DIM}pwt server ${worktree_name}${NC}  (port ${port})"
 }
 
 cmd_setup() {
-    cmd_adopt "$@"
+	cmd_adopt "$@"
 }
 
 # ============================================
@@ -738,643 +738,643 @@ cmd_setup() {
 # ============================================
 
 cmd_repair() {
-    local name="$1"
+	local name="$1"
 
-    if [[ "$name" == "-h" || "$name" == "--help" ]]; then
-        echo "Usage: pwt repair|fix [worktree]"
-        echo ""
-        echo "Run repair hooks on worktrees."
-        echo ""
-        echo "Arguments:"
-        echo "  worktree   Specific worktree to repair (optional)"
-        echo "             If omitted, repairs all worktrees"
-        echo ""
-        echo "Runs the 'repair' function from Pwtfile and any repair hooks."
-        echo "Useful after config changes or dependency updates."
-        echo ""
-        echo "Examples:"
-        echo "  pwt repair               # repair all worktrees"
-        echo "  pwt repair TICKET-123    # repair specific worktree"
-        return 0
-    fi
+	if [[ "$name" == "-h" || "$name" == "--help" ]]; then
+		echo "Usage: pwt repair|fix [worktree]"
+		echo ""
+		echo "Run repair hooks on worktrees."
+		echo ""
+		echo "Arguments:"
+		echo "  worktree   Specific worktree to repair (optional)"
+		echo "             If omitted, repairs all worktrees"
+		echo ""
+		echo "Runs the 'repair' function from Pwtfile and any repair hooks."
+		echo "Useful after config changes or dependency updates."
+		echo ""
+		echo "Examples:"
+		echo "  pwt repair               # repair all worktrees"
+		echo "  pwt repair TICKET-123    # repair specific worktree"
+		return 0
+	fi
 
-    # Normalize: strip trailing slash (from shell completion)
-    name="${name%/}"
+	# Normalize: strip trailing slash (from shell completion)
+	name="${name%/}"
 
-    if [ -n "$name" ]; then
-        # Repair specific worktree
-        local worktree_dir="$WORKTREES_DIR/$name"
-        if [ ! -d "$worktree_dir" ]; then
-            pwt_error "Error: Worktree not found: $name"
-            exit $EXIT_NOT_FOUND
-        fi
-        echo -e "${BLUE}Repairing: $name${NC}"
-        export PWT_WORKTREE="$name"
-        export PWT_WORKTREE_PATH="$worktree_dir"
-        cd "$worktree_dir"
-        run_pwtfile "repair"
-        run_hook "repair"
-    else
-        # Repair all worktrees
-        echo -e "${BLUE}Repairing all worktrees...${NC}\n"
+	if [ -n "$name" ]; then
+		# Repair specific worktree
+		local worktree_dir="$WORKTREES_DIR/$name"
+		if [ ! -d "$worktree_dir" ]; then
+			pwt_error "Error: Worktree not found: $name"
+			exit $EXIT_NOT_FOUND
+		fi
+		echo -e "${BLUE}Repairing: $name${NC}"
+		export PWT_WORKTREE="$name"
+		export PWT_WORKTREE_PATH="$worktree_dir"
+		cd "$worktree_dir"
+		run_pwtfile "repair"
+		run_hook "repair"
+	else
+		# Repair all worktrees
+		echo -e "${BLUE}Repairing all worktrees...${NC}\n"
 
-        if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
-            for dir in "$WORKTREES_DIR"/*/; do
-                [ -d "$dir" ] || continue
-                local wt_name=$(basename "$dir")
-                echo -e "  ${YELLOW}$wt_name${NC}"
-                export PWT_WORKTREE="$wt_name"
-                export PWT_WORKTREE_PATH="$dir"
-                cd "$dir"
-                run_pwtfile "repair"
-                run_hook "repair"
-            done
-        fi
+		if [ -d "$WORKTREES_DIR" ] && [ "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+			for dir in "$WORKTREES_DIR"/*/; do
+				[ -d "$dir" ] || continue
+				local wt_name=$(basename "$dir")
+				echo -e "  ${YELLOW}$wt_name${NC}"
+				export PWT_WORKTREE="$wt_name"
+				export PWT_WORKTREE_PATH="$dir"
+				cd "$dir"
+				run_pwtfile "repair"
+				run_hook "repair"
+			done
+		fi
 
-        echo ""
-        echo -e "${GREEN}Done!${NC}"
-    fi
+		echo ""
+		echo -e "${GREEN}Done!${NC}"
+	fi
 }
 
 # Command: auto-remove (cleanup merged worktrees)
 # Usage: pwt auto-remove [target] [--execute] [--dry-run]
 # SAFETY: Dry-run by default. Must pass --execute to actually remove.
 cmd_auto_remove() {
-    local target_branch=""
-    local dry_run=true  # SAFE DEFAULT: dry-run unless --execute
-    local force_execute=false
+	local target_branch=""
+	local dry_run=true # SAFE DEFAULT: dry-run unless --execute
+	local force_execute=false
 
-    # Parse arguments
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --execute|--yes|-y)
-                force_execute=true
-                dry_run=false
-                shift
-                ;;
-            --dry-run|-n)
-                dry_run=true
-                shift
-                ;;
-            -h|--help)
-                echo "Usage: pwt auto-remove|cleanup [target] [options]"
-                echo ""
-                echo "Safely remove worktrees that have been merged into target branch."
-                echo ""
-                echo "Arguments:"
-                echo "  target          Target branch to check merges against (default: current)"
-                echo ""
-                echo "Options:"
-                echo "  --execute, -y   Actually remove (default is dry-run)"
-                echo "  --dry-run, -n   Preview what would be removed (default)"
-                echo "  -h, --help      Show this help"
-                echo ""
-                echo "Safety:"
-                echo "  - Dry-run by default (shows what would be removed)"
-                echo "  - Dirty worktrees backed up to ~/.pwt/trash/"
-                echo "  - Requires --execute for non-interactive use"
-                return 0
-                ;;
-            -*)
-                echo -e "${RED}Unknown option: $1${NC}"
-                exit 1
-                ;;
-            *)
-                target_branch="$1"
-                shift
-                ;;
-        esac
-    done
+	# Parse arguments
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--execute | --yes | -y)
+			force_execute=true
+			dry_run=false
+			shift
+			;;
+		--dry-run | -n)
+			dry_run=true
+			shift
+			;;
+		-h | --help)
+			echo "Usage: pwt auto-remove|cleanup [target] [options]"
+			echo ""
+			echo "Safely remove worktrees that have been merged into target branch."
+			echo ""
+			echo "Arguments:"
+			echo "  target          Target branch to check merges against (default: current)"
+			echo ""
+			echo "Options:"
+			echo "  --execute, -y   Actually remove (default is dry-run)"
+			echo "  --dry-run, -n   Preview what would be removed (default)"
+			echo "  -h, --help      Show this help"
+			echo ""
+			echo "Safety:"
+			echo "  - Dry-run by default (shows what would be removed)"
+			echo "  - Dirty worktrees backed up to ~/.pwt/trash/"
+			echo "  - Requires --execute for non-interactive use"
+			return 0
+			;;
+		-*)
+			echo -e "${RED}Unknown option: $1${NC}"
+			exit 1
+			;;
+		*)
+			target_branch="$1"
+			shift
+			;;
+		esac
+	done
 
-    # SAFETY: Require interactive terminal or --execute flag
-    if [ "$force_execute" = false ] && [ ! -t 0 ]; then
-        echo -e "${RED}⛔ SAFETY: auto-remove requires --execute flag when run non-interactively${NC}"
-        echo "This prevents accidental data loss from automated scripts."
-        echo ""
-        echo "Usage: pwt auto-remove [target] --execute"
-        exit 1
-    fi
+	# SAFETY: Require interactive terminal or --execute flag
+	if [ "$force_execute" = false ] && [ ! -t 0 ]; then
+		echo -e "${RED}⛔ SAFETY: auto-remove requires --execute flag when run non-interactively${NC}"
+		echo "This prevents accidental data loss from automated scripts."
+		echo ""
+		echo "Usage: pwt auto-remove [target] --execute"
+		exit 1
+	fi
 
-    # If no branch specified, use current branch from main app
-    if [ -z "$target_branch" ]; then
-        cd "$MAIN_APP"
-        target_branch=$(git branch --show-current 2>/dev/null)
-        if [ -z "$target_branch" ]; then
-            pwt_error "Error: Could not detect current branch"
-            echo "Usage: pwt auto-remove [target]"
-            exit 1
-        fi
-        echo -e "${BLUE}Target branch (detected):${NC} $target_branch"
-    fi
+	# If no branch specified, use current branch from main app
+	if [ -z "$target_branch" ]; then
+		cd "$MAIN_APP"
+		target_branch=$(git branch --show-current 2>/dev/null)
+		if [ -z "$target_branch" ]; then
+			pwt_error "Error: Could not detect current branch"
+			echo "Usage: pwt auto-remove [target]"
+			exit 1
+		fi
+		echo -e "${BLUE}Target branch (detected):${NC} $target_branch"
+	fi
 
-    echo -e "${BLUE}Checking worktrees merged into:${NC} $target_branch\n"
+	echo -e "${BLUE}Checking worktrees merged into:${NC} $target_branch\n"
 
-    # Fetch to ensure updated branches
-    cd "$MAIN_APP"
-    git fetch origin "$target_branch" --quiet 2>/dev/null || {
-        pwt_error "Error: Branch '$target_branch' not found on remote"
-        exit 1
-    }
+	# Fetch to ensure updated branches
+	cd "$MAIN_APP"
+	git fetch origin "$target_branch" --quiet 2>/dev/null || {
+		pwt_error "Error: Branch '$target_branch' not found on remote"
+		exit 1
+	}
 
-    # Use origin/$target_branch for comparison (freshly fetched)
-    local remote_target="origin/$target_branch"
+	# Use origin/$target_branch for comparison (freshly fetched)
+	local remote_target="origin/$target_branch"
 
-    # List worktrees to remove
-    local to_remove=()
-    local pending=()
+	# List worktrees to remove
+	local to_remove=()
+	local pending=()
 
-    if [ ! -d "$WORKTREES_DIR" ] || [ -z "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
-        echo -e "${YELLOW}No worktrees found${NC}"
-        exit 0
-    fi
+	if [ ! -d "$WORKTREES_DIR" ] || [ -z "$(ls -A "$WORKTREES_DIR" 2>/dev/null)" ]; then
+		echo -e "${YELLOW}No worktrees found${NC}"
+		exit 0
+	fi
 
-    for dir in "$WORKTREES_DIR"/*/; do
-        [ -d "$dir" ] || continue
+	for dir in "$WORKTREES_DIR"/*/; do
+		[ -d "$dir" ] || continue
 
-        local name=$(basename "$dir")
+		local name=$(basename "$dir")
 
-        # Get worktree HEAD commit
-        local wt_commit=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
+		# Get worktree HEAD commit
+		local wt_commit=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
 
-        # Skip worktrees without valid commit (corrupted)
-        if [ -z "$wt_commit" ]; then
-            echo -e "  ${YELLOW}⚠️  CORRUPTED:${NC} $name (no commit)"
-            to_remove+=("$name")
-            continue
-        fi
+		# Skip worktrees without valid commit (corrupted)
+		if [ -z "$wt_commit" ]; then
+			echo -e "  ${YELLOW}⚠️  CORRUPTED:${NC} $name (no commit)"
+			to_remove+=("$name")
+			continue
+		fi
 
-        local wt_branch=$(git -C "$dir" branch --show-current 2>/dev/null)
-        local branch_display="${wt_branch:-detached}"
+		local wt_branch=$(git -C "$dir" branch --show-current 2>/dev/null)
+		local branch_display="${wt_branch:-detached}"
 
-        # Check if worktree has uncommitted changes
-        # SAFETY: Assume dirty if check fails (fail-safe)
-        local is_dirty=true
-        local git_status
-        if git_status=$(git -C "$dir" status --porcelain 2>&1); then
-            if [ -z "$git_status" ]; then
-                is_dirty=false
-            fi
-        else
-            echo -e "  ${RED}⚠️  CHECK FAILED:${NC} $name - cannot verify clean state, assuming dirty"
-        fi
+		# Check if worktree has uncommitted changes
+		# SAFETY: Assume dirty if check fails (fail-safe)
+		local is_dirty=true
+		local git_status
+		if git_status=$(git -C "$dir" status --porcelain 2>&1); then
+			if [ -z "$git_status" ]; then
+				is_dirty=false
+			fi
+		else
+			echo -e "  ${RED}⚠️  CHECK FAILED:${NC} $name - cannot verify clean state, assuming dirty"
+		fi
 
-        # Check if worktree commit is contained in remote target branch (post-fetch)
-        # Uses merge-base --is-ancestor which works even if remote branch was deleted
-        if git merge-base --is-ancestor "$wt_commit" "$remote_target" 2>/dev/null; then
-            if [ "$is_dirty" = true ]; then
-                # Merged but has uncommitted changes - protect it
-                echo -e "  ${YELLOW}⚠️  DIRTY:${NC} $name ($branch_display) - merged but has uncommitted changes"
-                pending+=("$name")
-            else
-                echo -e "  ${GREEN}✅ MERGED:${NC} $name ($branch_display)"
-                to_remove+=("$name")
-            fi
-        else
-            echo -e "  ${YELLOW}⏳ PENDING:${NC} $name ($branch_display)"
-            pending+=("$name")
-        fi
-    done
+		# Check if worktree commit is contained in remote target branch (post-fetch)
+		# Uses merge-base --is-ancestor which works even if remote branch was deleted
+		if git merge-base --is-ancestor "$wt_commit" "$remote_target" 2>/dev/null; then
+			if [ "$is_dirty" = true ]; then
+				# Merged but has uncommitted changes - protect it
+				echo -e "  ${YELLOW}⚠️  DIRTY:${NC} $name ($branch_display) - merged but has uncommitted changes"
+				pending+=("$name")
+			else
+				echo -e "  ${GREEN}✅ MERGED:${NC} $name ($branch_display)"
+				to_remove+=("$name")
+			fi
+		else
+			echo -e "  ${YELLOW}⏳ PENDING:${NC} $name ($branch_display)"
+			pending+=("$name")
+		fi
+	done
 
-    echo ""
+	echo ""
 
-    # If nothing to remove, exit
-    if [ ${#to_remove[@]} -eq 0 ]; then
-        echo -e "${GREEN}No worktrees to remove${NC}"
-        echo -e "Kept: ${#pending[@]}"
-        exit 0
-    fi
+	# If nothing to remove, exit
+	if [ ${#to_remove[@]} -eq 0 ]; then
+		echo -e "${GREEN}No worktrees to remove${NC}"
+		echo -e "Kept: ${#pending[@]}"
+		exit 0
+	fi
 
-    # Dry-run mode: just show what would be removed
-    if [ "$dry_run" = true ]; then
-        echo -e "${YELLOW}[DRY-RUN] Would remove ${#to_remove[@]} worktree(s):${NC}"
-        for name in "${to_remove[@]}"; do
-            echo "  - $name"
-        done
-        echo ""
-        echo -e "Would keep: ${#pending[@]}"
-        exit 0
-    fi
+	# Dry-run mode: just show what would be removed
+	if [ "$dry_run" = true ]; then
+		echo -e "${YELLOW}[DRY-RUN] Would remove ${#to_remove[@]} worktree(s):${NC}"
+		for name in "${to_remove[@]}"; do
+			echo "  - $name"
+		done
+		echo ""
+		echo -e "Would keep: ${#pending[@]}"
+		exit 0
+	fi
 
-    # Remove merged worktrees
-    echo -e "${BLUE}Removing ${#to_remove[@]} worktree(s)...${NC}\n"
+	# Remove merged worktrees
+	echo -e "${BLUE}Removing ${#to_remove[@]} worktree(s)...${NC}\n"
 
-    local removed=0
-    for name in "${to_remove[@]}"; do
-        echo -e "${YELLOW}Removing: $name${NC}"
-        if cmd_remove "$name" 2>&1; then
-            removed=$((removed + 1))
-        else
-            # SAFETY: Only manually remove if directory is truly empty or has no git data
-            local wt_dir="$WORKTREES_DIR/$name"
-            if [ -d "$wt_dir" ]; then
-                # Check if it has any files (besides .git)
-                local file_count=$(find "$wt_dir" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
-                local dir_count=$(find "$wt_dir" -maxdepth 1 -type d ! -name ".git" ! -name "." 2>/dev/null | wc -l | tr -d ' ')
+	local removed=0
+	for name in "${to_remove[@]}"; do
+		echo -e "${YELLOW}Removing: $name${NC}"
+		if cmd_remove "$name" 2>&1; then
+			removed=$((removed + 1))
+		else
+			# SAFETY: Only manually remove if directory is truly empty or has no git data
+			local wt_dir="$WORKTREES_DIR/$name"
+			if [ -d "$wt_dir" ]; then
+				# Check if it has any files (besides .git)
+				local file_count=$(find "$wt_dir" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+				local dir_count=$(find "$wt_dir" -maxdepth 1 -type d ! -name ".git" ! -name "." 2>/dev/null | wc -l | tr -d ' ')
 
-                if [ "$file_count" -gt 0 ] || [ "$dir_count" -gt 0 ]; then
-                    echo -e "  ${RED}⛔ SAFETY: Cannot manually remove - directory has files${NC}"
-                    echo -e "  Use 'pwt remove $name -y' to force removal"
-                    continue
-                fi
+				if [ "$file_count" -gt 0 ] || [ "$dir_count" -gt 0 ]; then
+					echo -e "  ${RED}⛔ SAFETY: Cannot manually remove - directory has files${NC}"
+					echo -e "  Use 'pwt remove $name -y' to force removal"
+					continue
+				fi
 
-                # Empty or git-only directory - safe to remove
-                rm -rf "$wt_dir" 2>/dev/null && {
-                    echo -e "  ${GREEN}✓ Removed empty/corrupted worktree${NC}"
-                    removed=$((removed + 1))
-                }
-            fi
-        fi
-        echo ""
-    done
+				# Empty or git-only directory - safe to remove
+				rm -rf "$wt_dir" 2>/dev/null && {
+					echo -e "  ${GREEN}✓ Removed empty/corrupted worktree${NC}"
+					removed=$((removed + 1))
+				}
+			fi
+		fi
+		echo ""
+	done
 
-    echo -e "${GREEN}Done!${NC}"
-    echo -e "  Removed: $removed"
-    echo -e "  Kept:    ${#pending[@]}"
+	echo -e "${GREEN}Done!${NC}"
+	echo -e "  Removed: $removed"
+	echo -e "  Kept:    ${#pending[@]}"
 }
 
 # Command: remove
 cmd_remove() {
-    local name=""
-    local with_branch=false
-    local force_branch=false
-    local kill_port=false
-    local kill_delegations=""
-    local auto_yes=false
+	local name=""
+	local with_branch=false
+	local force_branch=false
+	local kill_port=false
+	local kill_delegations=""
+	local auto_yes=false
 
-    # Parse arguments
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --with-branch)
-                with_branch=true
-                shift
-                ;;
-            --force-branch)
-                with_branch=true
-                force_branch=true
-                shift
-                ;;
-            --kill-port)
-                kill_port=true
-                shift
-                ;;
-            --kill-all)
-                kill_port=true
-                kill_delegations="${kill_delegations}${kill_delegations:+ }server"
-                shift
-                ;;
-            --kill-*)
-                local kill_target="${1#--kill-}"
-                kill_target="${kill_target//-/_}"
-                if [ -z "$kill_target" ]; then
-                    pwt_error "Error: Missing command name for --kill-<command>"
-                    exit 1
-                fi
-                kill_delegations="${kill_delegations}${kill_delegations:+ }$kill_target"
-                shift
-                ;;
-            -y|--yes)
-                auto_yes=true
-                shift
-                ;;
-            -h|--help)
-                echo "Usage: pwt remove|rm [worktree] [options]"
-                echo ""
-                echo "Arguments:"
-                echo "  worktree        Worktree name (default: current)"
-                echo "  @               Not allowed (cannot remove main app)"
-                echo ""
-                echo "Options:"
-                echo "  --with-branch     Also delete the branch (if merged)"
-                echo "  --force-branch    Force delete the branch (even if not merged)"
-                echo "  --kill-port       Kill processes using the port"
-                echo "  --kill-<command>  Run Pwtfile <command> --kill before removal"
-                echo "  --kill-all        Run Pwtfile server --kill and kill port processes"
-                echo "  -y, --yes         Skip confirmation prompts"
-                echo "  -h, --help        Show this help"
-                echo ""
-                echo "Safety: Dirty worktrees are backed up to ~/.pwt/trash/"
-                return 0
-                ;;
-            -*)
-                echo -e "${RED}Unknown option: $1${NC}"
-                exit 1
-                ;;
-            *)
-                name="$1"
-                shift
-                ;;
-        esac
-    done
+	# Parse arguments
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--with-branch)
+			with_branch=true
+			shift
+			;;
+		--force-branch)
+			with_branch=true
+			force_branch=true
+			shift
+			;;
+		--kill-port)
+			kill_port=true
+			shift
+			;;
+		--kill-all)
+			kill_port=true
+			kill_delegations="${kill_delegations}${kill_delegations:+ }server"
+			shift
+			;;
+		--kill-*)
+			local kill_target="${1#--kill-}"
+			kill_target="${kill_target//-/_}"
+			if [ -z "$kill_target" ]; then
+				pwt_error "Error: Missing command name for --kill-<command>"
+				exit 1
+			fi
+			kill_delegations="${kill_delegations}${kill_delegations:+ }$kill_target"
+			shift
+			;;
+		-y | --yes)
+			auto_yes=true
+			shift
+			;;
+		-h | --help)
+			echo "Usage: pwt remove|rm [worktree] [options]"
+			echo ""
+			echo "Arguments:"
+			echo "  worktree        Worktree name (default: current)"
+			echo "  @               Not allowed (cannot remove main app)"
+			echo ""
+			echo "Options:"
+			echo "  --with-branch     Also delete the branch (if merged)"
+			echo "  --force-branch    Force delete the branch (even if not merged)"
+			echo "  --kill-port       Kill processes using the port"
+			echo "  --kill-<command>  Run Pwtfile <command> --kill before removal"
+			echo "  --kill-all        Run Pwtfile server --kill and kill port processes"
+			echo "  -y, --yes         Skip confirmation prompts"
+			echo "  -h, --help        Show this help"
+			echo ""
+			echo "Safety: Dirty worktrees are backed up to ~/.pwt/trash/"
+			return 0
+			;;
+		-*)
+			echo -e "${RED}Unknown option: $1${NC}"
+			exit 1
+			;;
+		*)
+			name="$1"
+			shift
+			;;
+		esac
+	done
 
-    # If no name, try to use current worktree
-    if [ -z "$name" ]; then
-        if [ -n "${PWT_WORKTREE:-}" ]; then
-            name="$PWT_WORKTREE"
-        elif [[ "$PWD" == *"-worktrees/"* ]]; then
-            name=$(basename "$PWD")
-        else
-            pwt_error "Error: Not in a worktree. Specify target."
-            echo "Usage: pwt remove [worktree] [--with-branch] [--force-branch]"
-            exit 1
-        fi
-        echo -e "${BLUE}Removing current worktree: $name${NC}"
-    fi
+	# If no name, try to use current worktree
+	if [ -z "$name" ]; then
+		if [ -n "${PWT_WORKTREE:-}" ]; then
+			name="$PWT_WORKTREE"
+		elif [[ "$PWD" == *"-worktrees/"* ]]; then
+			name=$(basename "$PWD")
+		else
+			pwt_error "Error: Not in a worktree. Specify target."
+			echo "Usage: pwt remove [worktree] [--with-branch] [--force-branch]"
+			exit 1
+		fi
+		echo -e "${BLUE}Removing current worktree: $name${NC}"
+	fi
 
-    # Normalize name: strip trailing slash (from shell completion)
-    name="${name%/}"
+	# Normalize name: strip trailing slash (from shell completion)
+	name="${name%/}"
 
-    # Protect main app from removal
-    if [ "$name" = "@" ]; then
-        pwt_error "Error: Cannot remove the main application."
-        echo "Use 'git' commands directly if you need to modify the main repository."
-        exit 1
-    fi
+	# Protect main app from removal
+	if [ "$name" = "@" ]; then
+		pwt_error "Error: Cannot remove the main application."
+		echo "Use 'git' commands directly if you need to modify the main repository."
+		exit 1
+	fi
 
-    local worktree_dir="$WORKTREES_DIR/$name"
+	local worktree_dir="$WORKTREES_DIR/$name"
 
-    # Try partial match if exact name not found
-    if [ ! -d "$worktree_dir" ]; then
-        local matches=()
-        for dir in "$WORKTREES_DIR"/*/; do
-            [ -d "$dir" ] || continue
-            local dname=$(basename "$dir")
-            if [[ "$dname" == *"$name"* ]]; then
-                matches+=("$dname")
-            fi
-        done
-        if [ ${#matches[@]} -eq 1 ]; then
-            name="${matches[0]}"
-            worktree_dir="$WORKTREES_DIR/$name"
-            echo -e "${DIM}Matched: $name${NC}"
-        elif [ ${#matches[@]} -gt 1 ]; then
-            pwt_error "Error: Ambiguous match for '$name':"
-            for m in "${matches[@]}"; do
-                echo "  $m" >&2
-            done
-            exit 1
-        else
-            pwt_error "Error: Worktree not found: $name"
-            exit 1
-        fi
-    fi
+	# Try partial match if exact name not found
+	if [ ! -d "$worktree_dir" ]; then
+		local matches=()
+		for dir in "$WORKTREES_DIR"/*/; do
+			[ -d "$dir" ] || continue
+			local dname=$(basename "$dir")
+			if [[ "$dname" == *"$name"* ]]; then
+				matches+=("$dname")
+			fi
+		done
+		if [ ${#matches[@]} -eq 1 ]; then
+			name="${matches[0]}"
+			worktree_dir="$WORKTREES_DIR/$name"
+			echo -e "${DIM}Matched: $name${NC}"
+		elif [ ${#matches[@]} -gt 1 ]; then
+			pwt_error "Error: Ambiguous match for '$name':"
+			for m in "${matches[@]}"; do
+				echo "  $m" >&2
+			done
+			exit 1
+		else
+			pwt_error "Error: Worktree not found: $name"
+			exit 1
+		fi
+	fi
 
-    # Get port from metadata, fallback to extracting from name
-    local port=$(get_metadata "$name" "port")
-    if [ -z "$port" ]; then
-        # Legacy: extract from directory name if ends with -XXXX
-        if [[ "$name" =~ -([0-9]{4})$ ]]; then
-            port="${BASH_REMATCH[1]}"
-        fi
-    fi
+	# Get port from metadata, fallback to extracting from name
+	local port=$(get_metadata "$name" "port")
+	if [ -z "$port" ]; then
+		# Legacy: extract from directory name if ends with -XXXX
+		if [[ "$name" =~ -([0-9]{4})$ ]]; then
+			port="${BASH_REMATCH[1]}"
+		fi
+	fi
 
-    # Set context early so opt-in cleanup hooks can inspect the target worktree.
-    local branch=$(get_metadata "$name" "branch")
-    local base=$(get_metadata "$name" "base")
-    local desc=$(get_metadata "$name" "description")
-    export PWT_WORKTREE="$name"
-    export PWT_WORKTREE_PATH="$worktree_dir"
-    export PWT_BRANCH="$branch"
-    export PWT_PORT="$port"
-    export PWT_TICKET="$name"  # User can customize via Pwtfile
-    export PWT_BASE="$base"
-    export PWT_DESC="$desc"
-    export PWT_PROJECT="$CURRENT_PROJECT"
-    export MAIN_APP="$MAIN_APP"
+	# Set context early so opt-in cleanup hooks can inspect the target worktree.
+	local branch=$(get_metadata "$name" "branch")
+	local base=$(get_metadata "$name" "base")
+	local desc=$(get_metadata "$name" "description")
+	export PWT_WORKTREE="$name"
+	export PWT_WORKTREE_PATH="$worktree_dir"
+	export PWT_BRANCH="$branch"
+	export PWT_PORT="$port"
+	export PWT_TICKET="$name" # User can customize via Pwtfile
+	export PWT_BASE="$base"
+	export PWT_DESC="$desc"
+	export PWT_PROJECT="$CURRENT_PROJECT"
+	export MAIN_APP="$MAIN_APP"
 
-    local kill_target
-    for kill_target in $kill_delegations; do
-        if ! [[ "$kill_target" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-            pwt_error "Error: Invalid Pwtfile kill delegation: $kill_target"
-            exit 1
-        fi
-        if ! has_pwtfile_command "$kill_target"; then
-            pwt_error "Error: Pwtfile command '$kill_target' not found for --kill-$kill_target"
-            exit 1
-        fi
+	local kill_target
+	for kill_target in $kill_delegations; do
+		if ! [[ "$kill_target" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+			pwt_error "Error: Invalid Pwtfile kill delegation: $kill_target"
+			exit 1
+		fi
+		if ! has_pwtfile_command "$kill_target"; then
+			pwt_error "Error: Pwtfile command '$kill_target' not found for --kill-$kill_target"
+			exit 1
+		fi
 
-        local old_pwt_args="${PWT_ARGS:-}"
-        local old_pwt_argc="${PWT_ARGC:-0}"
-        local old_pwt_kill_target="${PWT_KILL_TARGET:-}"
+		local old_pwt_args="${PWT_ARGS:-}"
+		local old_pwt_argc="${PWT_ARGC:-0}"
+		local old_pwt_kill_target="${PWT_KILL_TARGET:-}"
 
-        export PWT_ARGS="--kill"
-        export PWT_ARGC=1
-        export PWT_KILL_TARGET="$kill_target"
-        PWT_ARGV=("--kill")
-        run_pwtfile "$kill_target"
+		export PWT_ARGS="--kill"
+		export PWT_ARGC=1
+		export PWT_KILL_TARGET="$kill_target"
+		PWT_ARGV=("--kill")
+		run_pwtfile "$kill_target"
 
-        export PWT_ARGS="$old_pwt_args"
-        export PWT_ARGC="$old_pwt_argc"
-        export PWT_KILL_TARGET="$old_pwt_kill_target"
-        PWT_ARGV=()
-    done
+		export PWT_ARGS="$old_pwt_args"
+		export PWT_ARGC="$old_pwt_argc"
+		export PWT_KILL_TARGET="$old_pwt_kill_target"
+		PWT_ARGV=()
+	done
 
-    # Detect processes on port (generic - no framework-specific checks)
-    local port_pids=""
-    local port_info=""
-    if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && has_lsof; then
-        local pids_on_port=$(get_pids_on_port "$port")
-        for pid in $pids_on_port; do
-            local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
-            local proc_cmd=$(ps -p "$pid" -o args= 2>/dev/null || echo "unknown")
-            port_pids="${port_pids}${port_pids:+ }$pid"
-            port_info="${port_info}  PID $pid ($proc_name): $proc_cmd\n"
-        done
-    fi
+	# Detect processes on port (generic - no framework-specific checks)
+	local port_pids=""
+	local port_info=""
+	if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && has_lsof; then
+		local pids_on_port=$(get_pids_on_port "$port")
+		for pid in $pids_on_port; do
+			local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+			local proc_cmd=$(ps -p "$pid" -o args= 2>/dev/null || echo "unknown")
+			port_pids="${port_pids}${port_pids:+ }$pid"
+			port_info="${port_info}  PID $pid ($proc_name): $proc_cmd\n"
+		done
+	fi
 
-    # Handle blocking processes
-    if [ -n "$port_pids" ]; then
-        if [ "$kill_port" = true ] || [ -n "$kill_delegations" ]; then
-            echo -e "${YELLOW}Processes on port $port:${NC}"
-            echo -e "$port_info"
-            if [ "$auto_yes" = true ] || confirm_action "Kill these processes?"; then
-                echo "$port_pids" | xargs kill -9 2>/dev/null || true
-                sleep 1
-                echo -e "  ${GREEN}✓ Port $port freed${NC}"
-            else
-                echo -e "${RED}Aborted.${NC}"
-                exit 1
-            fi
-        else
-            pwt_error "Error: Processes detected on port $port:"
-            echo -e "$port_info"
-            echo ""
-            echo "Options:"
-            echo "  pwt remove $name --kill-port    # Kill port processes"
-            echo "  pwt remove $name --kill-port -y # Kill without confirmation"
-            exit 1
-        fi
-    fi
+	# Handle blocking processes
+	if [ -n "$port_pids" ]; then
+		if [ "$kill_port" = true ] || [ -n "$kill_delegations" ]; then
+			echo -e "${YELLOW}Processes on port $port:${NC}"
+			echo -e "$port_info"
+			if [ "$auto_yes" = true ] || confirm_action "Kill these processes?"; then
+				echo "$port_pids" | xargs kill -9 2>/dev/null || true
+				sleep 1
+				echo -e "  ${GREEN}✓ Port $port freed${NC}"
+			else
+				echo -e "${RED}Aborted.${NC}"
+				exit 1
+			fi
+		else
+			pwt_error "Error: Processes detected on port $port:"
+			echo -e "$port_info"
+			echo ""
+			echo "Options:"
+			echo "  pwt remove $name --kill-port    # Kill port processes"
+			echo "  pwt remove $name --kill-port -y # Kill without confirmation"
+			exit 1
+		fi
+	fi
 
-    echo -e "${YELLOW}Removing worktree: $name${NC}"
+	echo -e "${YELLOW}Removing worktree: $name${NC}"
 
-    # SAFETY: Check for uncommitted changes before removing
-    local has_changes=false
-    local changes_detail=""
+	# SAFETY: Check for uncommitted changes before removing
+	local has_changes=false
+	local changes_detail=""
 
-    if [ -d "$worktree_dir" ]; then
-        # Check using BOTH methods for maximum safety
-        local porcelain_status=$(git -C "$worktree_dir" status --porcelain 2>/dev/null)
-        local untracked_count=$(git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
-        local staged_count=$(git -C "$worktree_dir" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
-        local modified_count=$(git -C "$worktree_dir" diff --name-only 2>/dev/null | wc -l | tr -d ' ')
+	if [ -d "$worktree_dir" ]; then
+		# Check using BOTH methods for maximum safety
+		local porcelain_status=$(git -C "$worktree_dir" status --porcelain 2>/dev/null)
+		local untracked_count=$(git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+		local staged_count=$(git -C "$worktree_dir" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+		local modified_count=$(git -C "$worktree_dir" diff --name-only 2>/dev/null | wc -l | tr -d ' ')
 
-        if [ -n "$porcelain_status" ] || [ "$untracked_count" -gt 0 ] || [ "$staged_count" -gt 0 ] || [ "$modified_count" -gt 0 ]; then
-            has_changes=true
-            changes_detail="staged=$staged_count, modified=$modified_count, untracked=$untracked_count"
-        fi
-    fi
+		if [ -n "$porcelain_status" ] || [ "$untracked_count" -gt 0 ] || [ "$staged_count" -gt 0 ] || [ "$modified_count" -gt 0 ]; then
+			has_changes=true
+			changes_detail="staged=$staged_count, modified=$modified_count, untracked=$untracked_count"
+		fi
+	fi
 
-    if [ "$has_changes" = true ]; then
-        echo -e "${RED}⚠️  WARNING: Worktree has uncommitted changes!${NC}"
-        echo -e "    ${changes_detail}"
-        echo ""
-        git -C "$worktree_dir" status --short 2>/dev/null | head -10
-        echo ""
+	if [ "$has_changes" = true ]; then
+		echo -e "${RED}⚠️  WARNING: Worktree has uncommitted changes!${NC}"
+		echo -e "    ${changes_detail}"
+		echo ""
+		git -C "$worktree_dir" status --short 2>/dev/null | head -10
+		echo ""
 
-        if [ "$auto_yes" = true ]; then
-            echo -e "${YELLOW}Proceeding due to -y flag (changes will be LOST)${NC}"
-        elif [ -t 0 ]; then
-            # Interactive terminal - ask for confirmation
-            if ! confirm_action "Are you SURE you want to remove this worktree? Changes will be PERMANENTLY LOST!"; then
-                echo -e "${GREEN}Aborted. Worktree preserved.${NC}"
-                exit 1
-            fi
-        else
-            # Non-interactive - refuse to proceed
-            echo -e "${RED}⛔ SAFETY: Cannot remove dirty worktree non-interactively${NC}"
-            echo "Use 'pwt remove $name -y' to force removal"
-            exit 1
-        fi
-    fi
+		if [ "$auto_yes" = true ]; then
+			echo -e "${YELLOW}Proceeding due to -y flag (changes will be LOST)${NC}"
+		elif [ -t 0 ]; then
+			# Interactive terminal - ask for confirmation
+			if ! confirm_action "Are you SURE you want to remove this worktree? Changes will be PERMANENTLY LOST!"; then
+				echo -e "${GREEN}Aborted. Worktree preserved.${NC}"
+				exit 1
+			fi
+		else
+			# Non-interactive - refuse to proceed
+			echo -e "${RED}⛔ SAFETY: Cannot remove dirty worktree non-interactively${NC}"
+			echo "Use 'pwt remove $name -y' to force removal"
+			exit 1
+		fi
+	fi
 
-    # Run Pwtfile teardown (if exists), then hook
-    # (Pwtfile handles project-specific cleanup like databases)
-    run_pwtfile "teardown"
-    run_hook "pre-remove"
+	# Run Pwtfile teardown (if exists), then hook
+	# (Pwtfile handles project-specific cleanup like databases)
+	run_pwtfile "teardown"
+	run_hook "pre-remove"
 
-    # Removing the current worktree: fall back to the previous one (or main)
-    # so the stable 'current' path keeps working for prompts/editors.
-    local current_wt=$(get_current_from_symlink 2>/dev/null)
-    if [ "$name" = "$current_wt" ]; then
-        local fallback_wt=$(get_previous 2>/dev/null)
-        if [ -z "$fallback_wt" ] || [ "$fallback_wt" = "$name" ] || ! get_worktree_path "$fallback_wt" >/dev/null 2>&1; then
-            fallback_wt="@"
-        fi
-        if set_current_worktree "$fallback_wt" 2>/dev/null; then
-            echo -e "  ${CYAN}current → $fallback_wt (was $name)${NC}"
-        else
-            clear_current_symlink
-            echo -e "  ${CYAN}Cleared current symlink${NC}"
-        fi
-    fi
+	# Removing the current worktree: fall back to the previous one (or main)
+	# so the stable 'current' path keeps working for prompts/editors.
+	local current_wt=$(get_current_from_symlink 2>/dev/null)
+	if [ "$name" = "$current_wt" ]; then
+		local fallback_wt=$(get_previous 2>/dev/null)
+		if [ -z "$fallback_wt" ] || [ "$fallback_wt" = "$name" ] || ! get_worktree_path "$fallback_wt" >/dev/null 2>&1; then
+			fallback_wt="@"
+		fi
+		if set_current_worktree "$fallback_wt" 2>/dev/null; then
+			echo -e "  ${CYAN}current → $fallback_wt (was $name)${NC}"
+		else
+			clear_current_symlink
+			echo -e "  ${CYAN}Cleared current symlink${NC}"
+		fi
+	fi
 
-    # Get workspace mode (clone or worktree)
-    local workspace_mode=$(get_metadata "$name" "mode")
-    workspace_mode="${workspace_mode:-worktree}"  # Default to worktree for backwards compatibility
+	# Get workspace mode (clone or worktree)
+	local workspace_mode=$(get_metadata "$name" "mode")
+	workspace_mode="${workspace_mode:-worktree}" # Default to worktree for backwards compatibility
 
-    # SAFETY: Backup uncommitted changes before removing
-    if [ "$has_changes" = true ] && [ -d "$worktree_dir" ]; then
-        local backup_dir="$PWT_DIR/trash"
-        local timestamp=$(date +%Y%m%d_%H%M%S)
-        local backup_name="${name}_${timestamp}"
+	# SAFETY: Backup uncommitted changes before removing
+	if [ "$has_changes" = true ] && [ -d "$worktree_dir" ]; then
+		local backup_dir="$PWT_DIR/trash"
+		local timestamp=$(date +%Y%m%d_%H%M%S)
+		local backup_name="${name}_${timestamp}"
 
-        mkdir -p "$backup_dir"
+		mkdir -p "$backup_dir"
 
-        # Save metadata for restore (branch, base, port, etc.)
-        local meta_branch=$(get_metadata "$name" "branch" 2>/dev/null || git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "")
-        local meta_base=$(get_metadata "$name" "base" 2>/dev/null || echo "")
-        local meta_port=$(get_metadata "$name" "port" 2>/dev/null || echo "")
-        local meta_desc=$(get_metadata "$name" "description" 2>/dev/null || echo "")
-        local meta_project="$CURRENT_PROJECT"
+		# Save metadata for restore (branch, base, port, etc.)
+		local meta_branch=$(get_metadata "$name" "branch" 2>/dev/null || git -C "$worktree_dir" branch --show-current 2>/dev/null || echo "")
+		local meta_base=$(get_metadata "$name" "base" 2>/dev/null || echo "")
+		local meta_port=$(get_metadata "$name" "port" 2>/dev/null || echo "")
+		local meta_desc=$(get_metadata "$name" "description" 2>/dev/null || echo "")
+		local meta_project="$CURRENT_PROJECT"
 
-        {
-            printf 'worktree=%s\n' "$(_state_escape "$name")"
-            printf 'branch=%s\n' "$(_state_escape "$meta_branch")"
-            printf 'base=%s\n' "$(_state_escape "$meta_base")"
-            printf 'port=%s\n' "$meta_port"
-            printf 'description=%s\n' "$(_state_escape "$meta_desc")"
-            printf 'project=%s\n' "$(_state_escape "$meta_project")"
-            printf 'timestamp=%s\n' "$timestamp"
-            printf 'date=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-        } > "$backup_dir/${backup_name}.trash"
-        echo -e "  ${CYAN}✓ Metadata saved to ~/.pwt/trash/${backup_name}.trash${NC}"
+		{
+			printf 'worktree=%s\n' "$(_state_escape "$name")"
+			printf 'branch=%s\n' "$(_state_escape "$meta_branch")"
+			printf 'base=%s\n' "$(_state_escape "$meta_base")"
+			printf 'port=%s\n' "$meta_port"
+			printf 'description=%s\n' "$(_state_escape "$meta_desc")"
+			printf 'project=%s\n' "$(_state_escape "$meta_project")"
+			printf 'timestamp=%s\n' "$timestamp"
+			printf 'date=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+		} >"$backup_dir/${backup_name}.trash"
+		echo -e "  ${CYAN}✓ Metadata saved to ~/.pwt/trash/${backup_name}.trash${NC}"
 
-        # Try to stash tracked changes
-        if git -C "$worktree_dir" stash push -m "pwt-backup-$timestamp" 2>/dev/null; then
-            local stash_ref=$(git -C "$worktree_dir" stash list | head -1 | cut -d: -f1)
-            if [ -n "$stash_ref" ]; then
-                # Export stash to backup dir
-                git -C "$worktree_dir" stash show -p "$stash_ref" > "$backup_dir/${backup_name}.patch" 2>/dev/null
-                echo -e "  ${CYAN}✓ Tracked changes backed up to ~/.pwt/trash/${backup_name}.patch${NC}"
-            fi
-        fi
+		# Try to stash tracked changes
+		if git -C "$worktree_dir" stash push -m "pwt-backup-$timestamp" 2>/dev/null; then
+			local stash_ref=$(git -C "$worktree_dir" stash list | head -1 | cut -d: -f1)
+			if [ -n "$stash_ref" ]; then
+				# Export stash to backup dir
+				git -C "$worktree_dir" stash show -p "$stash_ref" >"$backup_dir/${backup_name}.patch" 2>/dev/null
+				echo -e "  ${CYAN}✓ Tracked changes backed up to ~/.pwt/trash/${backup_name}.patch${NC}"
+			fi
+		fi
 
-        # Backup untracked files
-        local untracked_files=$(git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null)
-        if [ -n "$untracked_files" ]; then
-            local untracked_backup="$backup_dir/${backup_name}_untracked"
-            mkdir -p "$untracked_backup"
-            cd "$worktree_dir"
-            echo "$untracked_files" | while read -r file; do
-                if [ -f "$file" ]; then
-                    local dir=$(dirname "$file")
-                    mkdir -p "$untracked_backup/$dir"
-                    cp "$file" "$untracked_backup/$file" 2>/dev/null
-                fi
-            done
-            echo -e "  ${CYAN}✓ Untracked files backed up to ~/.pwt/trash/${backup_name}_untracked/${NC}"
-        fi
-    fi
+		# Backup untracked files
+		local untracked_files=$(git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null)
+		if [ -n "$untracked_files" ]; then
+			local untracked_backup="$backup_dir/${backup_name}_untracked"
+			mkdir -p "$untracked_backup"
+			cd "$worktree_dir"
+			echo "$untracked_files" | while read -r file; do
+				if [ -f "$file" ]; then
+					local dir=$(dirname "$file")
+					mkdir -p "$untracked_backup/$dir"
+					cp "$file" "$untracked_backup/$file" 2>/dev/null
+				fi
+			done
+			echo -e "  ${CYAN}✓ Untracked files backed up to ~/.pwt/trash/${backup_name}_untracked/${NC}"
+		fi
+	fi
 
-    if [ "$workspace_mode" = "clone" ]; then
-        rm -rf "$worktree_dir"
-        echo -e "${GREEN}✓ Clone removed${NC}"
-    else
-        cd "$MAIN_APP"
-        git worktree remove "$worktree_dir" --force
-        echo -e "${GREEN}✓ Worktree removed${NC}"
-    fi
+	if [ "$workspace_mode" = "clone" ]; then
+		rm -rf "$worktree_dir"
+		echo -e "${GREEN}✓ Clone removed${NC}"
+	else
+		cd "$MAIN_APP"
+		git worktree remove "$worktree_dir" --force
+		echo -e "${GREEN}✓ Worktree removed${NC}"
+	fi
 
-    # Remove metadata
-    remove_metadata "$name"
-    clear_list_cache  # Invalidate cache so next list won't show removed worktree
+	# Remove metadata
+	remove_metadata "$name"
+	clear_list_cache # Invalidate cache so next list won't show removed worktree
 
-    # Delete branch if requested
-    if [ "$with_branch" = true ] && [ -n "$branch" ]; then
-        # Validate branch exists (locally or remotely)
-        local branch_exists=false
-        if git rev-parse --verify "$branch" >/dev/null 2>&1; then
-            branch_exists=true
-        elif git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
-            branch_exists=true
-        fi
+	# Delete branch if requested
+	if [ "$with_branch" = true ] && [ -n "$branch" ]; then
+		# Validate branch exists (locally or remotely)
+		local branch_exists=false
+		if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+			branch_exists=true
+		elif git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+			branch_exists=true
+		fi
 
-        if [ "$branch_exists" = false ]; then
-            echo -e "${YELLOW}Branch '$branch' not found (local or remote)${NC}"
-            return 0
-        fi
+		if [ "$branch_exists" = false ]; then
+			echo -e "${YELLOW}Branch '$branch' not found (local or remote)${NC}"
+			return 0
+		fi
 
-        # Check if branch is merged (unless forcing)
-        if [ "$force_branch" = false ]; then
-            local target_branch="${DEFAULT_BRANCH:-master}"
-            if ! git branch --merged "$target_branch" 2>/dev/null | grep -q "^[[:space:]]*${branch}$"; then
-                echo -e "${YELLOW}Branch '$branch' is not merged into $target_branch. Use --force-branch to delete anyway.${NC}"
-                return 0
-            fi
-        fi
+		# Check if branch is merged (unless forcing)
+		if [ "$force_branch" = false ]; then
+			local target_branch="${DEFAULT_BRANCH:-master}"
+			if ! git branch --merged "$target_branch" 2>/dev/null | grep -q "^[[:space:]]*${branch}$"; then
+				echo -e "${YELLOW}Branch '$branch' is not merged into $target_branch. Use --force-branch to delete anyway.${NC}"
+				return 0
+			fi
+		fi
 
-        # Delete local branch
-        if git rev-parse --verify "$branch" >/dev/null 2>&1; then
-            if git branch -D "$branch" 2>/dev/null; then
-                echo -e "${GREEN}✓ Local branch deleted: $branch${NC}"
-            fi
-        fi
+		# Delete local branch
+		if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+			if git branch -D "$branch" 2>/dev/null; then
+				echo -e "${GREEN}✓ Local branch deleted: $branch${NC}"
+			fi
+		fi
 
-        # Delete remote branch
-        if git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
-            if git push origin --delete "$branch" 2>/dev/null; then
-                echo -e "${GREEN}✓ Remote branch deleted: origin/$branch${NC}"
-            fi
-        fi
-    fi
+		# Delete remote branch
+		if git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+			if git push origin --delete "$branch" 2>/dev/null; then
+				echo -e "${GREEN}✓ Remote branch deleted: origin/$branch${NC}"
+			fi
+		fi
+	fi
 }

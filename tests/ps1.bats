@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -148,7 +148,7 @@ teardown() {
 # ============================================
 
 @test "pwt <project> ps1 works with explicit project" {
-    cd "$TEST_TEMP_DIR"  # outside project
+    cd "$TEST_TEMP_DIR" # outside project
 
     # Create worktree from main repo
     cd "$TEST_REPO"

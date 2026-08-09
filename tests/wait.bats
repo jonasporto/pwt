@@ -16,7 +16,7 @@ setup() {
     mkdir -p "$TEST_WORKTREES"
 
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -24,7 +24,7 @@ base_port=$TEST_BASE_PORT
 EOF
 
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -61,7 +61,7 @@ job_id_from_output() {
 
 @test "pwt jobs wait returns when job finishes" {
     cd "$TEST_REPO"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     sleep 1
 }
@@ -84,7 +84,7 @@ EOF
 
 @test "pwt jobs wait accepts a worktree name" {
     cd "$TEST_REPO"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     sleep 1
 }
@@ -103,7 +103,7 @@ EOF
 
 @test "pwt jobs wait times out with exit 5" {
     cd "$TEST_REPO"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     sleep 30
 }
@@ -149,7 +149,7 @@ EOF
 
 @test "pwt server wait succeeds when port accepts connections" {
     cd "$TEST_REPO"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     exec perl -MIO::Socket::INET -e '
         my $srv = IO::Socket::INET->new(
@@ -207,7 +207,7 @@ EOF
 
 @test "pwt server wait --log-contains succeeds on log marker" {
     cd "$TEST_REPO"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "warming up"
     echo "SERVER_READY_MARKER"
@@ -227,7 +227,7 @@ EOF
 
 @test "pwt server wait --log-contains times out when marker never appears" {
     cd "$TEST_REPO"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "starting"
     sleep 30

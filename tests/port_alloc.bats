@@ -26,7 +26,7 @@ teardown() {
     mkdir -p "$WORKTREES_DIR"
 
     mkdir -p "$PWT_DIR/state/test-project"
-    cat > "$PWT_DIR/state/test-project/wt1.meta" <<EOF_META
+    cat >"$PWT_DIR/state/test-project/wt1.meta" <<EOF_META
 port=5001
 EOF_META
 

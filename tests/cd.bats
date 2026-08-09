@@ -14,7 +14,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-repo"
-    cat > "$PWT_DIR/projects/test-repo/config" << EOF
+    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -236,7 +236,7 @@ teardown() {
     git commit -q -m "Initial commit"
 
     mkdir -p "$PWT_DIR/projects/other-repo"
-    cat > "$PWT_DIR/projects/other-repo/config" << EOF
+    cat >"$PWT_DIR/projects/other-repo/config" <<EOF
 path=$other_repo
 worktrees_dir=$TEST_TEMP_DIR/other-worktrees
 branch_prefix=feat/

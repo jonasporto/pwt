@@ -15,7 +15,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -41,7 +41,7 @@ teardown() {
     run "$PWT_BIN" list --porcelain
 
     # Should be valid JSON (jq won't fail)
-    echo "$output" | jq . > /dev/null 2>&1
+    echo "$output" | jq . >/dev/null 2>&1
     [ "$?" -eq 0 ]
 }
 

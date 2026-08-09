@@ -50,7 +50,7 @@ teardown() {
 }
 
 @test "state_set preserves unknown keys" {
-    printf 'phase=review\nnext=address comments\n' > "$STATE_FILE"
+    printf 'phase=review\nnext=address comments\n' >"$STATE_FILE"
     state_set "$STATE_FILE" "port" "5024"
     run state_get "$STATE_FILE" "phase"
     [ "$output" = "review" ]
@@ -84,7 +84,7 @@ teardown() {
 @test "newline in value round-trips via escaping" {
     state_set "$STATE_FILE" "desc" $'line1\nline2'
     # File stays one line per key
-    run wc -l < "$STATE_FILE"
+    run wc -l <"$STATE_FILE"
     [ "$(echo $output)" = "1" ]
     local got
     got=$(state_get "$STATE_FILE" "desc")
@@ -190,22 +190,25 @@ teardown() {
 @test "events_append appends, never truncates" {
     events_append "p" "w" "create" ""
     events_append "p" "w" "remove" ""
-    run wc -l < "$PWT_DIR/events.log"
+    run wc -l <"$PWT_DIR/events.log"
     [ "$(echo $output)" = "2" ]
 }
 
 @test "events_maybe_truncate keeps small logs untouched" {
     events_append "p" "w" "create" ""
     events_maybe_truncate
-    run wc -l < "$PWT_DIR/events.log"
+    run wc -l <"$PWT_DIR/events.log"
     [ "$(echo $output)" = "1" ]
 }
 
 @test "events_maybe_truncate trims oversized log to last 1000 lines" {
     local i=0
-    { while [ $i -lt 2500 ]; do echo "ts	p	w	k	$i"; i=$((i+1)); done; } > "$PWT_DIR/events.log"
+    { while [ $i -lt 2500 ]; do
+        echo "ts	p	w	k	$i"
+        i=$((i + 1))
+    done; } >"$PWT_DIR/events.log"
     events_maybe_truncate
-    run wc -l < "$PWT_DIR/events.log"
+    run wc -l <"$PWT_DIR/events.log"
     [ "$(echo $output)" = "1000" ]
     run tail -1 "$PWT_DIR/events.log"
     [ "$output" = "$(printf 'ts\tp\tw\tk\t2499')" ]
@@ -233,11 +236,11 @@ teardown() {
 seed_legacy_state() {
     rm -f "$PWT_DIR/state-version"
     mkdir -p "$PWT_DIR/projects/legacy-proj" "$PWT_DIR/jobs" "$PWT_DIR/trash"
-    echo '{"legacy-proj":{"WT-1":{"path":"/tmp/x/WT-1","branch":"feat/WT-1","port":5001,"description":"legacy wt","phase":"review"}}}' > "$PWT_DIR/meta.json"
-    echo '{"path":"/tmp/x","worktrees_dir":"/tmp/x-worktrees","alias":"lp","aliases":["l2","l3"]}' > "$PWT_DIR/projects/legacy-proj/config.json"
-    echo '{"ai":{"default":"claude","tools":{"claude":"claude --resume"}}}' > "$PWT_DIR/config.json"
-    echo '{"id":"j1","pid":12345,"pgid":12345,"command":"server","worktree":"WT-1","project":"legacy-proj","log":"/tmp/j1.log","started_at":"2026-01-01T00:00:00Z","status":"stopped"}' > "$PWT_DIR/jobs/j1.json"
-    echo '{"worktree":"WT-9","branch":"feat/WT-9","base":"master","port":"5009","description":"","project":"legacy-proj","timestamp":"20260101_000000","date":"2026-01-01 00:00:00"}' > "$PWT_DIR/trash/WT-9_20260101_000000.json"
+    echo '{"legacy-proj":{"WT-1":{"path":"/tmp/x/WT-1","branch":"feat/WT-1","port":5001,"description":"legacy wt","phase":"review"}}}' >"$PWT_DIR/meta.json"
+    echo '{"path":"/tmp/x","worktrees_dir":"/tmp/x-worktrees","alias":"lp","aliases":["l2","l3"]}' >"$PWT_DIR/projects/legacy-proj/config.json"
+    echo '{"ai":{"default":"claude","tools":{"claude":"claude --resume"}}}' >"$PWT_DIR/config.json"
+    echo '{"id":"j1","pid":12345,"pgid":12345,"command":"server","worktree":"WT-1","project":"legacy-proj","log":"/tmp/j1.log","started_at":"2026-01-01T00:00:00Z","status":"stopped"}' >"$PWT_DIR/jobs/j1.json"
+    echo '{"worktree":"WT-9","branch":"feat/WT-9","base":"master","port":"5009","description":"","project":"legacy-proj","timestamp":"20260101_000000","date":"2026-01-01 00:00:00"}' >"$PWT_DIR/trash/WT-9_20260101_000000.json"
 }
 
 @test "migration: legacy JSON state converts on first command" {
@@ -287,7 +290,7 @@ seed_legacy_state() {
     seed_legacy_state
     "$PWT_BIN" project list >/dev/null 2>&1
     # Re-seed a legacy file; with state-version present it must NOT be touched
-    echo '{}' > "$PWT_DIR/meta.json"
+    echo '{}' >"$PWT_DIR/meta.json"
     run "$PWT_BIN" project list
     [ "$status" -eq 0 ]
     [ -f "$PWT_DIR/meta.json" ]
@@ -331,13 +334,13 @@ seed_legacy_state() {
 
 @test "pwt state --json emits versioned snapshot of projects, worktrees, jobs" {
     mkdir -p "$PWT_DIR/projects/snap-proj" "$PWT_DIR/state/snap-proj" "$PWT_DIR/jobs"
-    printf 'path=/tmp/snap\nworktrees_dir=/tmp/snap-worktrees\n' > "$PWT_DIR/projects/snap-proj/config"
-    printf 'branch=feat/S-1\nport=5100\nphase=doing\n' > "$PWT_DIR/state/snap-proj/S-1.meta"
-    printf 'id=job9\npid=999\ncommand=server\nworktree=S-1\nproject=snap-proj\nstatus=stopped\n' > "$PWT_DIR/jobs/job9.job"
+    printf 'path=/tmp/snap\nworktrees_dir=/tmp/snap-worktrees\n' >"$PWT_DIR/projects/snap-proj/config"
+    printf 'branch=feat/S-1\nport=5100\nphase=doing\n' >"$PWT_DIR/state/snap-proj/S-1.meta"
+    printf 'id=job9\npid=999\ncommand=server\nworktree=S-1\nproject=snap-proj\nstatus=stopped\n' >"$PWT_DIR/jobs/job9.job"
 
     run "$PWT_BIN" state --json
     [ "$status" -eq 0 ]
-    echo "$output" | jq . >/dev/null   # valid JSON
+    echo "$output" | jq . >/dev/null # valid JSON
     [ "$(echo "$output" | jq -r '.schema_version')" = "2" ]
     [ "$(echo "$output" | jq -r '.projects["snap-proj"].path')" = "/tmp/snap" ]
     [ "$(echo "$output" | jq -r '.worktrees["snap-proj"]["S-1"].port')" = "5100" ]
@@ -370,7 +373,7 @@ seed_legacy_state() {
 @test "create and remove emit events to events.log" {
     export TEST_WORKTREES="$TEST_TEMP_DIR/worktrees"
     mkdir -p "$TEST_WORKTREES" "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 EOF
@@ -385,7 +388,7 @@ EOF
 @test "meta set emits meta_change event" {
     export TEST_WORKTREES="$TEST_TEMP_DIR/worktrees"
     mkdir -p "$TEST_WORKTREES" "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 EOF
@@ -402,7 +405,7 @@ EOF
 @test "migration: a malformed legacy entry does not truncate the rest" {
     rm -f "$PWT_DIR/state-version"
     mkdir -p "$PWT_DIR/projects/proj-a"
-    cat > "$PWT_DIR/meta.json" << 'JSON'
+    cat >"$PWT_DIR/meta.json" <<'JSON'
 {
   "proj-a": {"WT-A": {"path": "/tmp/a", "branch": "feat/a", "port": 5001}},
   "STRAY-123": {"path": "/tmp/stray", "branch": "feat/stray", "port": 5099},
@@ -421,8 +424,8 @@ JSON
     grep -q '^port=5003$' "$PWT_DIR/state/proj-c/WT-C.meta"
 
     # The malformed entry is reported, not silently swallowed
-    [[ "$output" == *"skipped malformed legacy entries"* ]] || \
-        grep -q "STRAY-123" <<< "$output"
+    [[ "$output" == *"skipped malformed legacy entries"* ]] ||
+        grep -q "STRAY-123" <<<"$output"
 
     # ...and is still recoverable from the backup
     [ -f "$PWT_DIR/meta.json.v1.bak" ]
@@ -431,7 +434,7 @@ JSON
 
 @test "migration: unreadable meta.json aborts without touching state" {
     rm -f "$PWT_DIR/state-version"
-    echo '{ this is not json' > "$PWT_DIR/meta.json"
+    echo '{ this is not json' >"$PWT_DIR/meta.json"
 
     run "$PWT_BIN" project list
     [ "$status" -ne 0 ]
@@ -444,7 +447,7 @@ JSON
 
 @test "jobs list --porcelain emits valid JSON for consumers" {
     mkdir -p "$PWT_DIR/jobs"
-    cat > "$PWT_DIR/jobs/consumer-test.job" << 'JOB'
+    cat >"$PWT_DIR/jobs/consumer-test.job" <<'JOB'
 id=consumer-test
 pid=999999
 command=server
@@ -482,7 +485,7 @@ JOB
 @test "state migrate --check --porcelain emits JSON with skip names" {
     rm -f "$PWT_DIR/state-version"
     mkdir -p "$PWT_DIR/projects/proj-a"
-    cat > "$PWT_DIR/meta.json" << 'JSON'
+    cat >"$PWT_DIR/meta.json" <<'JSON'
 {
   "proj-a": {"WT-A": {"path": "/tmp/a", "port": 5001}},
   "STRAY-9": {"path": "/tmp/stray", "port": 5099}
@@ -535,7 +538,7 @@ JSON
 # between worktrees. Type must follow the KEY.
 @test "state --json keeps non-numeric keys as strings even when all-digit" {
     mkdir -p "$PWT_DIR/state/test-project"
-    cat > "$PWT_DIR/state/test-project/WT-N.meta" << 'META'
+    cat >"$PWT_DIR/state/test-project/WT-N.meta" <<'META'
 branch=123
 description=456
 port=5001
@@ -565,7 +568,7 @@ META
 # invalid JSON on every machine-readable path.
 @test "state --json escapes C0 control characters" {
     mkdir -p "$PWT_DIR/state/test-project"
-    printf 'description=a\001b\nport=5001\n' > "$PWT_DIR/state/test-project/WT-C.meta"
+    printf 'description=a\001b\nport=5001\n' >"$PWT_DIR/state/test-project/WT-C.meta"
 
     run "$PWT_BIN" state --json
     [ "$status" -eq 0 ]
@@ -583,7 +586,7 @@ META
     [ -f "$log" ]
 
     # Exactly one line, with escapes rather than raw control characters
-    run wc -l < "$log"
+    run wc -l <"$log"
     [ "${output// /}" -eq 1 ]
 
     run cat "$log"
@@ -595,7 +598,7 @@ META
 # `meta set <wt> "port=9999" x` appended a second port= line; pwt read the
 # first occurrence and a consumer splitting on '=' read the other.
 @test "state_set rejects a key containing '='" {
-    printf 'port=5001\n' > "$STATE_FILE"
+    printf 'port=5001\n' >"$STATE_FILE"
 
     run state_set "$STATE_FILE" "port=9999" x
     [ "$status" -eq 2 ]
@@ -609,7 +612,7 @@ META
 }
 
 @test "state_set accepts the documented key charset" {
-    printf '' > "$STATE_FILE"
+    printf '' >"$STATE_FILE"
     run state_set "$STATE_FILE" "editor.default" vim
     [ "$status" -eq 0 ]
     run state_get "$STATE_FILE" "editor.default"
@@ -623,7 +626,7 @@ META
     rm -f "$PWT_DIR/state-version"
     mkdir -p "$PWT_DIR/projects/proj-a"
     printf '{"proj-a":{"W1":{"path":"/tmp/1","port":5001}},"junk":"a string"}' \
-        > "$PWT_DIR/meta.json"
+        >"$PWT_DIR/meta.json"
 
     run "$PWT_BIN" state migrate --check --porcelain
     [ "$status" -eq 0 ]
@@ -653,13 +656,13 @@ both"; do
 }
 
 @test "state_set/state_get round-trip a value with tab and newline" {
-    printf '' > "$STATE_FILE"
+    printf '' >"$STATE_FILE"
     local v
     v=$(printf 'line1\nline2\tcol')
 
     state_set "$STATE_FILE" note "$v"
     # Stored on exactly one line
-    run wc -l < "$STATE_FILE"
+    run wc -l <"$STATE_FILE"
     [ "${output// /}" -eq 1 ]
 
     run state_get "$STATE_FILE" note

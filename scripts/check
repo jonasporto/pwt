@@ -15,8 +15,12 @@ set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[0;33m'
-BLUE=$'\033[0;34m'; DIM=$'\033[2m'; NC=$'\033[0m'
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+BLUE=$'\033[0;34m'
+DIM=$'\033[2m'
+NC=$'\033[0m'
 
 SOURCES=(bin/pwt lib/pwt/*.sh)
 FAILED=""
@@ -24,10 +28,24 @@ SKIPPED=""
 SUMMARY=""
 
 stage() { printf '\n%s▸ %s%s\n' "$BLUE" "$1" "$NC"; }
-pass()  { printf '  %s✓%s %s\n' "$GREEN" "$NC" "$1"; SUMMARY+="  ${GREEN}✓${NC} $1"$'\n'; }
-fail()  { printf '  %s✗%s %s\n' "$RED" "$NC" "$1";   SUMMARY+="  ${RED}✗${NC} $1"$'\n'; FAILED="${FAILED}$1"$'\n'; }
-info()  { printf '  %s•%s %s\n' "$YELLOW" "$NC" "$1"; SUMMARY+="  ${YELLOW}•${NC} $1"$'\n'; }
-skip()  { printf '  %s—%s %s\n' "$DIM" "$NC" "$1";   SUMMARY+="  ${DIM}—${NC} $1"$'\n'; SKIPPED="${SKIPPED}$1"$'\n'; }
+pass() {
+    printf '  %s✓%s %s\n' "$GREEN" "$NC" "$1"
+    SUMMARY+="  ${GREEN}✓${NC} $1"$'\n'
+}
+fail() {
+    printf '  %s✗%s %s\n' "$RED" "$NC" "$1"
+    SUMMARY+="  ${RED}✗${NC} $1"$'\n'
+    FAILED="${FAILED}$1"$'\n'
+}
+info() {
+    printf '  %s•%s %s\n' "$YELLOW" "$NC" "$1"
+    SUMMARY+="  ${YELLOW}•${NC} $1"$'\n'
+}
+skip() {
+    printf '  %s—%s %s\n' "$DIM" "$NC" "$1"
+    SUMMARY+="  ${DIM}—${NC} $1"$'\n'
+    SKIPPED="${SKIPPED}$1"$'\n'
+}
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -38,15 +56,21 @@ check_syntax() {
     local f bad=0
     for f in "${SOURCES[@]}" completions/pwt.bash scripts/*; do
         [ -f "$f" ] || continue
-        case "$f" in *.fish|*_pwt) continue ;; esac
-        bash -n "$f" 2>/dev/null || { echo "      $f"; bad=1; }
+        case "$f" in *.fish | *_pwt) continue ;; esac
+        bash -n "$f" 2>/dev/null || {
+            echo "      $f"
+            bad=1
+        }
     done
     [ "$bad" -eq 0 ] && pass "syntax" || fail "syntax"
 }
 
 check_shellcheck() {
     stage "ShellCheck"
-    if ! have shellcheck; then skip "shellcheck (not installed)"; return; fi
+    if ! have shellcheck; then
+        skip "shellcheck (not installed)"
+        return
+    fi
 
     if shellcheck -x -S error "${SOURCES[@]}"; then
         pass "shellcheck -S error (blocking gate)"
@@ -61,7 +85,10 @@ check_shellcheck() {
 
 check_format() {
     stage "Formatting (shfmt)"
-    if ! have shfmt; then skip "shfmt (brew install shfmt)"; return; fi
+    if ! have shfmt; then
+        skip "shfmt (brew install shfmt)"
+        return
+    fi
 
     local unformatted
     # No printer flags: passing any of them disables .editorconfig
@@ -94,7 +121,10 @@ _report_bats() {
 check_tests() {
     local both="${1:-both}"
     stage "Tests (bats)"
-    if ! have bats; then fail "bats not installed"; return; fi
+    if ! have bats; then
+        fail "bats not installed"
+        return
+    fi
 
     local rc
     bats tests/ >/tmp/pwt-check-tests.log 2>&1
@@ -107,7 +137,8 @@ check_tests() {
     # macOS system bash swallows failing [[ ]] mid-test; pwt itself always
     # runs under it (shebang), so the 3.2 pass is the compatibility check.
     if [ "$(uname -s)" = Darwin ] && [ -x /bin/bash ]; then
-        local v32; v32=$(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        local v32
+        v32=$(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
         local rc32
         /bin/bash "$(command -v bats)" tests/ >/tmp/pwt-check-32.log 2>&1
         rc32=$?
@@ -117,15 +148,19 @@ check_tests() {
 
 check_coverage() {
     stage "Coverage (kcov)"
-    if ! have kcov; then skip "kcov (brew install kcov)"; return; fi
+    if ! have kcov; then
+        skip "kcov (brew install kcov)"
+        return
+    fi
 
     local out=coverage
-    rm -rf "$out"; mkdir -p "$out"
+    rm -rf "$out"
+    mkdir -p "$out"
     if kcov --include-path=bin/pwt,lib/pwt --bash-method=DEBUG \
-            "$out" bats tests/ >/tmp/pwt-check-cov.log 2>&1; then
+        "$out" bats tests/ >/tmp/pwt-check-cov.log 2>&1; then
         local pct
-        pct=$(grep -oE '"percent_covered": *"[0-9.]+"' "$out"/*/coverage.json 2>/dev/null \
-              | head -1 | grep -oE '[0-9.]+' || true)
+        pct=$(grep -oE '"percent_covered": *"[0-9.]+"' "$out"/*/coverage.json 2>/dev/null |
+            head -1 | grep -oE '[0-9.]+' || true)
         if [ -n "$pct" ]; then
             info "line coverage: ${pct}% (report: $out/index.html)"
         else
@@ -172,14 +207,20 @@ check_docs() {
 
 main() {
     local mode="${1:-all}"
-    local started; started=$SECONDS
+    local started
+    started=$SECONDS
 
     case "$mode" in
         fast)
-            check_syntax; check_shellcheck; check_format; check_tests one
+            check_syntax
+            check_shellcheck
+            check_format
+            check_tests one
             ;;
         lint)
-            check_syntax; check_shellcheck; check_format
+            check_syntax
+            check_shellcheck
+            check_format
             ;;
         tests)
             check_tests both
@@ -188,10 +229,13 @@ main() {
             check_coverage
             ;;
         all)
-            check_syntax; check_shellcheck; check_format
-            check_docs; check_tests both
+            check_syntax
+            check_shellcheck
+            check_format
+            check_docs
+            check_tests both
             ;;
-        -h|--help)
+        -h | --help)
             sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             return 0
             ;;

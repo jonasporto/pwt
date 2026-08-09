@@ -13,7 +13,7 @@ setup() {
 
     # Configure test project
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 EOF
@@ -39,7 +39,7 @@ teardown() {
 
 @test "pwt plugin list shows installed plugins" {
     # Create a simple test plugin
-    cat > "$PWT_DIR/plugins/pwt-test" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-test" <<'EOF'
 #!/bin/bash
 # Description: Test plugin
 # Version: 1.0.0
@@ -81,7 +81,7 @@ EOF
 @test "pwt plugin install copies local file" {
     # Create a plugin file
     local plugin_file="$TEST_TEMP_DIR/my-plugin.sh"
-    cat > "$plugin_file" << 'EOF'
+    cat >"$plugin_file" <<'EOF'
 #!/bin/bash
 echo "installed plugin"
 EOF
@@ -131,7 +131,7 @@ EOF
 
 @test "pwt executes plugin when command matches" {
     # Create a simple plugin
-    cat > "$PWT_DIR/plugins/pwt-hello" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-hello" <<'EOF'
 #!/bin/bash
 echo "Hello from plugin!"
 EOF
@@ -143,7 +143,7 @@ EOF
 }
 
 @test "plugin receives arguments" {
-    cat > "$PWT_DIR/plugins/pwt-echo" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-echo" <<'EOF'
 #!/bin/bash
 echo "args: $@"
 EOF
@@ -155,7 +155,7 @@ EOF
 }
 
 @test "plugin receives PWT_DIR environment variable" {
-    cat > "$PWT_DIR/plugins/pwt-showdir" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-showdir" <<'EOF'
 #!/bin/bash
 echo "dir: $PWT_DIR"
 EOF
@@ -167,7 +167,7 @@ EOF
 }
 
 @test "plugin receives PWT_PROJECT when in project" {
-    cat > "$PWT_DIR/plugins/pwt-showproject" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-showproject" <<'EOF'
 #!/bin/bash
 echo "project: ${PWT_PROJECT:-none}"
 EOF
@@ -180,7 +180,7 @@ EOF
 }
 
 @test "plugin receives PWT_MAIN_APP when in project" {
-    cat > "$PWT_DIR/plugins/pwt-showapp" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-showapp" <<'EOF'
 #!/bin/bash
 echo "app: ${PWT_MAIN_APP:-none}"
 EOF
@@ -193,7 +193,7 @@ EOF
 }
 
 @test "plugin receives PWT_WORKTREES_DIR when in project" {
-    cat > "$PWT_DIR/plugins/pwt-showwt" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-showwt" <<'EOF'
 #!/bin/bash
 echo "worktrees: ${PWT_WORKTREES_DIR:-none}"
 EOF
@@ -216,7 +216,7 @@ EOF
     [[ "$output" == *"Unknown command"* ]]
 
     # Create plugin
-    cat > "$PWT_DIR/plugins/pwt-customcmd" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-customcmd" <<'EOF'
 #!/bin/bash
 echo "custom command works"
 EOF
@@ -229,7 +229,7 @@ EOF
 }
 
 @test "plugins appear in command suggestions" {
-    cat > "$PWT_DIR/plugins/pwt-deploy" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-deploy" <<'EOF'
 #!/bin/bash
 echo "deploy"
 EOF
@@ -246,7 +246,7 @@ EOF
 # ============================================
 
 @test "plugin can have subcommands" {
-    cat > "$PWT_DIR/plugins/pwt-multi" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-multi" <<'EOF'
 #!/bin/bash
 case "${1:-}" in
     sub1) echo "subcommand 1" ;;
@@ -270,7 +270,7 @@ EOF
 # ============================================
 
 @test "plugin exit code is propagated" {
-    cat > "$PWT_DIR/plugins/pwt-fail" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-fail" <<'EOF'
 #!/bin/bash
 exit 42
 EOF
@@ -281,7 +281,7 @@ EOF
 }
 
 @test "non-executable plugin is not run" {
-    cat > "$PWT_DIR/plugins/pwt-noexec" << 'EOF'
+    cat >"$PWT_DIR/plugins/pwt-noexec" <<'EOF'
 #!/bin/bash
 echo "should not run"
 EOF

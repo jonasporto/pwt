@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -114,7 +114,7 @@ teardown() {
     cd "$TEST_REPO"
     run "$PWT_BIN" current --json
     [ "$status" -eq 0 ]
-    echo "$output" | jq . > /dev/null 2>&1
+    echo "$output" | jq . >/dev/null 2>&1
     [ "$?" -eq 0 ]
     [[ "$output" == *'"in_worktree"'* ]] || [[ "$output" == *"@"* ]]
 }
@@ -182,7 +182,7 @@ teardown() {
 # ============================================
 
 @test "pwt run @ executes command in main app" {
-    cd "$TEST_TEMP_DIR"  # Outside main app
+    cd "$TEST_TEMP_DIR" # Outside main app
     run "$PWT_BIN" --project test-project run @ pwd
     [ "$status" -eq 0 ]
     [[ "$output" == *"$TEST_REPO"* ]]

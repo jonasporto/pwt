@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -46,7 +46,7 @@ teardown() {
 @test "without --bg or --no-input, behavior is identical to current" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "SERVER_DEFAULT: $PWT_WORKTREE on port $PWT_PORT"
 }
@@ -64,7 +64,7 @@ EOF
 @test "PWT_AGENT defaults to 0 when --no-input not used" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 agenttest() {
     set -u
     echo "AGENT_VALUE:$PWT_AGENT"
@@ -83,7 +83,7 @@ EOF
 @test "--no-input closes stdin and sets PWT_AGENT=1" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 checkagent() {
     echo "AGENT:$PWT_AGENT"
     # Try to read from stdin - should fail immediately with closed stdin
@@ -102,7 +102,7 @@ EOF
 @test "--no-input preserves existing behavior (function still runs)" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 mytask() {
     echo "TASK_COMPLETED"
     echo "WT:$PWT_WORKTREE"
@@ -122,7 +122,7 @@ EOF
 @test "--bg and --no-input flags are NOT in PWT_ARGS" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 argcheck() {
     echo "PWT_ARGS:[$PWT_ARGS]"
 }
@@ -137,7 +137,7 @@ EOF
 @test "strip removes execution flags from PWT_ARGS in custom commands" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 stripped() {
     echo "ARGS:[$PWT_ARGS]"
 }
@@ -156,7 +156,7 @@ EOF
 @test "--bg runs command in background and returns JSON" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "BG_SERVER_STARTED"
     # Keep running for a bit
@@ -185,7 +185,7 @@ EOF
 @test "--bg with --quiet outputs only JSON" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     sleep 10
 }
@@ -208,7 +208,7 @@ EOF
 @test "--bg creates log file" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "LOG_OUTPUT_TEST"
     sleep 10
@@ -240,7 +240,7 @@ EOF
 @test "server passes extra args via PWT_ARGS with --bg" {
     cd "$TEST_REPO"
 
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     echo "BGARGS:[$PWT_ARGS]"
     sleep 10

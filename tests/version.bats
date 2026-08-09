@@ -78,15 +78,15 @@ teardown() {
     # Mock command -v to return brew path
     function command() { echo "/opt/homebrew/Cellar/pwt/0.1.6/bin/pwt"; }
     export -f command
-    
+
     source "$PWT_BIN"
     run _pwt_install_method
-    [ "$output" = "brew" ] || [ "$output" = "curl" ]  # depends on actual path
+    [ "$output" = "brew" ] || [ "$output" = "curl" ] # depends on actual path
 }
 
 @test "_pwt_upgrade_command returns correct command for each method" {
     source "$PWT_BIN"
-    
+
     # Test that function exists and returns something
     run _pwt_upgrade_command
     [ "$status" -eq 0 ]
@@ -127,26 +127,26 @@ teardown() {
 
 @test "_pwt_check_update uses cache when valid" {
     source "$PWT_BIN"
-    
+
     # Create valid cache
     local cache_file="$PWT_DIR/version-check"
     mkdir -p "$PWT_DIR"
-    echo "$(date +%s)" > "$cache_file"
-    echo "0.9.9" >> "$cache_file"
-    
+    echo "$(date +%s)" >"$cache_file"
+    echo "0.9.9" >>"$cache_file"
+
     run _pwt_check_update
     [ "$output" = "0.9.9" ]
 }
 
 @test "_pwt_show_version shows update hint when newer version available" {
     source "$PWT_BIN"
-    
+
     # Create cache with newer version
     local cache_file="$PWT_DIR/version-check"
     mkdir -p "$PWT_DIR"
-    echo "$(date +%s)" > "$cache_file"
-    echo "99.0.0" >> "$cache_file"
-    
+    echo "$(date +%s)" >"$cache_file"
+    echo "99.0.0" >>"$cache_file"
+
     run _pwt_show_version
     [[ "$output" == *"Update available"* ]]
     [[ "$output" == *"99.0.0"* ]]
@@ -154,13 +154,13 @@ teardown() {
 
 @test "_pwt_show_version does not show hint when on latest version" {
     source "$PWT_BIN"
-    
+
     # Create cache with same version
     local cache_file="$PWT_DIR/version-check"
     mkdir -p "$PWT_DIR"
-    echo "$(date +%s)" > "$cache_file"
-    echo "$PWT_VERSION" >> "$cache_file"
-    
+    echo "$(date +%s)" >"$cache_file"
+    echo "$PWT_VERSION" >>"$cache_file"
+
     run _pwt_show_version
     [[ "$output" != *"Update available"* ]]
 }

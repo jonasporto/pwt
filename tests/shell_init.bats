@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 
@@ -101,7 +101,7 @@ teardown() {
 
 @test "shell function implicit cd does not override Pwtfile command" {
     cd "$TEST_REPO"
-    cat > "$TEST_REPO/Pwtfile" << 'EOF'
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
 same() {
     echo "PWTCMD_SAME"
 }
@@ -196,7 +196,7 @@ EOF
     "
     [ "$status" -eq 0 ]
     # Should be valid JSON
-    echo "$output" | jq . > /dev/null 2>&1
+    echo "$output" | jq . >/dev/null 2>&1
     [ "$?" -eq 0 ]
 }
 

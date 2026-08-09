@@ -13,7 +13,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -21,7 +21,7 @@ EOF
 
     # Add a commit
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -46,7 +46,7 @@ teardown() {
     "$PWT_BIN" create WT-DIFF HEAD
 
     # Make a change in worktree
-    echo "new content" > "$TEST_WORKTREES/WT-DIFF/newfile.txt"
+    echo "new content" >"$TEST_WORKTREES/WT-DIFF/newfile.txt"
 
     run "$PWT_BIN" diff WT-DIFF
     [ "$status" -eq 0 ]
@@ -70,8 +70,8 @@ teardown() {
     "$PWT_BIN" create WT-B HEAD
 
     # Make different changes
-    echo "content A" > "$TEST_WORKTREES/WT-A/diff.txt"
-    echo "content B" > "$TEST_WORKTREES/WT-B/diff.txt"
+    echo "content A" >"$TEST_WORKTREES/WT-A/diff.txt"
+    echo "content B" >"$TEST_WORKTREES/WT-B/diff.txt"
 
     run "$PWT_BIN" diff WT-A WT-B
     [ "$status" -eq 0 ]

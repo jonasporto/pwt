@@ -16,7 +16,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -54,7 +54,7 @@ teardown() {
 @test "EXIT_NOT_FOUND (3) for nonexistent worktree in info" {
     cd "$TEST_REPO"
     run "$PWT_BIN" info nonexistent_worktree_xyz
-    [ "$status" -eq 3 ] || [ "$status" -eq 1 ]  # Allow 1 for backwards compatibility
+    [ "$status" -eq 3 ] || [ "$status" -eq 1 ] # Allow 1 for backwards compatibility
     [[ "$output" == *"not found"* ]] || [[ "$output" == *"No worktree"* ]]
 }
 

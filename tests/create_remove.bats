@@ -17,7 +17,7 @@ setup() {
     # other test files running in parallel (same pattern as gateway.bats)
     export TEST_BASE_PORT=$((44000 + RANDOM % 1000))
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat > "$PWT_DIR/projects/test-project/config" << EOF
+    cat >"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -26,7 +26,7 @@ EOF
 
     # Add a second commit so we have something to branch from
     cd "$TEST_REPO"
-    echo "content" > file.txt
+    echo "content" >file.txt
     git add file.txt
     git commit -q -m "Add file"
 }
@@ -229,7 +229,7 @@ create_remote_branch() {
 
 @test "pwt adopt registers existing worktree and runs setup hooks" {
     cd "$TEST_REPO"
-    cat > Pwtfile <<'EOF'
+    cat >Pwtfile <<'EOF'
 setup() {
     set -u
     mkdir -p log tmp
@@ -316,7 +316,7 @@ EOF
 # ============================================
 
 @test "pwt <project> create works from anywhere" {
-    cd "$TEST_TEMP_DIR"  # Not in project
+    cd "$TEST_TEMP_DIR" # Not in project
     run "$PWT_BIN" test-project create TEST-ANYWHERE HEAD
     [ "$status" -eq 0 ]
     [ -d "$TEST_WORKTREES/TEST-ANYWHERE" ]
@@ -397,7 +397,7 @@ EOF
     cd "$TEST_REPO"
     "$PWT_BIN" create TEST-REMOTE HEAD
 
-    cd "$TEST_TEMP_DIR"  # Not in project
+    cd "$TEST_TEMP_DIR" # Not in project
     run "$PWT_BIN" test-project remove TEST-REMOTE -y
     [ "$status" -eq 0 ]
     [ ! -d "$TEST_WORKTREES/TEST-REMOTE" ]

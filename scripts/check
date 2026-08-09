@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# Local verification pipeline: everything CI runs, plus what CI cannot.
+#
+#   scripts/check            # everything (default)
+#   scripts/check fast       # syntax + lint + tests under one bash (pre-commit)
+#   scripts/check lint       # linters only
+#   scripts/check tests      # tests only, both bash versions
+#   scripts/check coverage   # line coverage via kcov
+#
+# Every stage prints PASS/FAIL/SKIP and the run ends with a summary; blocking
+# stages decide the exit code, informational ones only report. Missing tools
+# SKIP rather than fail, so the script is useful on a fresh checkout.
+
+set -uo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[0;33m'
+BLUE=$'\033[0;34m'; DIM=$'\033[2m'; NC=$'\033[0m'
+
+SOURCES=(bin/pwt lib/pwt/*.sh)
+FAILED=""
+SKIPPED=""
+SUMMARY=""
+
+stage() { printf '\n%s▸ %s%s\n' "$BLUE" "$1" "$NC"; }
+pass()  { printf '  %s✓%s %s\n' "$GREEN" "$NC" "$1"; SUMMARY+="  ${GREEN}✓${NC} $1"$'\n'; }
+fail()  { printf '  %s✗%s %s\n' "$RED" "$NC" "$1";   SUMMARY+="  ${RED}✗${NC} $1"$'\n'; FAILED="${FAILED}$1"$'\n'; }
+info()  { printf '  %s•%s %s\n' "$YELLOW" "$NC" "$1"; SUMMARY+="  ${YELLOW}•${NC} $1"$'\n'; }
+skip()  { printf '  %s—%s %s\n' "$DIM" "$NC" "$1";   SUMMARY+="  ${DIM}—${NC} $1"$'\n'; SKIPPED="${SKIPPED}$1"$'\n'; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# --- stages ---------------------------------------------------------------
+
+check_syntax() {
+    stage "Syntax (bash -n)"
+    local f bad=0
+    for f in "${SOURCES[@]}" completions/pwt.bash scripts/*; do
+        [ -f "$f" ] || continue
+        case "$f" in *.fish|*_pwt) continue ;; esac
+        bash -n "$f" 2>/dev/null || { echo "      $f"; bad=1; }
+    done
+    [ "$bad" -eq 0 ] && pass "syntax" || fail "syntax"
+}
+
+check_shellcheck() {
+    stage "ShellCheck"
+    if ! have shellcheck; then skip "shellcheck (not installed)"; return; fi
+
+    if shellcheck -x -S error "${SOURCES[@]}"; then
+        pass "shellcheck -S error (blocking gate)"
+    else
+        fail "shellcheck -S error"
+    fi
+
+    local warns
+    warns=$(shellcheck -x -S warning -f gcc "${SOURCES[@]}" 2>/dev/null | wc -l | tr -d ' ')
+    info "shellcheck warnings: $warns (informational; see docs/quality.md)"
+}
+
+check_format() {
+    stage "Formatting (shfmt)"
+    if ! have shfmt; then skip "shfmt (brew install shfmt)"; return; fi
+
+    local unformatted
+    unformatted=$(shfmt -i 4 -ci -l "${SOURCES[@]}" completions/pwt.bash 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$unformatted" -eq 0 ]; then
+        pass "shfmt (all files formatted)"
+    else
+        info "shfmt: $unformatted file(s) unformatted — 'shfmt -i 4 -ci -w' to fix"
+    fi
+}
+
+check_style() {
+    stage "Style (bashate)"
+    if ! have bashate; then skip "bashate (pip install bashate)"; return; fi
+
+    # E006 = line length: pwt has long help/printf lines by design
+    local out errors warnings
+    out=$(bashate -i E006 "${SOURCES[@]}" 2>&1)
+    errors=$(printf '%s' "$out" | grep -cE ': E[0-9]+' || true)
+    warnings=$(printf '%s' "$out" | grep -oE '[0-9]+ bashate warning' | grep -oE '^[0-9]+' || echo 0)
+    info "bashate: ${errors:-0} finding(s), ${warnings:-0} warning(s) (informational)"
+}
+
+check_tests() {
+    local both="${1:-both}"
+    stage "Tests (bats)"
+    if ! have bats; then fail "bats not installed"; return; fi
+
+    if bats tests/ >/tmp/pwt-check-tests.log 2>&1; then
+        pass "bats under $(bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1) ($(grep -c '^ok' /tmp/pwt-check-tests.log) tests)"
+    else
+        fail "bats ($(grep -c '^not ok' /tmp/pwt-check-tests.log) failing)"
+        grep -E '^not ok' /tmp/pwt-check-tests.log | head -10
+    fi
+
+    [ "$both" = both ] || return
+
+    # macOS system bash swallows failing [[ ]] mid-test; pwt itself always
+    # runs under it (shebang), so the 3.2 pass is the compatibility check.
+    if [ "$(uname -s)" = Darwin ] && [ -x /bin/bash ]; then
+        local v32; v32=$(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if /bin/bash "$(command -v bats)" tests/ >/tmp/pwt-check-32.log 2>&1; then
+            pass "bats under system bash $v32 ($(grep -c '^ok' /tmp/pwt-check-32.log) tests)"
+        else
+            fail "bats under system bash $v32 ($(grep -c '^not ok' /tmp/pwt-check-32.log) failing)"
+            grep -E '^not ok' /tmp/pwt-check-32.log | head -10
+        fi
+    fi
+}
+
+check_coverage() {
+    stage "Coverage (kcov)"
+    if ! have kcov; then skip "kcov (brew install kcov)"; return; fi
+
+    local out=coverage
+    rm -rf "$out"; mkdir -p "$out"
+    if kcov --include-path=bin/pwt,lib/pwt --bash-method=DEBUG \
+            "$out" bats tests/ >/tmp/pwt-check-cov.log 2>&1; then
+        local pct
+        pct=$(grep -oE '"percent_covered": *"[0-9.]+"' "$out"/*/coverage.json 2>/dev/null \
+              | head -1 | grep -oE '[0-9.]+' || true)
+        if [ -n "$pct" ]; then
+            info "line coverage: ${pct}% (report: $out/index.html)"
+        else
+            info "coverage produced, percentage not parsed (report: $out/index.html)"
+        fi
+    else
+        info "kcov run failed — see /tmp/pwt-check-cov.log"
+    fi
+}
+
+check_docs() {
+    stage "Docs consistency"
+    local problems=0
+
+    # Every command in the brief help must appear in the man page
+    local cmd
+    for cmd in "state migrate" "server wait" "jobs wait"; do
+        if ! grep -q -- "${cmd% *}" man/pwt.1; then
+            echo "      man page missing: $cmd"; problems=1
+        fi
+    done
+
+    # Version consistency across the three places that declare it
+    local v_bin v_pkg v_readme
+    v_bin=$(grep -m1 'PWT_VERSION=' bin/pwt | cut -d'"' -f2)
+    v_pkg=$(grep -m1 '"version"' package.json | cut -d'"' -f4)
+    v_readme=$(grep -m1 -oE 'version-[0-9.]+-green' README.md | grep -oE '[0-9.]+')
+    if [ "$v_bin" != "$v_pkg" ] || [ "$v_bin" != "$v_readme" ]; then
+        echo "      version mismatch: bin=$v_bin package.json=$v_pkg README=$v_readme"
+        problems=1
+    fi
+
+    [ "$problems" -eq 0 ] && pass "docs (man coverage, version consistency)" || fail "docs"
+}
+
+# --- driver ---------------------------------------------------------------
+
+main() {
+    local mode="${1:-all}"
+    local started; started=$SECONDS
+
+    case "$mode" in
+        fast)
+            check_syntax; check_shellcheck; check_format; check_tests one
+            ;;
+        lint)
+            check_syntax; check_shellcheck; check_format; check_style
+            ;;
+        tests)
+            check_tests both
+            ;;
+        coverage)
+            check_coverage
+            ;;
+        all)
+            check_syntax; check_shellcheck; check_format; check_style
+            check_docs; check_tests both
+            ;;
+        -h|--help)
+            sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            return 0
+            ;;
+        *)
+            echo "Unknown mode: $mode (try: all, fast, lint, tests, coverage)" >&2
+            return 2
+            ;;
+    esac
+
+    printf '\n%s── summary ─%s\n%s' "$BLUE" "$NC" "$SUMMARY"
+    printf '%sran in %ss%s\n' "$DIM" "$((SECONDS - started))" "$NC"
+
+    if [ -n "$FAILED" ]; then
+        printf '\n%sFAILED%s\n' "$RED" "$NC"
+        return 1
+    fi
+    printf '\n%sOK%s\n' "$GREEN" "$NC"
+    return 0
+}
+
+main "$@"

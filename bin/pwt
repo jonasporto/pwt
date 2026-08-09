@@ -30,8 +30,6 @@ set -euo pipefail
 # PWT directory structure
 # PWT_DIR can be overridden via environment for testing/sandbox
 PWT_DIR="${PWT_DIR:-$HOME/.pwt}"
-# Legacy v1 metadata file: only read by the one-time state migration
-PWT_META_FILE="$PWT_DIR/meta.json"
 PWT_PROJECTS_DIR="$PWT_DIR/projects"
 
 # Module library path (relative to this script)
@@ -59,8 +57,6 @@ load_module() {
 }
 
 # Legacy support - will be overridden by project config
-METADATA_DIR="$PWT_DIR"
-METADATA_FILE="$PWT_META_FILE"
 PROJECTS_DIR="$PWT_PROJECTS_DIR"
 
 # Current project context (set by detect_project or --project flag)
@@ -859,11 +855,14 @@ PWT_STATE_VERSION=2
 _state_escape() {
     local s="$1"
     case "$s" in
-        *\\*|*$'\n'*) ;;
+        *\\*|*$'\n'*|*$'\t'*|*$'\r'*) ;;
         *) printf '%s' "$s"; return 0 ;;
     esac
     s="${s//\\/\\\\}"
     s="${s//$'\n'/\\n}"
+    # events.log is TSV, so a raw tab would shift every later column
+    s="${s//$'\t'/\\t}"
+    s="${s//$'\r'/\\r}"
     printf '%s' "$s"
 }
 
@@ -914,6 +913,18 @@ state_get() {
 state_set() {
     local file="$1" key="$2" value="$3"
     local dir tmp line found=false out="" escaped
+
+    # The contract says keys are [a-z0-9_.-]+ and one key=value per line;
+    # nothing enforced it, so `meta set <wt> "port=9999" x` wrote a second
+    # `port=` line. pwt reads the first occurrence, a consumer splitting on
+    # the first `=` reads the other - they disagree about the same field.
+    if ! [[ "$key" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+        pwt_error "Invalid state key: '$key'"
+        echo "  Keys may contain letters, digits, '_', '.' and '-' only." >&2
+        echo "  Use separate arguments: pwt meta set <worktree> <key> <value>" >&2
+        return "$EXIT_USAGE"
+    fi
+
     dir=$(dirname "$file")
     [ -d "$dir" ] || mkdir -p "$dir"
     escaped=$(_state_escape "$value")
@@ -990,7 +1001,33 @@ json_escape() {
     s="${s//$'\n'/\\n}"
     s="${s//$'\r'/\\r}"
     s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
+    _json_escape_c0 "$s"
+}
+
+# JSON forbids every raw code point below 0x20. \n \r \t have short forms
+# (handled above); the rest must become \u00XX or the output is invalid -
+# and a stray control byte can reach us from a pasted description, a commit
+# message, or an agent-written metadata value. Only pays its cost when one
+# is actually present.
+_json_escape_c0() {
+    local s="$1" out rest ch
+    case "$s" in
+        *[$'\001'-$'\010'$'\013'$'\014'$'\016'-$'\037'$'\177']*) ;;
+        *) printf '%s' "$s"; return 0 ;;
+    esac
+    out=""
+    rest="$s"
+    while [ -n "$rest" ]; do
+        ch="${rest%"${rest#?}"}"
+        rest="${rest#?}"
+        case "$ch" in
+            [$'\001'-$'\010'$'\013'$'\014'$'\016'-$'\037'$'\177'])
+                out="${out}$(printf '\\u%04x' "'$ch")"
+                ;;
+            *) out="${out}${ch}" ;;
+        esac
+    done
+    printf '%s' "$out"
 }
 
 # JSON value builders for porcelain output (pure bash, no jq)
@@ -1035,6 +1072,11 @@ json_escape_var() {
             _je="${_je//$'\t'/\\t}"
             ;;
     esac
+    case "$_je" in
+        *[$'\001'-$'\010'$'\013'$'\014'$'\016'-$'\037'$'\177']*)
+            _je=$(_json_escape_c0 "$_je")
+            ;;
+    esac
     eval "$1=\$_je"
 }
 
@@ -1043,14 +1085,35 @@ json_escape_var() {
 events_append() {
     local project="${1:-}" worktree="${2:-}" kind="${3:-}" detail="${4:-}"
     [ -d "$PWT_DIR" ] || mkdir -p "$PWT_DIR" 2>/dev/null || return 0
+    # Escape every field: the contract is one event per line, tab-separated,
+    # and a newline (say `meta set <wt> next "a\nb"`) would otherwise forge a
+    # second, malformed event - and a tab would shift the reader's columns.
     printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$project" "$worktree" "$kind" "$detail" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$(_state_escape "$project")" \
+        "$(_state_escape "$worktree")" \
+        "$(_state_escape "$kind")" \
+        "$(_state_escape "$detail")" \
         >> "$PWT_DIR/events.log" 2>/dev/null || true
     return 0
 }
 
 # Opportunistic rotation: keep events.log at the last 1000 lines.
 # Only rewrites when the file has grown well past the limit.
+# Pairs the server_start event for a foreground server (see cmd_server).
+# Reads globals because an EXIT trap runs after the emitting function's
+# locals are gone.
+_pwt_emit_server_stop() {
+    local rc=$?
+    if [ -n "${_PWT_SERVER_EVENT_WT:-}" ]; then
+        events_append "${_PWT_SERVER_EVENT_PROJECT:-unknown}" \
+            "$_PWT_SERVER_EVENT_WT" "server_stop" \
+            "port=${_PWT_SERVER_EVENT_PORT:-}"
+        _PWT_SERVER_EVENT_WT=""
+    fi
+    return $rc
+}
+
 events_maybe_truncate() {
     local log="$PWT_DIR/events.log" lines
     [ -f "$log" ] || return 0
@@ -3715,6 +3778,18 @@ cmd_server() {
     cd "$worktree_path" || exit 1
 
     events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "server_start" "port=$port"
+
+    # A --bg server is a job, and _mark_job_stopped emits its server_stop.
+    # A foreground server has no job record, so pair the event here or the
+    # feed shows it running forever once the user hits Ctrl-C.
+    # The trap body is evaluated at exit, when these locals are long gone -
+    # hence globals plus a named handler rather than an inline expansion.
+    if [ "${PWT_BG:-false}" != true ]; then
+        _PWT_SERVER_EVENT_PROJECT="${CURRENT_PROJECT:-unknown}"
+        _PWT_SERVER_EVENT_WT="$worktree_name"
+        _PWT_SERVER_EVENT_PORT="$port"
+        trap _pwt_emit_server_stop EXIT INT TERM
+    fi
 
     # Run Pwtfile server phase
     run_pwtfile "server"

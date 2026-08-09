@@ -6,8 +6,8 @@ load test_helper
 setup() {
     setup_test_env
     source_pwt_functions _state_escape _state_unescape state_get state_set \
-        state_del state_list_prefix json_escape events_append \
-        events_maybe_truncate state_version_read state_version_write
+        state_del state_list_prefix _json_escape_c0 json_escape events_append \
+        events_maybe_truncate state_version_read state_version_write pwt_error
     PWT_STATE_VERSION=2
     STATE_FILE="$TEST_TEMP_DIR/sample.state"
 }
@@ -163,6 +163,12 @@ teardown() {
     local got
     got=$(json_escape $'a\nb\tc')
     [ "$got" = 'a\nb\tc' ]
+}
+
+@test "json_escape escapes other C0 control bytes as \\u00XX" {
+    local got
+    got=$(json_escape "$(printf 'a\001b')")
+    [ "$got" = 'a\u0001b' ]
 }
 
 @test "json_escape passes plain strings through" {
@@ -552,4 +558,76 @@ META
     [ "$status" -eq 0 ]
     [[ "$output" != *"legacy pwt state"* ]]
     [[ "$output" != *"jq is not installed"* ]]
+}
+
+# Regression: json_escape covered only \n \r \t, so any other C0 control byte
+# (a pasted description, a commit message, an agent-written value) produced
+# invalid JSON on every machine-readable path.
+@test "state --json escapes C0 control characters" {
+    mkdir -p "$PWT_DIR/state/test-project"
+    printf 'description=a\001b\nport=5001\n' > "$PWT_DIR/state/test-project/WT-C.meta"
+
+    run "$PWT_BIN" state --json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'\u0001'* ]]
+    # The raw byte must not survive into the output
+    [[ "$output" != *$'\001'* ]]
+}
+
+# Regression: events.log is one-event-per-line TSV, but the fields were
+# written raw - a newline forged a second, malformed event.
+@test "events_append escapes newlines and tabs in fields" {
+    events_append "proj" "WT-1" "meta_change" "$(printf 'note=line1\nline2\tcol')"
+
+    local log="$PWT_DIR/events.log"
+    [ -f "$log" ]
+
+    # Exactly one line, with escapes rather than raw control characters
+    run wc -l < "$log"
+    [ "${output// /}" -eq 1 ]
+
+    run cat "$log"
+    [[ "$output" == *'note=line1\nline2\tcol'* ]]
+    [[ "$output" != *$'\n''line2'* ]]
+}
+
+# Regression: nothing enforced the documented key charset, so
+# `meta set <wt> "port=9999" x` appended a second port= line; pwt read the
+# first occurrence and a consumer splitting on '=' read the other.
+@test "state_set rejects a key containing '='" {
+    printf 'port=5001\n' > "$STATE_FILE"
+
+    run state_set "$STATE_FILE" "port=9999" x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"Invalid state key"* ]]
+
+    # File untouched: still exactly one port line, the original value
+    run grep -c '^port' "$STATE_FILE"
+    [ "$output" -eq 1 ]
+    run state_get "$STATE_FILE" port
+    [ "$output" = "5001" ]
+}
+
+@test "state_set accepts the documented key charset" {
+    printf '' > "$STATE_FILE"
+    run state_set "$STATE_FILE" "editor.default" vim
+    [ "$status" -eq 0 ]
+    run state_get "$STATE_FILE" "editor.default"
+    [ "$output" = "vim" ]
+}
+
+# Regression: --check counted records with an unguarded jq, so a single
+# non-object top-level entry aborted the count and the dry run reported
+# nothing to convert - while the real migration converted fine.
+@test "state migrate --check counts records despite a malformed entry" {
+    rm -f "$PWT_DIR/state-version"
+    mkdir -p "$PWT_DIR/projects/proj-a"
+    printf '{"proj-a":{"W1":{"path":"/tmp/1","port":5001}},"junk":"a string"}' \
+        > "$PWT_DIR/meta.json"
+
+    run "$PWT_BIN" state migrate --check --porcelain
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"meta_records":1'* ]]
+    [[ "$output" == *'"converts":1'* ]]
+    [[ "$output" == *'"skips":1'* ]]
 }

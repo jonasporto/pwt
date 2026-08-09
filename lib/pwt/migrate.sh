@@ -49,7 +49,13 @@ migration_001_check() {
             return "$EXIT_ERROR"
         fi
 
-        _MIG_META_RECORDS=$(jq -r '[.[] | to_entries[]] | length' "$PWT_DIR/meta.json" 2>/dev/null || echo 0)
+        # Guard the type here too: `to_entries` on a non-object aborts jq,
+        # and the old `|| echo 0` swallowed that - the very mistake rule #1 in
+        # docs/migrations/README.md warns about, left in the command users are
+        # told to read before migrating.
+        _MIG_META_RECORDS=$(jq -r '
+            [ .[] | select(type == "object") | to_entries[] ] | length
+        ' "$PWT_DIR/meta.json" 2>/dev/null || echo 0)
         _MIG_META_CONVERTS=$(jq -r '
             [ .[] | select(type == "object") | to_entries[]
               | select((.value | type) == "object") ] | length
@@ -148,7 +154,7 @@ _migrate_print_check() {
     migration_001_describe
     echo ""
     echo "Dry run — nothing was modified:"
-    if [ "${_MIG_META_RECORDS:-0}" -gt 0 ]; then
+    if [ -f "$PWT_DIR/meta.json" ]; then
         printf '  %-22s %4s records → %s worktrees, %s skipped\n' \
             "meta.json" "$_MIG_META_RECORDS" "$_MIG_META_CONVERTS" "$_MIG_META_SKIPS"
     fi

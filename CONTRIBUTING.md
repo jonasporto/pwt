@@ -67,6 +67,30 @@ bats tests/commands.bats
 bats tests/pwtfile.bats -f "PWT_ARGS"
 ```
 
+### Which bash runs the tests matters
+
+macOS ships bash 3.2.57, and under it BATS **silently ignores a failing
+`[[ ]]` unless it is the test's last command** — a suite can report green
+while several assertions are never enforced. Install a modern bash so
+`/usr/bin/env bash` resolves to it:
+
+```bash
+brew install bash shellcheck
+bats tests/                              # strict: assertions enforced
+/bin/bash "$(command -v bats)" tests/    # also run under macOS bash 3.2
+```
+
+`bin/pwt` hard-codes `#!/bin/bash`, so pwt itself always runs under 3.2 on
+macOS — installing bash 5 makes the harness stricter without weakening that
+compatibility target. Linux CI is the final word: BSD-vs-GNU differences
+(`sed -i ''`, `stat` flags) never show up on macOS at all.
+
+Lint before opening a PR — `shellcheck -S error` is a blocking CI gate:
+
+```bash
+shellcheck -x -S error bin/pwt lib/pwt/*.sh
+```
+
 ## Code Style
 
 - Functions: `snake_case`

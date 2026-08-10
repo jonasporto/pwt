@@ -293,7 +293,7 @@ EOF
 }
 
 # ============================================
-# Built-in plugins (pwt-aitools, pwt-extras)
+# Built-in plugins (pwt-extras, pwt-statusline)
 # ============================================
 
 @test "pwt-extras plugin help works" {

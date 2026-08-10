@@ -60,6 +60,10 @@ install:
 	@echo "  ✓ Installed fish completions"
 	@# Plugins (optional)
 	@if [ -d plugins ]; then cp -r plugins/* $(SHARE_DIR)/plugins/ 2>/dev/null || true; fi
+	@# Agent skill guide (`pwt skill` resolves $(SHARE_DIR)/skills)
+	@mkdir -p $(SHARE_DIR)/skills
+	@if [ -d skills ]; then cp -r skills/* $(SHARE_DIR)/skills/ 2>/dev/null || true; fi
+	@echo "  ✓ Installed agent skills"
 	@echo ""
 	@echo "Installed successfully!"
 	@echo ""

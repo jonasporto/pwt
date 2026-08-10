@@ -57,7 +57,6 @@ load test_helper
         "run"
         "for-each"
         "editor"
-        "ai"
         "diff"
         "copy"
         "doctor"

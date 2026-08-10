@@ -59,9 +59,6 @@ Show what would be created without creating
 .BR \-e ", " \-\-editor
 Open editor after creating
 .TP
-.BR \-a ", " \-\-ai
-Start AI tool after creating
-.TP
 .BR \-\-from " " \fIREF\fR
 Create from specific ref (tag, commit, branch)
 .TP
@@ -204,14 +201,8 @@ Run command in specific worktree context
 .B for\-each \fICOMMAND\fR...
 Run command in all worktrees
 .TP
-.B shell \fR[\fINAME\fR]
-Start interactive shell in worktree context
-.TP
 .B editor \fR[\fINAME\fR]
 Open worktree in configured editor
-.TP
-.B ai \fR[\fINAME\fR]
-Start AI tool (Claude Code, Cursor, etc.) in worktree
 
 .SS Information
 .TP
@@ -448,9 +439,6 @@ This enables \fBpwt cd\fR integration for actual directory change.
 .TP
 .B PWT_DEBUG
 Enable debug output when set to 1
-.TP
-.B PWT_THEME
-Theme for status TUI (default, matrix, etc.)
 .TP
 .B EDITOR
 Editor for \fBpwt editor\fR command

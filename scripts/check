@@ -108,8 +108,10 @@ check_format() {
 # hides the real problem.
 _report_bats() {
     local rc="$1" log="$2" label="$3" passed failed
-    passed=$(grep -c '^ok' "$log" 2>/dev/null || echo 0)
-    failed=$(grep -c '^not ok' "$log" 2>/dev/null || echo 0)
+    passed=$(grep -c '^ok' "$log" 2>/dev/null || true)
+    passed=${passed:-0}
+    failed=$(grep -c '^not ok' "$log" 2>/dev/null || true)
+    failed=${failed:-0}
 
     if [ "$rc" -eq 0 ]; then
         pass "$label ($passed tests)"

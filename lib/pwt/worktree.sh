@@ -93,7 +93,6 @@ cmd_create() {
 	local description=""
 	local dry_run=false
 	local open_editor=false
-	local start_ai=false
 	local from_current=false
 	local use_clone=false
 	local explicit_branch=""
@@ -108,10 +107,6 @@ cmd_create() {
 			;;
 		-e | --editor)
 			open_editor=true
-			shift
-			;;
-		-a | --ai)
-			start_ai=true
 			shift
 			;;
 		--clone)
@@ -169,7 +164,6 @@ cmd_create() {
 			echo "                    Create local branch tracking an existing remote branch"
 			echo "  --clone           Use git clone instead of worktree"
 			echo "  -e, --editor      Open in editor after creation"
-			echo "  -a, --ai          Start AI assistant after creation"
 			echo "  -n, --dry-run     Show what would be done"
 			echo "  -h, --help        Show this help"
 			echo ""
@@ -246,7 +240,6 @@ cmd_create() {
 		echo "Options:"
 		echo "  --dry-run, -n     Show what would be created without creating"
 		echo "  -e, --editor      Open editor after creating"
-		echo "  -a, --ai          Start AI tool after creating"
 		echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
 		echo "  --from-current    Create from current branch"
 		echo "  --branch <name>   Use exact Git branch name"
@@ -265,7 +258,7 @@ cmd_create() {
 		echo "  pwt create --track origin/team/PROJ-123"
 		echo "  pwt track origin/team/PROJ-123"
 		echo "  pwt create PROJ-123 --branch team/PROJ-123 --from origin/team/PROJ-123"
-		echo "  pwt create PROJ-123 master -e -a"
+		echo "  pwt create PROJ-123 master -e"
 		exit 1
 	fi
 
@@ -273,7 +266,7 @@ cmd_create() {
 	mkdir -p "$WORKTREES_DIR"
 
 	pwt_debug "Creating worktree: branch=$branch, git_branch=${explicit_branch:-default}, base=${base_ref:-default}, from_current=${from_current:-false}"
-	pwt_debug "Options: dry_run=${dry_run:-false}, open_editor=${open_editor:-false}, start_ai=${start_ai:-false}"
+	pwt_debug "Options: dry_run=${dry_run:-false}, open_editor=${open_editor:-false}"
 
 	if [ -n "$base_ref" ] && [ -z "$explicit_branch" ] && [ -z "$track_existing_ref" ] && [[ "$base_ref" == */* ]]; then
 		local suggested_local=$(_pwt_local_branch_for_remote "$base_ref")
@@ -504,7 +497,6 @@ cmd_create() {
 	echo ""
 	echo -e "  Navigate:    ${DIM}pwt cd ${worktree_name}${NC}  or  ${DIM}cd $worktree_dir${NC}"
 	echo -e "  Open editor: ${DIM}pwt editor ${worktree_name}${NC}"
-	echo -e "  Start AI:    ${DIM}pwt ai ${worktree_name}${NC}"
 	echo -e "  Run server:  ${DIM}pwt server ${worktree_name}${NC}  (port ${port})"
 	echo ""
 	echo -e "  ${DIM}Tip: Set as current with 'pwt use ${worktree_name}' for quick access${NC}"
@@ -513,12 +505,6 @@ cmd_create() {
 	if [ "$open_editor" = true ]; then
 		echo ""
 		cmd_editor "$worktree_name"
-	fi
-
-	# Start AI tool if requested
-	if [ "$start_ai" = true ]; then
-		echo ""
-		cmd_ai "$worktree_name"
 	fi
 
 	return 0
@@ -539,7 +525,7 @@ cmd_track() {
 			worktree_name="$2"
 			shift 2
 			;;
-		-e | --editor | -a | --ai | -n | --dry-run | --clone)
+		-e | --editor | -n | --dry-run | --clone)
 			passthrough+=("$1")
 			shift
 			;;
@@ -555,7 +541,6 @@ cmd_track() {
 			echo "Options:"
 			echo "  --name <name>   Override worktree directory/metadata name"
 			echo "  -e, --editor    Open editor after creation"
-			echo "  -a, --ai        Start AI assistant after creation"
 			echo "  -n, --dry-run   Show what would be done"
 			echo "  --clone         Use git clone instead of worktree"
 			echo "  -h, --help      Show this help"

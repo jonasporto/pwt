@@ -68,8 +68,10 @@ pct=$(grep -oE '"percent_covered": *"[0-9.]+"' "$OUT/merged"/*/coverage.json 2>/
 
 if [ -n "$pct" ]; then
     echo "Line coverage: ${pct}%   (report: $OUT/merged/index.html)"
-    [ -n "${GITHUB_STEP_SUMMARY:-}" ] &&
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
         echo "Line coverage: **${pct}%**" >>"$GITHUB_STEP_SUMMARY"
+    fi
+    exit 0
 else
     echo "coverage: produced no percentage - see $OUT/merged" >&2
     exit 1

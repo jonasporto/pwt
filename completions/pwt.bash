@@ -7,7 +7,6 @@ _pwt_meta_actions="list show set import"
 _pwt_project_actions="list init show set path alias"
 _pwt_gateway_actions="init up down start stop restart status use url logs help"
 _pwt_plugin_actions="list install remove create path help"
-_pwt_statusline_actions="install vars format preview test toggle help"
 
 _pwt_get_worktrees() {
 	pwt list --names 2>/dev/null
@@ -61,18 +60,18 @@ _pwt() {
 			[[ "${words[i]}" != -* ]] && ((nargs++))
 		done
 		if [[ $nargs -le 2 ]]; then
-			local flags="--from --from-current --branch --track --track-existing --clone -e --editor -a --ai -n --dry-run"
+			local flags="--from --from-current --branch --track --track-existing --clone -e --editor -n --dry-run"
 			COMPREPLY=($(compgen -W "$(_pwt_get_branches) $flags" -- "$cur"))
 		fi
 		;;
 	track)
-		local flags="--name --clone -e --editor -a --ai -n --dry-run"
+		local flags="--name --clone -e --editor -n --dry-run"
 		COMPREPLY=($(compgen -W "$(_pwt_get_branches) $flags" -- "$cur"))
 		;;
 	adopt | setup)
 		COMPREPLY=($(compgen -d -- "$cur"))
 		;;
-	cd | use | server | s | info | show | port | editor | e | ai | open | repair | fix | fix-port)
+	cd | use | server | s | info | show | port | editor | e | repair | fix | fix-port)
 		COMPREPLY=($(compgen -W "$(_pwt_get_worktrees)" -- "$cur"))
 		;;
 	gateway)
@@ -125,6 +124,11 @@ _pwt() {
 	jobs)
 		if [[ "$prev" == "jobs" ]]; then
 			COMPREPLY=($(compgen -W "list logs wait stop clean help" -- "$cur"))
+		fi
+		;;
+	state)
+		if [[ "$prev" == "state" ]]; then
+			COMPREPLY=($(compgen -W "migrate --json" -- "$cur"))
 		fi
 		;;
 	server | s)

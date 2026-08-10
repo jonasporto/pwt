@@ -95,8 +95,9 @@ they are not forgotten.
 1. Create `docs/migrations/NNN-vX-to-vY.md` from the shape of the existing
    guide: what changes, why, the check output, rollback steps, and what
    external consumers must update.
-2. Implement the four operations in `lib/pwt/migrations/NNN-vX-to-vY.sh`
-   as `migration_NNN_describe/check/up/verify`.
+2. Implement the four operations as `migration_NNN_describe/check/up/verify`
+   functions in `lib/pwt/migrate.sh`, and wire them into the dispatch there
+   (see how `migration_001_*` is registered).
 3. Add a row to the table above and bump the target schema in `bin/pwt`.
 4. Write regression tests with a fixture containing **malformed data**, not
    only the happy path — that is the case that has actually bitten us.

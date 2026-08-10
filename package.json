@@ -6,6 +6,9 @@
   "bin": {
     "pwt": "bin/pwt"
   },
+  "man": [
+    "./man/pwt.1"
+  ],
   "files": [
     "bin/",
     "lib/",

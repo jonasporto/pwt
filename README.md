@@ -98,7 +98,6 @@ pwt server                      # Start dev server (auto port allocation)
 pwt gateway up --port 5999      # Start stable project gateway daemon
 pwt gateway use feat/user-auth  # Route gateway to a worktree server
 pwt servers                     # Show active project servers
-pwt ai                          # Start AI coding assistant
 ```
 
 ---
@@ -161,6 +160,11 @@ Command params are available as `$1`, `$2`, etc. and as raw `$PWT_ARGS`.
 Remove cleanup can delegate to any Pwtfile command with `--kill-<command>`;
 for example, `pwt remove FEATURE --kill-worker` calls `worker --kill`.
 
+A project can also own its branch-naming convention with a `branch_name()`
+hook: it receives the worktree name and description and prints the branch to
+create (`--branch` always wins, and returning nothing falls back to pwt's
+default). See `examples/Pwtfile.reference` for the full semantics.
+
 Pwtfile commands can be called with progressively less context:
 
 ```bash
@@ -191,7 +195,7 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | Command | Description |
 |---------|-------------|
 | `init` | Initialize project in current repo |
-| `add <branch>` | Create worktree from branch (`-e` editor, `-a` AI) |
+| `add <branch>` | Create worktree from branch (`-e` editor) |
 | `track <remote-branch>` | Create worktree tracking an existing remote branch |
 | `adopt [path]` | Register an existing worktree and run setup |
 | `list` | List worktrees with git status (`--dirty`) |
@@ -207,7 +211,6 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | `servers` | Show active servers, gateway target, and background jobs |
 | `logs [worktree]` | Show background job logs (`-f` to follow) |
 | `self` | List installed pwt versions / switch active (`self use <target>`) |
-| `ai` | Start AI coding assistant |
 | `remove <worktree>` | Remove worktree (`--with-branch`) |
 | `state --json` | Versioned JSON snapshot of all pwt state (projects, worktrees, jobs) |
 
@@ -306,7 +309,7 @@ active ports. Add `--all` to include stopped worktrees.
 Some features ship as plugins:
 
 ```bash
-pwt aitools context     # Generate AI context
+pwt statusline install  # Claude Code statusline
 pwt extras benchmark    # Compare disk usage
 ```
 

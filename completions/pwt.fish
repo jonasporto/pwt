@@ -62,7 +62,6 @@ complete -c pwt -n __pwt_needs_command -a run -d 'Run command in worktree'
 complete -c pwt -n __pwt_needs_command -a for-each -d 'Run in all worktrees'
 complete -c pwt -n __pwt_needs_command -a editor -d 'Open in editor'
 complete -c pwt -n __pwt_needs_command -a e -d 'Open in editor'
-complete -c pwt -n __pwt_needs_command -a ai -d 'Start AI tool'
 complete -c pwt -n __pwt_needs_command -a diff -d 'Diff between worktrees'
 complete -c pwt -n __pwt_needs_command -a copy -d 'Copy files between worktrees'
 complete -c pwt -n __pwt_needs_command -a repair -d 'Repair broken worktree'
@@ -102,8 +101,6 @@ complete -c pwt -n '__pwt_using_command show' -a '(__pwt_worktrees)' -d 'Worktre
 complete -c pwt -n '__pwt_using_command port' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command editor' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command e' -a '(__pwt_worktrees)' -d 'Worktree'
-complete -c pwt -n '__pwt_using_command ai' -a '(__pwt_worktrees)' -d 'Worktree'
-complete -c pwt -n '__pwt_using_command open' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command repair' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command fix' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command fix-port' -a '(__pwt_worktrees)' -d 'Worktree'
@@ -125,7 +122,6 @@ complete -c pwt -n '__pwt_using_command rm' -a '(__pwt_worktrees)' -d 'Worktree'
 complete -c pwt -n '__pwt_using_command create' -a '(__pwt_branches)' -d 'Branch'
 complete -c pwt -n '__pwt_using_command create' -l dry-run -s n -d 'Show what would be created'
 complete -c pwt -n '__pwt_using_command create' -s e -l editor -d 'Open editor after'
-complete -c pwt -n '__pwt_using_command create' -s a -l ai -d 'Start AI after'
 complete -c pwt -n '__pwt_using_command create' -l from -d 'Create from ref'
 complete -c pwt -n '__pwt_using_command create' -l from-current -d 'Create from current branch'
 complete -c pwt -n '__pwt_using_command create' -l branch -d 'Use exact Git branch name'
@@ -138,7 +134,6 @@ complete -c pwt -n '__pwt_using_command track' -a '(__pwt_branches)' -d 'Remote 
 complete -c pwt -n '__pwt_using_command track' -l name -d 'Override worktree name'
 complete -c pwt -n '__pwt_using_command track' -l dry-run -s n -d 'Show what would be created'
 complete -c pwt -n '__pwt_using_command track' -s e -l editor -d 'Open editor after'
-complete -c pwt -n '__pwt_using_command track' -s a -l ai -d 'Start AI after'
 complete -c pwt -n '__pwt_using_command adopt' -a '(__fish_complete_directories)' -d 'Path'
 complete -c pwt -n '__pwt_using_command setup' -a '(__fish_complete_directories)' -d 'Path'
 
@@ -152,14 +147,16 @@ complete -c pwt -n '__pwt_using_command project' -a 'list init show set path ali
 # Plugin subcommands
 complete -c pwt -n '__pwt_using_command plugin' -a 'list install remove create path help' -d 'Action'
 
-# Claude-setup subcommands
-
 # Config keys
 complete -c pwt -n '__pwt_using_command config' -a 'main_app worktrees_dir branch_prefix base_port gateway_port gateway_host' -d 'Config key'
 
 # Jobs subcommands
 complete -c pwt -n '__pwt_using_command jobs' -a 'list logs wait stop clean help' -d 'Action'
 complete -c pwt -n '__pwt_using_command server' -a wait -d 'Block until the server is ready'
+
+# State subcommands
+complete -c pwt -n '__pwt_using_command state' -a migrate -d 'Inspect/apply state schema migrations'
+complete -c pwt -n '__pwt_using_command state' -l json -d 'Print snapshot as JSON'
 complete -c pwt -n '__pwt_using_command servers' -l all -s a -d 'Show stopped worktrees'
 complete -c pwt -n '__pwt_using_command servers' -l json -d 'Output JSON'
 complete -c pwt -n '__pwt_using_command gateway' -l port -s p -d 'Gateway port'

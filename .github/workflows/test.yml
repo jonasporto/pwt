@@ -235,3 +235,18 @@ jobs:
       # Warnings are informational until the SC2155 backlog is worked down.
       - name: Run ShellCheck (warnings, informational)
         run: shellcheck -x -S warning bin/pwt lib/pwt/*.sh || true
+
+      - name: Install shfmt
+        run: sudo apt-get install -y shfmt
+
+      # A gate since the 2026-08-09 reformat: the backlog is zero, so any
+      # drift is new and cheap to fix. Same file list as scripts/check.
+      # No printer flags: .editorconfig is the single source of formatting truth.
+      - name: Check formatting (shfmt, blocking)
+        run: |
+          unformatted=$(shfmt -l bin/pwt lib/pwt/*.sh completions/pwt.bash)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files (run 'shfmt -w .'):"
+            printf '  %s\n' $unformatted
+            exit 1
+          fi

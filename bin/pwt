@@ -539,31 +539,6 @@ pick_fallback() {
     return 1
 }
 
-# Open a path in the platform's file manager
-# Usage: open_path <path>
-# macOS has open(1); Linux desktops have xdg-open; headless boxes have neither.
-open_path() {
-    local target="$1"
-    local opener=""
-
-    if [ "$(uname -s)" = "Darwin" ] && command -v open >/dev/null 2>&1; then
-        opener="open"
-    elif command -v xdg-open >/dev/null 2>&1; then
-        opener="xdg-open"
-    elif command -v wslview >/dev/null 2>&1; then
-        opener="wslview" # WSL: opens in the Windows file manager
-    fi
-
-    if [ -z "$opener" ]; then
-        echo -e "${YELLOW}No file manager opener found${NC} (tried open, xdg-open, wslview)" >&2
-        echo "$target"
-        return 1
-    fi
-
-    echo -e "${BLUE}Opening:${NC} $target"
-    "$opener" "$target"
-}
-
 # Check if lsof is available (cache result for performance)
 _lsof_available=""
 has_lsof() {
@@ -674,7 +649,30 @@ ensure_state_v2() {
         return 0
     fi
     if _legacy_state_present; then
-        migrate_state_v1 || exit 1
+        # Serialize the one-time migration: every invocation runs this check,
+        # so two concurrent pwt processes could otherwise both migrate the
+        # same files (staging writes and *.v1.bak renames would race).
+        # Mirrors acquire_metadata_lock: mkdir lock, bounded wait, then treat
+        # the lock as stale (a crashed migration) and take it over.
+        local lock_dir="$PWT_DIR/migrate.lock"
+        local waited=0
+        until mkdir "$lock_dir" 2>/dev/null; do
+            if [ "$waited" -ge 100 ]; then # ~10s: assume stale lock
+                rm -rf "$lock_dir" 2>/dev/null
+                mkdir "$lock_dir" 2>/dev/null || true
+                break
+            fi
+            waited=$((waited + 1))
+            sleep 0.1
+        done
+        # Another process may have finished the migration while we waited
+        if [ ! -f "$PWT_DIR/state-version" ] && _legacy_state_present; then
+            if ! migrate_state_v1; then
+                rm -rf "$lock_dir" 2>/dev/null
+                exit 1
+            fi
+        fi
+        rm -rf "$lock_dir" 2>/dev/null
     fi
     state_version_write
     events_maybe_truncate
@@ -709,7 +707,7 @@ migrate_state_v1() {
     # every entry after it. Guarding keeps one bad entry from truncating the
     # migration; the skipped ones are reported and kept in the .v1.bak.
     if [ -f "$PWT_DIR/meta.json" ]; then
-        local migrated_tsv="$PWT_DIR/.migrate-meta.tsv"
+        local migrated_tsv="$PWT_DIR/.migrate-meta.tsv.$$"
         if ! jq -r '
             to_entries[] | .key as $p | .value | select(type == "object") |
             to_entries[] | .key as $w | .value | select(type == "object") |
@@ -2316,54 +2314,6 @@ get_project_config() {
     state_get "$config_file" "$key"
 }
 
-# ============================================
-# Global AI Tools Config Functions
-# ============================================
-
-# Resolve AI tool command from config or PATH
-# Returns the command to execute for the given tool name
-# Resolution order: global config > PATH > empty
-resolve_ai_tool() {
-    local name="${1:-}"
-    local config_file="$PWT_DIR/config"
-
-    # If empty, use default
-    if [ -z "$name" ]; then
-        name=$(state_get "$config_file" "ai.default")
-        [ -z "$name" ] && name="claude"
-    fi
-
-    # Look up in config
-    local cmd
-    cmd=$(state_get "$config_file" "ai.tools.$name")
-
-    # Fallback to PATH
-    if [ -z "$cmd" ] && command -v "$name" &>/dev/null; then
-        cmd="$name"
-    fi
-
-    echo "$cmd"
-}
-
-# Add an AI tool to global config
-add_ai_tool() {
-    local name="$1"
-    local cmd="$2"
-    state_set "$PWT_DIR/config" "ai.tools.$name" "$cmd"
-}
-
-# Remove an AI tool from global config
-remove_ai_tool() {
-    local name="$1"
-    state_del "$PWT_DIR/config" "ai.tools.$name"
-}
-
-# Set default AI tool
-set_default_ai_tool() {
-    local name="$1"
-    state_set "$PWT_DIR/config" "ai.default" "$name"
-}
-
 # Add an editor to global config
 add_editor_tool() {
     local name="$1"
@@ -3418,7 +3368,6 @@ check_server_status() {
 # Options:
 #   --dry-run, -n     Show what would be created without creating
 #   -e, --editor      Open editor after creating
-#   -a, --ai          Start AI tool after creating
 #   --from <ref>      Create from specific ref (tag, commit, branch)
 #   --from-current    Create from current branch
 
@@ -6131,14 +6080,6 @@ cmd_editor() {
     "$editor_cmd" "$worktree_path"
 }
 
-# ============================================
-# AI Tool Commands
-# ============================================
-
-# Command: open
-# Open worktree in Finder/file manager
-# Usage: pwt open [worktree]
-
 # Command: diff
 # Show diff between worktrees or worktree vs main
 # Usage: pwt diff <worktree1> [worktree2]
@@ -6888,16 +6829,6 @@ cmd_doctor() {
                 echo -e "${YELLOW}⚠${NC} Editor: $editor_cfg (not found in PATH)"
             fi
         fi
-
-        # Check AI config
-        local ai_cfg=$(get_project_config "$CURRENT_PROJECT" "ai" 2>/dev/null)
-        if [ -n "$ai_cfg" ]; then
-            if command -v "$ai_cfg" &>/dev/null; then
-                echo -e "${GREEN}✓${NC} AI: $ai_cfg"
-            else
-                echo -e "${YELLOW}⚠${NC} AI: $ai_cfg (not found in PATH)"
-            fi
-        fi
     else
         echo -e "${YELLOW}⚠${NC} Project: not detected (run from project directory)"
     fi
@@ -7028,10 +6959,8 @@ cmd_select() {
         --height=60%
         --reverse
         --ansi
-        --header=$'Worktree selector\n↵:cd  ^E:editor  ^A:ai  ^O:open  Esc:cancel'
+        --header=$'Worktree selector\n↵:cd  ^E:editor  Esc:cancel'
         --bind="ctrl-e:execute-silent(pwt editor \$(echo {} | awk '{print \$1}'))+abort"
-        --bind="ctrl-a:execute-silent(pwt ai \$(echo {} | awk '{print \$1}'))+abort"
-        --bind="ctrl-o:execute-silent(pwt open \$(echo {} | awk '{print \$1}'))+abort"
     )
 
     if [ "$show_preview" = true ]; then
@@ -7448,7 +7377,6 @@ Worktree Management:
 Navigation:
   cd [worktree|@|-]              Navigate to worktree (@ main, - previous)
   use <worktree>                 Set worktree as current (atomic symlink swap)
-  pick                           Interactive select + auto-use (fzf)
   current [--name|--resolved]    Show current worktree path
 
 Development:
@@ -7458,7 +7386,6 @@ Development:
   servers [--all]                Show project server status
   run <worktree> <cmd>           Run command in worktree
   for-each <cmd>                 Run command in all worktrees
-  shell [worktree]               Open subshell in worktree
   editor [worktree]              Open worktree in editor
 
 Files & Comparison:
@@ -7771,7 +7698,7 @@ show_help_brief() {
     echo ""
     echo "Plugins:"
     echo "  Extend pwt with custom commands. Run 'pwt plugin help' for details."
-    echo "  Available via plugins: topology, context, benchmark, marker, conflicts, prompt"
+    echo "  Available via plugins: statusline, benchmark, marker, conflicts, prompt"
 }
 
 # Command: help
@@ -7833,7 +7760,7 @@ cmd_help() {
             load_module plugin
             "cmd_$topic" --help
             ;;
-        meta | cd | select | use | current | info | server | ai | status | run | restore | open | alias | diff | copy | doctor | steps | step | fix_port)
+        meta | cd | select | use | current | info | server | run | restore | alias | diff | copy | doctor | steps | step | fix_port)
             "cmd_$topic" --help
             ;;
         *)
@@ -9039,7 +8966,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                         exit $?
                     fi
                     case "$_wt_cmd" in
-                        logs | info | show | server | port | cd | use | editor | ai | open | remove | rm | diff | repair | fix | fix-port | meta | run)
+                        logs | info | show | server | port | cd | use | editor | remove | rm | diff | repair | fix | fix-port | meta | run)
                             exec "$0" --project "$CURRENT_PROJECT" "$_wt_cmd" "$_wt_name" "$@"
                             ;;
                     esac
@@ -9050,7 +8977,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
                 echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
                 # Try to suggest similar commands (include installed plugins)
-                _known_commands="create track adopt setup list tree info current use pick select remove cd run shell editor diff copy server gateway servers fix-port auto-remove restore doctor state meta project plugin port help version for-each jobs"
+                _known_commands="create track adopt setup list tree info current use select remove cd run editor diff copy server gateway servers fix-port auto-remove restore doctor state meta project plugin port help version for-each jobs"
                 # Add installed plugins from all directories to suggestions
                 _get_all_plugin_dirs() {
                     echo "$PWT_DIR/plugins"
@@ -9059,6 +8986,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                     [ -d "/usr/local/share/pwt/plugins" ] && echo "/usr/local/share/pwt/plugins"
                     # ~/.local
                     [ -d "$HOME/.local/share/pwt/plugins" ] && echo "$HOME/.local/share/pwt/plugins"
+                    # Bundled next to the script (checkout / npm package layout)
+                    [ -n "${PWT_SCRIPT_DIR:-}" ] && [ -d "$PWT_SCRIPT_DIR/../plugins" ] && echo "$PWT_SCRIPT_DIR/../plugins"
                 }
                 while IFS= read -r _pdir; do
                     [ -d "$_pdir" ] || continue

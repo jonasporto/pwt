@@ -58,34 +58,6 @@ _load_align() {
 }
 
 # ============================================
-# open_path (macOS open / Linux xdg-open / WSL wslview)
-# ============================================
-
-@test "open_path resolves an opener per platform" {
-    run grep -n '^open_path()' "$PWT_BIN"
-    [ "$status" -eq 0 ]
-
-    # macOS open, Linux xdg-open, WSL wslview
-    run grep -c 'xdg-open\|wslview' "$PWT_BIN"
-    [ "$output" -ge 1 ]
-}
-
-@test "pwt open does not hardcode bare open(1)" {
-    run grep -nE '^\s+open "\$worktree_path"' "$PWT_BIN"
-    [ "$status" -ne 0 ]
-}
-
-@test "open_path reports a clear error when no opener exists" {
-    run env PATH="/nonexistent" /bin/bash -c "
-        RED=''; YELLOW=''; BLUE=''; NC=''
-        $(sed -n '/^open_path() {/,/^}/p' "$PWT_BIN")
-        open_path /tmp
-    "
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"No file manager opener found"* ]]
-}
-
-# ============================================
 # Port detection without lsof
 # ============================================
 

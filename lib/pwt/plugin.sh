@@ -45,6 +45,11 @@ _get_plugin_dirs() {
 		dirs+=("$npm_prefix/share/pwt/plugins")
 	fi
 
+	# Bundled plugins next to the (symlink-resolved) script: covers a source
+	# checkout and the npm package layout (lib/node_modules/@scope/pwt), where
+	# no share/pwt directory ever exists.
+	[ -n "${PWT_SCRIPT_DIR:-}" ] && [ -d "$PWT_SCRIPT_DIR/../plugins" ] && dirs+=("$PWT_SCRIPT_DIR/../plugins")
+
 	# Print unique directories
 	printf '%s\n' "${dirs[@]}" | awk '!seen[$0]++'
 }

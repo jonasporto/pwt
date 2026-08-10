@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pwt jobs list --porcelain`: JSON job list, the supported way for scripts
   and Pwtfiles to enumerate jobs.
 - Pwtfile `doctor()` hook: `pwt doctor` runs project-defined health checks.
+- Pwtfile `branch_name()` hook: a project can own its branch-naming
+  convention (`--branch` still wins; empty output falls back to the default).
+  See `examples/Pwtfile.reference`.
+- `pwt skill`: prints the agent-facing CLI guide (`--path` for the file
+  location, `--install` to copy it into agent skill directories).
 - `skills/pwt-cli/SKILL.md`: agent-facing CLI guide, kept in sync with help
   and README by a rule in CLAUDE.md.
 - Exit codes 5 (timeout) and 6 (missing dependency).
@@ -35,7 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builtin picker.
 - Port detection falls back to `ss`, `fuser` and a bash `/dev/tcp` probe when
   `lsof` is absent (previously it assumed the port was free).
-- `pwt open` uses `xdg-open`/`wslview` outside macOS.
 - `column -t` replaced by a pure-bash formatter (absent on slim Linux).
 
 ### Fixed
@@ -45,8 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symlink treated the argument as a worktree name (`pwt server stop` failed).
 - `pwt doctor` reported "Pwtfile: not found" for a Pwtfile declared in project
   config, and now distinguishes "declared but missing".
-- Statusline installer used BSD-only `sed -i ''`, breaking `claude-setup` on
-  Linux.
+- Statusline installer used BSD-only `sed -i ''`, breaking it on Linux (the
+  installer now lives in the `pwt-statusline` plugin).
 - Gateway returned an undefined `EXIT_DEPENDENCY`, crashing the error path
   under `set -u` when node was absent.
 - `pwt shell-init` emitted a function pointing at the *installed* pwt instead
@@ -55,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - `pwt status` (the bash TUI dashboard). The command now exits with a pointer
   to `list`/`tree`/`servers`.
+- `pwt ai` and the `-a`/`--ai` flag on `create`/`track`/`add`: starting an AI
+  tool is the editor's or a Pwtfile command's job, not core pwt's.
+- `pwt open`: use your platform opener on `pwt current` /
+  `$(pwt info --porcelain)` paths instead.
+- The bundled `pwt-aitools` plugin (`topology`, `context`).
+- `claude-setup`/statusline moved out of core into the `pwt-statusline`
+  plugin (`pwt statusline ...` once the plugin is installed).
 
 ## [0.1.14] - 2026-08-05
 

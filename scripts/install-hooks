@@ -61,6 +61,7 @@ if command -v shfmt >/dev/null 2>&1; then
     if [ -n "$unformatted" ]; then
         echo "  not formatted (run 'shfmt -w .'):"
         printf '    %s\n' $unformatted
+        fail=1
     fi
 fi
 

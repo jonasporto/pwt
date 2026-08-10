@@ -177,12 +177,6 @@ install_manual() {
         cp -R "$src/skills"/* "$share_dir/skills/" 2>/dev/null || true
     fi
 
-    # The agent guide is part of the product: `pwt skill` must work from a
-    # curl install too, not only from a checkout or the npm package.
-    if [ -d "$src/skills" ]; then
-        cp -R "$src/skills"/* "$share_dir/skills/" 2>/dev/null || true
-    fi
-
     if [ -d "$src/plugins" ]; then
         cp -R "$src/plugins"/* "$share_dir/plugins/" 2>/dev/null || true
     fi
@@ -251,7 +245,7 @@ fi
 OS_NAME=$(detect_os)
 
 missing=()
-for cmd in git jq; do
+for cmd in git; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         missing+=("$cmd")
     fi
@@ -260,6 +254,17 @@ done
 if [ ${#missing[@]} -gt 0 ]; then
     print_missing_deps "$OS_NAME" "${missing[@]}"
     exit 1
+fi
+
+# jq is only needed once, to convert pre-v2 JSON state. Warn instead of
+# aborting: fresh installs never need it.
+if ! command -v jq >/dev/null 2>&1; then
+    pwt_state_dir="${PWT_DIR:-$HOME/.pwt}"
+    if [ ! -f "$pwt_state_dir/state-version" ] &&
+        { [ -f "$pwt_state_dir/meta.json" ] || [ -f "$pwt_state_dir/config.json" ]; }; then
+        echo "Warning: legacy pwt state found in $pwt_state_dir; the one-time" >&2
+        echo "conversion to state v2 needs jq. Install jq before running pwt." >&2
+    fi
 fi
 
 SRC_PATH=""

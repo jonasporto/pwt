@@ -33,7 +33,6 @@ _pwt_commands() {
         'for-each:Run command in all worktrees'
         'editor:Open worktree in editor'
         'e:Open worktree in editor'
-        'ai:Start AI tool in worktree'
         'diff:Show diff between worktrees'
         'copy:Copy files between worktrees'
         'repair:Repair broken worktree'
@@ -282,7 +281,7 @@ _pwt() {
                     track)
                         case $CURRENT in
                             4) _pwt_branches ;;
-                            *) _arguments '--name[Override worktree name]:name:' '-e[Open editor]' '--editor[Open editor]' '-a[Start AI]' '--ai[Start AI]' '-n[Dry run]' '--dry-run[Dry run]' '--clone[Use clone mode]' ;;
+                            *) _arguments '--name[Override worktree name]:name:' '-e[Open editor]' '--editor[Open editor]' '-n[Dry run]' '--dry-run[Dry run]' '--clone[Use clone mode]' ;;
                         esac
                         ;;
                     adopt|setup)
@@ -293,7 +292,7 @@ _pwt() {
                             "worktrees:worktree:_pwt_worktrees $_project" \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|port|editor|e|ai|open|current|repair|fix|step)
+                    cd|use|server|s|info|show|fix-port|port|editor|e|current|repair|fix|step)
                         _pwt_worktrees "$_project"
                         ;;
                     gateway)
@@ -383,6 +382,13 @@ _pwt() {
                         )
                         _describe 'action' jobs_actions
                         ;;
+                    state)
+                        local state_actions=(
+                            'migrate:Inspect/apply state schema migrations'
+                            '--json:Print snapshot as JSON'
+                        )
+                        _describe 'action' state_actions
+                        ;;
                     server|s)
                         # 'wait' is a subcommand; anything else is a worktree
                         local server_actions=(
@@ -404,7 +410,7 @@ _pwt() {
                     track)
                         case $CURRENT in
                             3) _pwt_branches ;;
-                            *) _arguments '--name[Override worktree name]:name:' '-e[Open editor]' '--editor[Open editor]' '-a[Start AI]' '--ai[Start AI]' '-n[Dry run]' '--dry-run[Dry run]' '--clone[Use clone mode]' ;;
+                            *) _arguments '--name[Override worktree name]:name:' '-e[Open editor]' '--editor[Open editor]' '-n[Dry run]' '--dry-run[Dry run]' '--clone[Use clone mode]' ;;
                         esac
                         ;;
                     adopt|setup)
@@ -415,7 +421,7 @@ _pwt() {
                             'worktrees:worktree:_pwt_worktrees' \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|repair|fix|port|editor|e|ai|open|current)
+                    cd|use|server|s|info|show|fix-port|repair|fix|port|editor|e|current)
                         _pwt_worktrees
                         ;;
                     gateway)
@@ -462,17 +468,6 @@ _pwt() {
                         )
                         _describe 'action' plugin_actions
                         ;;
-                        local claude_actions=(
-                            'install:Install status line script'
-                            'vars:Show available variables'
-                            'format:Show or set format'
-                            'preview:Preview status line'
-                            'test:Run tests'
-                            'toggle:Toggle on/off'
-                            'help:Show help'
-                        )
-                        _describe 'action' claude_actions
-                        ;;
                     jobs)
                         local jobs_actions=(
                             'list:List all jobs'
@@ -483,6 +478,13 @@ _pwt() {
                             'help:Show help'
                         )
                         _describe 'action' jobs_actions
+                        ;;
+                    state)
+                        local state_actions=(
+                            'migrate:Inspect/apply state schema migrations'
+                            '--json:Print snapshot as JSON'
+                        )
+                        _describe 'action' state_actions
                         ;;
                     help|-h|--help)
                         local help_topics=(

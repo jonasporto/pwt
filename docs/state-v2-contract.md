@@ -45,10 +45,10 @@ so nothing under `$PWT_DIR` is a surprise.
 ### File format: flat key=value
 
 One `key=value` per line. Keys match `[A-Za-z0-9_.-]+` (uppercase and `-`
-appear in tool names such as `ai.tools.gpt-4o`) and are rejected otherwise, so
-a key can never contain the `=` that would make pwt and a consumer disagree
-about where the value starts. Nested concepts flatten with dots
-(`editor.default=vim`, `ai.tools.claude=claude --resume`).
+appear in names such as `editor.tools.vscode-insiders`) and are rejected
+otherwise, so a key can never contain the `=` that would make pwt and a
+consumer disagree about where the value starts. Nested concepts flatten with
+dots (`editor.default=vim`).
 
 Values are raw except backslash, newline, tab and CR, escaped as `\\`, `\n`,
 `\t` and `\r`. Only newline can break a `key=value` line; tab and CR are

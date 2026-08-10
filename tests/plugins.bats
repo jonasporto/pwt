@@ -296,16 +296,6 @@ EOF
 # Built-in plugins (pwt-aitools, pwt-extras)
 # ============================================
 
-@test "pwt-aitools plugin help works" {
-    # Copy plugin to test dir
-    cp "$PWD_DIR/plugins/pwt-aitools" "$PWT_DIR/plugins/"
-
-    run "$PWT_BIN" aitools help
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"topology"* ]]
-    [[ "$output" == *"context"* ]]
-}
-
 @test "pwt-extras plugin help works" {
     cp "$PWD_DIR/plugins/pwt-extras" "$PWT_DIR/plugins/"
 
@@ -327,26 +317,6 @@ EOF
     run "$PWT_BIN" extras prompt bash
     [ "$status" -eq 0 ]
     [[ "$output" == *"PS1"* ]]
-}
-
-@test "pwt aitools context requires project" {
-    cp "$PWD_DIR/plugins/pwt-aitools" "$PWT_DIR/plugins/"
-
-    # Run from outside project
-    cd "$TEST_TEMP_DIR"
-    run "$PWT_BIN" aitools context
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"Not in a pwt project"* ]]
-}
-
-@test "pwt aitools context works in project" {
-    cp "$PWD_DIR/plugins/pwt-aitools" "$PWT_DIR/plugins/"
-
-    cd "$TEST_REPO"
-    run "$PWT_BIN" aitools context
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"Worktree Context"* ]]
-    [[ "$output" == *"test-project"* ]]
 }
 
 # ============================================

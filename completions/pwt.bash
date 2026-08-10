@@ -1,13 +1,13 @@
 # pwt - Power Worktrees bash completion
 # Install: source this file or add to /etc/bash_completion.d/
 
-_pwt_commands="init create add track adopt setup list ls tree skill cd use current info show remove rm server s gateway servers run for-each editor e ai open diff copy repair fix auto-remove cleanup restore fix-port doctor state meta m project config port plugin claude-setup setup-shell shell-init steps step alias jobs logs self versions help version"
+_pwt_commands="init create add track adopt setup list ls tree skill cd use current info show remove rm server s gateway servers run for-each editor e diff copy repair fix auto-remove cleanup restore fix-port doctor state meta m project config port plugin setup-shell shell-init steps step alias jobs logs self versions help version"
 
 _pwt_meta_actions="list show set import"
 _pwt_project_actions="list init show set path alias"
 _pwt_gateway_actions="init up down start stop restart status use url logs help"
 _pwt_plugin_actions="list install remove create path help"
-_pwt_claude_actions="install vars format preview test toggle help"
+_pwt_statusline_actions="install vars format preview test toggle help"
 
 _pwt_get_worktrees() {
 	pwt list --names 2>/dev/null
@@ -116,11 +116,6 @@ _pwt() {
 	plugin)
 		if [[ "$prev" == "plugin" ]]; then
 			COMPREPLY=($(compgen -W "$_pwt_plugin_actions" -- "$cur"))
-		fi
-		;;
-	claude-setup)
-		if [[ "$prev" == "claude-setup" ]]; then
-			COMPREPLY=($(compgen -W "$_pwt_claude_actions" -- "$cur"))
 		fi
 		;;
 	config)

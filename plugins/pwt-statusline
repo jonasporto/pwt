@@ -1,23 +1,135 @@
 #!/bin/bash
-# ============================================================
-# pwt claude module
-# Claude Code status line integration
-# ============================================================
+# pwt plugin: statusline
+# Description: Status line integration for pwt (Claude Code today; the format
+#              engine is generic and other prompts can reuse it)
+# Version: 1.0.0
 #
-# This module is sourced by bin/pwt when claude-setup command is used.
+# Subcommands:
+#   install | vars | format | preview | test | toggle | on | off
+#   pwt-only | reset
 #
-# Dependencies:
-#   - Requires functions from bin/pwt: detect_project, load_project_config
-#   - Requires variables: PWT_DIR, CURRENT_PROJECT, RED, GREEN, BLUE, YELLOW, NC
+# This lived in pwt's core as `claude-setup` until the state contract became
+# public and versioned. A status line is just another consumer of that
+# contract - it reads ~/.pwt and formats - so it belongs outside the core,
+# next to the other things a project or a user may or may not want.
 #
+# Install: cp plugins/pwt-statusline ~/.pwt/plugins/
 
-# Guard against multiple sourcing
-[[ -n "${_PWT_CLAUDE_LOADED:-}" ]] && return 0
-_PWT_CLAUDE_LOADED=1
+set -euo pipefail
 
-# Command: claude-setup
-# Install Claude Code status line integration for pwt
-cmd_claude_setup() {
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+DIM='\033[2m'
+NC='\033[0m'
+
+PWT_DIR="${PWT_DIR:-$HOME/.pwt}"
+PWT_PROJECTS_DIR="$PWT_DIR/projects"
+CURRENT_PROJECT="${PWT_PROJECT:-}"
+
+# --- self-contained state helpers -----------------------------------------
+# A plugin runs as its own script, so it cannot borrow the core's functions.
+# These read/write the same key=value files documented in
+# docs/state-v2-contract.md; check state-version before trusting them.
+
+pwt_error() { echo -e "${RED}$*${NC}" >&2; }
+
+_sl_unescape() {
+	local s="$1" out="" chunk
+	case "$s" in *\\*) ;; *)
+		printf '%s' "$s"
+		return 0
+		;;
+	esac
+	while [ -n "$s" ]; do
+		chunk="${s%%\\*}"
+		if [ "$chunk" = "$s" ]; then
+			out+="$s"
+			break
+		fi
+		out+="$chunk"
+		s="${s#*\\}"
+		case "$s" in
+		n*)
+			out+=$'\n'
+			s="${s#n}"
+			;;
+		t*)
+			out+=$'\t'
+			s="${s#t}"
+			;;
+		r*)
+			out+=$'\r'
+			s="${s#r}"
+			;;
+		\\*)
+			out+='\'
+			s="${s#\\}"
+			;;
+		*) out+='\' ;;
+		esac
+	done
+	printf '%s' "$out"
+}
+
+_sl_escape() {
+	local s="$1"
+	case "$s" in *\\* | *$'\n'* | *$'\t'* | *$'\r'*) ;; *)
+		printf '%s' "$s"
+		return 0
+		;;
+	esac
+	s="${s//\\/\\\\}"
+	s="${s//$'\n'/\\n}"
+	s="${s//$'\t'/\\t}"
+	s="${s//$'\r'/\\r}"
+	printf '%s' "$s"
+}
+
+state_get() {
+	local file="$1" key="$2" line
+	[ -f "$file" ] || return 0
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in
+		"$key="*)
+			_sl_unescape "${line#*=}"
+			return 0
+			;;
+		esac
+	done <"$file"
+	return 0
+}
+
+state_set() {
+	local file="$1" key="$2" value="$3"
+	local dir line found=false out="" escaped tmp
+	dir=$(dirname "$file")
+	[ -d "$dir" ] || mkdir -p "$dir"
+	escaped=$(_sl_escape "$value")
+	if [ -f "$file" ]; then
+		while IFS= read -r line || [ -n "$line" ]; do
+			case "$line" in
+			"$key="*)
+				[ "$found" = true ] && continue
+				out+="${key}=${escaped}"$'\n'
+				found=true
+				;;
+			*) out+="$line"$'\n' ;;
+			esac
+		done <"$file"
+	fi
+	[ "$found" = false ] && out+="${key}=${escaped}"$'\n'
+	tmp="${file}.tmp.$$"
+	printf '%s' "$out" >"$tmp" && mv "$tmp" "$file"
+}
+
+get_project_config() {
+	state_get "$PWT_PROJECTS_DIR/$1/config" "$2"
+}
+
+cmd_statusline() {
 	local action="${1:-install}"
 	local claude_dir="$HOME/.claude"
 	local script_file="$claude_dir/statusline-command.sh"
@@ -641,3 +753,14 @@ STATUSLINE_EOF
 	echo ""
 	echo "Restart Claude Code or run /statusline to apply."
 }
+
+# --- plugin entry point ---------------------------------------------------
+
+case "${1:-install}" in
+help | --help | -h)
+	cmd_statusline --help
+	;;
+*)
+	cmd_statusline "$@"
+	;;
+esac

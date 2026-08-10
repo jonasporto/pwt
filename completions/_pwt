@@ -34,7 +34,6 @@ _pwt_commands() {
         'editor:Open worktree in editor'
         'e:Open worktree in editor'
         'ai:Start AI tool in worktree'
-        'open:Open worktree in Finder'
         'diff:Show diff between worktrees'
         'copy:Copy files between worktrees'
         'repair:Repair broken worktree'
@@ -55,7 +54,6 @@ _pwt_commands() {
         'config:Configure current project'
         'port:Get port for worktree'
         'plugin:Manage pwt plugins'
-        'claude-setup:Configure Claude Code integration'
         'setup-shell:Install shell integration'
         'shell-init:Output shell integration code'
         'jobs:Manage background jobs'
@@ -464,7 +462,6 @@ _pwt() {
                         )
                         _describe 'action' plugin_actions
                         ;;
-                    claude-setup)
                         local claude_actions=(
                             'install:Install status line script'
                             'vars:Show available variables'

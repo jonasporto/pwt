@@ -5567,7 +5567,7 @@ cmd_implicit_cd() {
         -?*) return 1 ;;
     esac
     case "$target" in
-        init | discover | create | add | track | adopt | setup | list | ls | tree | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | editor | e | editor:* | ai | ai:* | open | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | select | _select | shell-init | setup-shell | claude-setup | project | port | version | help | -h | --help | plugin)
+        init | discover | create | add | track | adopt | setup | list | ls | tree | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
             return 1
             ;;
     esac
@@ -6135,260 +6135,9 @@ cmd_editor() {
 # AI Tool Commands
 # ============================================
 
-# Command: ai add
-# Add an AI tool to global config
-cmd_ai_add() {
-    local name="${1:-}"
-    local cmd="${2:-}"
-
-    if [ -z "$name" ] || [ -z "$cmd" ]; then
-        echo "Usage: pwt ai add <name> \"<command>\""
-        echo "Example: pwt ai add gemini \"gemini --model gemini-2.0-flash\""
-        return 1
-    fi
-
-    add_ai_tool "$name" "$cmd"
-    echo -e "${GREEN}Added '$name' → \"$cmd\"${NC}"
-}
-
-# Command: ai remove
-# Remove an AI tool from global config
-cmd_ai_remove() {
-    local name="${1:-}"
-
-    if [ -z "$name" ]; then
-        echo "Usage: pwt ai remove <name>"
-        return 1
-    fi
-
-    remove_ai_tool "$name"
-    echo -e "${GREEN}Removed '$name'${NC}"
-}
-
-# Command: ai list
-# List configured AI tools
-cmd_ai_list() {
-    local config_file="$PWT_DIR/config"
-    local default_tool=""
-    local tools=""
-
-    if [ -f "$config_file" ]; then
-        default_tool=$(state_get "$config_file" "ai.default")
-        tools=$(state_list_prefix "$config_file" "ai.tools")
-    fi
-    [ -z "$default_tool" ] && default_tool="claude"
-
-    if [ -z "$tools" ]; then
-        echo "No tools configured."
-        echo ""
-        echo "Commands in PATH can be used directly: pwt ai:claude, pwt ai:gemini"
-        echo "To add with custom options: pwt ai add <name> \"<command>\""
-        return
-    fi
-
-    echo "Configured tools:"
-    while IFS=$'\t' read -r name cmd; do
-        if [ "$name" = "$default_tool" ]; then
-            echo -e "  ${GREEN}$name${NC} (default) → $cmd"
-        else
-            echo -e "  $name → $cmd"
-        fi
-    done <<<"$tools"
-}
-
-# Command: ai:tool --default
-# Set default AI tool
-cmd_ai_set_default() {
-    local name="${1:-}"
-
-    if [ -z "$name" ]; then
-        echo "Usage: pwt ai:<name> --default"
-        return 1
-    fi
-
-    set_default_ai_tool "$name"
-    echo -e "${GREEN}Default set to '$name'${NC}"
-}
-
-# Command: ai help
-# Show AI command help
-cmd_ai_help() {
-    echo "Usage: pwt ai [tool] [worktree] [-- args...]"
-    echo ""
-    echo "Start AI coding tool in worktree."
-    echo ""
-    echo "Commands:"
-    echo "  pwt ai add <name> \"<cmd>\"   Add a tool"
-    echo "  pwt ai remove <name>         Remove a tool"
-    echo "  pwt ai list                  List configured tools"
-    echo "  pwt ai:<name> --default      Set default tool"
-    echo ""
-    echo "Usage:"
-    echo "  pwt ai                       Run default tool in current/main"
-    echo "  pwt ai TICKET                Run default in worktree"
-    echo "  pwt ai @                     Run default in main app"
-    echo "  pwt ai:gemini                Run gemini in current/main"
-    echo "  pwt ai:gemini TICKET         Run gemini in worktree"
-    echo "  pwt ai:codex -- --full-auto  Run with extra args"
-    echo "  pwt ai:gemini --add          Add to config + run"
-    echo ""
-    echo "Resolution: config → PATH → error"
-}
-
-# Command: ai
-# Start AI coding tool in worktree
-# Usage: pwt ai [tool] [worktree] [-- args...]
-cmd_ai() {
-    local tool="${1:-}"
-    shift || true
-
-    # Handle subcommands (management)
-    # When called as "pwt ai add" (no ai:tool), tool will be empty
-    # and "add" will be in $1. When called as "pwt ai:tool", tool
-    # will have the tool name.
-    local subcmd="$tool"
-    [ -z "$subcmd" ] && subcmd="${1:-}"
-
-    case "$subcmd" in
-        add)
-            [ -z "$tool" ] && shift # skip "add" if it was in args
-            cmd_ai_add "$@"
-            return
-            ;;
-        remove)
-            [ -z "$tool" ] && shift
-            cmd_ai_remove "$@"
-            return
-            ;;
-        list)
-            [ -z "$tool" ] && shift
-            cmd_ai_list "$@"
-            return
-            ;;
-        -h | --help | help)
-            cmd_ai_help
-            return
-            ;;
-    esac
-
-    # Parse flags and arguments
-    local worktree=""
-    local set_default=false
-    local add_tool=false
-    local extra_args=()
-
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --default)
-                set_default=true
-                shift
-                ;;
-            --add)
-                add_tool=true
-                shift
-                ;;
-            --)
-                shift
-                extra_args=("$@")
-                break
-                ;;
-            *)
-                [ -z "$worktree" ] && worktree="$1"
-                shift
-                ;;
-        esac
-    done
-
-    # --default: set tool as default and exit
-    if [ "$set_default" = true ]; then
-        cmd_ai_set_default "$tool"
-        return
-    fi
-
-    # --add: check tool exists in PATH before proceeding
-    if [ "$add_tool" = true ]; then
-        if [ -z "$tool" ]; then
-            echo -e "${RED}Cannot use --add without specifying a tool${NC}"
-            echo "Use: pwt ai:<tool> --add"
-            return 1
-        fi
-        if ! command -v "$tool" &>/dev/null; then
-            echo -e "${RED}'$tool' not found in PATH${NC}"
-            return 1
-        fi
-        add_ai_tool "$tool" "$tool"
-        echo -e "${GREEN}Added '$tool' → \"$tool\"${NC}"
-    fi
-
-    # Resolve tool (config > PATH)
-    local ai_cmd
-    ai_cmd=$(resolve_ai_tool "$tool")
-
-    if [ -z "$ai_cmd" ]; then
-        echo -e "${RED}No '$tool' configured and no '$tool' command found${NC}"
-        echo "Use: pwt ai add $tool \"<command>\""
-        return 1
-    fi
-
-    # Resolve worktree path
-    local worktree_path
-    if [ -z "$worktree" ] || [ "$worktree" = "@" ]; then
-        worktree_path="$MAIN_APP"
-    else
-        worktree_path=$(cmd_cd "$worktree" 2>/dev/null) || true
-        if [ -z "$worktree_path" ] || [ ! -d "$worktree_path" ]; then
-            echo -e "${RED}Worktree not found: $worktree${NC}"
-            return 1
-        fi
-    fi
-
-    # Get display name for the tool
-    local tool_name="${tool:-default}"
-    if [ "$tool_name" = "default" ]; then
-        tool_name=$(state_get "$PWT_DIR/config" "ai.default")
-        [ -z "$tool_name" ] && tool_name="claude"
-    fi
-
-    echo -e "${BLUE}Starting $tool_name in:${NC} $worktree_path"
-    (cd "$worktree_path" && eval "$ai_cmd" ${extra_args[@]+"${extra_args[@]}"})
-}
-
 # Command: open
 # Open worktree in Finder/file manager
 # Usage: pwt open [worktree]
-cmd_open() {
-    local target="${1:-}"
-    target="${target%/}"
-    local worktree_path
-
-    if [[ "$target" == "-h" || "$target" == "--help" ]]; then
-        echo "Usage: pwt open [worktree]"
-        echo ""
-        echo "Open a worktree directory in Finder."
-        echo ""
-        echo "Arguments:"
-        echo "  worktree   Target worktree (optional, default: main app)"
-        echo "  @          Main app directory"
-        echo ""
-        echo "Examples:"
-        echo "  pwt open              # open main app"
-        echo "  pwt open TICKET-123   # open worktree"
-        echo "  pwt open @            # open main app"
-        return 0
-    fi
-
-    if [ -z "$target" ] || [ "$target" = "@" ]; then
-        worktree_path="$MAIN_APP"
-    else
-        worktree_path=$(cmd_cd "$target" 2>/dev/null)
-        if [ -z "$worktree_path" ] || [ ! -d "$worktree_path" ]; then
-            echo -e "${RED}Worktree not found: $target${NC}"
-            exit 1
-        fi
-    fi
-
-    open_path "$worktree_path"
-}
 
 # Command: diff
 # Show diff between worktrees or worktree vs main
@@ -7711,7 +7460,6 @@ Development:
   for-each <cmd>                 Run command in all worktrees
   shell [worktree]               Open subshell in worktree
   editor [worktree]              Open worktree in editor
-  ai [worktree] [-- args]        Start AI tool in worktree
 
 Files & Comparison:
   diff <wt1> [wt2]               Show diff between worktrees
@@ -7933,8 +7681,6 @@ show_help_brief() {
     echo "  run <worktree> <cmd>           Run command in worktree"
     echo "  for-each <cmd>                 Run command in all worktrees"
     echo "  editor [worktree]              Open worktree in editor"
-    echo "  ai [worktree] [-- args]        Start AI tool in worktree"
-    echo "  open [worktree]                Open worktree in Finder"
     echo "  diff <wt1> [wt2]               Show diff between worktrees"
     echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
     echo "  server [worktree]              Start dev server (from Pwtfile)"
@@ -9069,19 +8815,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             shift # remove "editor" or "editor:tool" from args
             cmd_editor "$_editor_tool" "$@"
             ;;
-        ai | ai:*)
-            require_project
-            _ai_tool=""
-            if [[ "$1" == ai:* ]]; then
-                _ai_tool="${1#ai:}"
-            fi
-            shift # remove "ai" or "ai:tool" from args
-            cmd_ai "$_ai_tool" "$@"
-            ;;
-        open)
-            require_project
-            cmd_open "${2:-}"
-            ;;
         diff)
             require_project
             cmd_diff "${2:-}" "${3:-}"
@@ -9146,11 +8879,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             ;;
         setup-shell)
             cmd_setup_shell
-            ;;
-        claude-setup)
-            shift # remove "claude-setup" from args
-            load_module claude
-            cmd_claude_setup "$@"
             ;;
         project)
             load_module project
@@ -9322,7 +9050,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
                 echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
                 # Try to suggest similar commands (include installed plugins)
-                _known_commands="create track adopt setup list tree info current use pick select remove cd run shell editor ai open diff copy server gateway servers fix-port auto-remove restore doctor state meta project plugin port help version for-each jobs"
+                _known_commands="create track adopt setup list tree info current use pick select remove cd run shell editor diff copy server gateway servers fix-port auto-remove restore doctor state meta project plugin port help version for-each jobs"
                 # Add installed plugins from all directories to suggestions
                 _get_all_plugin_dirs() {
                     echo "$PWT_DIR/plugins"

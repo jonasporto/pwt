@@ -20,18 +20,17 @@ teardown() {
     [ -f "$PWT_LIB_DIR/worktree.sh" ]
     [ -f "$PWT_LIB_DIR/project.sh" ]
     [ -f "$PWT_LIB_DIR/plugin.sh" ]
-    [ -f "$PWT_LIB_DIR/claude.sh" ]
 }
 
 @test "all modules have source guards" {
-    for module in list worktree project plugin claude; do
+    for module in list worktree project plugin; do
         run grep "_PWT_.*_LOADED" "$PWT_LIB_DIR/${module}.sh"
         [ "$status" -eq 0 ]
     done
 }
 
 @test "all modules have valid bash syntax" {
-    for module in list worktree project plugin claude; do
+    for module in list worktree project plugin; do
         run bash -n "$PWT_LIB_DIR/${module}.sh"
         [ "$status" -eq 0 ]
     done
@@ -58,9 +57,6 @@ teardown() {
     [ "$status" -eq 0 ]
 
     run grep 'load_module plugin' "$PWT_BIN"
-    [ "$status" -eq 0 ]
-
-    run grep 'load_module claude' "$PWT_BIN"
     [ "$status" -eq 0 ]
 }
 
@@ -106,12 +102,6 @@ EOF
 @test "plugin command works (loads plugin module)" {
     run "$PWT_BIN" plugin list
     [ "$status" -eq 0 ]
-}
-
-@test "claude-setup --help works (loads claude module)" {
-    run "$PWT_BIN" claude-setup --help
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"Usage: pwt claude-setup"* ]]
 }
 
 @test "status stub explains removal" {

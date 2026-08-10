@@ -179,13 +179,6 @@ teardown() {
     [[ "$output" == *"port"* ]]
 }
 
-@test "pwt open --help shows usage" {
-    cd "$TEST_REPO"
-    run "$PWT_BIN" open --help
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"Usage"* ]]
-}
-
 @test "pwt gateway --help shows usage" {
     cd "$TEST_REPO"
     run "$PWT_BIN" gateway --help

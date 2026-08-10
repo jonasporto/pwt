@@ -63,7 +63,6 @@ complete -c pwt -n __pwt_needs_command -a for-each -d 'Run in all worktrees'
 complete -c pwt -n __pwt_needs_command -a editor -d 'Open in editor'
 complete -c pwt -n __pwt_needs_command -a e -d 'Open in editor'
 complete -c pwt -n __pwt_needs_command -a ai -d 'Start AI tool'
-complete -c pwt -n __pwt_needs_command -a open -d 'Open in Finder'
 complete -c pwt -n __pwt_needs_command -a diff -d 'Diff between worktrees'
 complete -c pwt -n __pwt_needs_command -a copy -d 'Copy files between worktrees'
 complete -c pwt -n __pwt_needs_command -a repair -d 'Repair broken worktree'
@@ -83,7 +82,6 @@ complete -c pwt -n __pwt_needs_command -a project -d 'Manage projects'
 complete -c pwt -n __pwt_needs_command -a config -d 'Configure project'
 complete -c pwt -n __pwt_needs_command -a port -d 'Get port for worktree'
 complete -c pwt -n __pwt_needs_command -a plugin -d 'Manage plugins'
-complete -c pwt -n __pwt_needs_command -a claude-setup -d 'Configure Claude Code'
 complete -c pwt -n __pwt_needs_command -a setup-shell -d 'Install shell integration'
 complete -c pwt -n __pwt_needs_command -a shell-init -d 'Output shell init code'
 complete -c pwt -n __pwt_needs_command -a jobs -d 'Manage background jobs'
@@ -155,7 +153,6 @@ complete -c pwt -n '__pwt_using_command project' -a 'list init show set path ali
 complete -c pwt -n '__pwt_using_command plugin' -a 'list install remove create path help' -d 'Action'
 
 # Claude-setup subcommands
-complete -c pwt -n '__pwt_using_command claude-setup' -a 'install vars format preview test toggle help' -d 'Action'
 
 # Config keys
 complete -c pwt -n '__pwt_using_command config' -a 'main_app worktrees_dir branch_prefix base_port gateway_port gateway_host' -d 'Config key'

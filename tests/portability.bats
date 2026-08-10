@@ -61,12 +61,13 @@ _load_align() {
 # open_path (macOS open / Linux xdg-open / WSL wslview)
 # ============================================
 
-@test "open_path is defined and used by cmd_open" {
+@test "open_path resolves an opener per platform" {
     run grep -n '^open_path()' "$PWT_BIN"
     [ "$status" -eq 0 ]
 
-    run grep -n 'open_path "\$worktree_path"' "$PWT_BIN"
-    [ "$status" -eq 0 ]
+    # macOS open, Linux xdg-open, WSL wslview
+    run grep -c 'xdg-open\|wslview' "$PWT_BIN"
+    [ "$output" -ge 1 ]
 }
 
 @test "pwt open does not hardcode bare open(1)" {

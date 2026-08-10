@@ -327,8 +327,9 @@ Create your own: `pwt plugin create mycommand`
 
 ### For agents
 
-Driving pwt from an AI agent or a script? Read
-[skills/pwt-cli/SKILL.md](skills/pwt-cli/SKILL.md): machine-readable flags
+Driving pwt from an AI agent or a script? Run **`pwt skill`** to print the
+agent guide (or `pwt skill --install` to copy it into `~/.claude/skills` and
+`~/.agents/skills`). It covers: machine-readable flags
 (`list --porcelain`, `info --porcelain`, `gateway status --json`,
 `pwt state --json`, `--no-input`), the exit-code table, and the wait
 primitives (`pwt server wait`, `pwt jobs wait`) that replace poll loops.

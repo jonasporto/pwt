@@ -7,7 +7,7 @@ REF_TYPE_DEFAULT="auto"
 PREFIX_DEFAULT="$HOME/.local"
 
 usage() {
-    cat << 'USAGE'
+    cat <<'USAGE'
 Usage: install.sh [options]
 
 Options:
@@ -79,7 +79,7 @@ normalize_repo_base() {
         git@github.com:*)
             repo="https://github.com/${repo#git@github.com:}"
             ;;
-        https://github.com/*|http://github.com/*)
+        https://github.com/* | http://github.com/*)
             ;;
         */*)
             repo="https://github.com/$repo"
@@ -103,10 +103,10 @@ resolve_ref_type() {
     fi
 
     case "$ref" in
-        main|master|develop)
+        main | master | develop)
             echo "branch"
             ;;
-        v[0-9]*|V[0-9]*)
+        v[0-9]* | V[0-9]*)
             echo "tag"
             ;;
         *)
@@ -149,7 +149,7 @@ install_manual() {
     local fish_comp="$prefix/share/fish/vendor_completions.d"
     local share_dir="$prefix/share/pwt"
 
-    mkdir -p "$bindir" "$libdir" "$mandir" "$zsh_comp" "$bash_comp" "$fish_comp" "$share_dir/plugins"
+    mkdir -p "$bindir" "$libdir" "$mandir" "$zsh_comp" "$bash_comp" "$fish_comp" "$share_dir/plugins" "$share_dir/skills"
 
     if command -v install >/dev/null 2>&1; then
         install -m 755 "$src/bin/pwt" "$bindir/pwt"
@@ -169,6 +169,18 @@ install_manual() {
         cp "$src/completions/_pwt" "$zsh_comp/_pwt"
         cp "$src/completions/pwt.bash" "$bash_comp/pwt"
         cp "$src/completions/pwt.fish" "$fish_comp/pwt.fish"
+    fi
+
+    # The agent guide is part of the product: `pwt skill` must work from a
+    # curl install too, not only from a checkout or the npm package.
+    if [ -d "$src/skills" ]; then
+        cp -R "$src/skills"/* "$share_dir/skills/" 2>/dev/null || true
+    fi
+
+    # The agent guide is part of the product: `pwt skill` must work from a
+    # curl install too, not only from a checkout or the npm package.
+    if [ -d "$src/skills" ]; then
+        cp -R "$src/skills"/* "$share_dir/skills/" 2>/dev/null || true
     fi
 
     if [ -d "$src/plugins" ]; then
@@ -219,7 +231,7 @@ while [ $# -gt 0 ]; do
             SHOW_SHELL_INSTRUCTIONS=false
             shift
             ;;
-        -h|--help)
+        -h | --help)
             usage
             exit 0
             ;;
@@ -291,7 +303,7 @@ else
     CLEANUP_DIR=$(mktemp -d)
     TARBALL_FILE="$CLEANUP_DIR/pwt.tar.gz"
 
-    $DOWNLOAD_CMD "$TARBALL_URL" > "$TARBALL_FILE"
+    $DOWNLOAD_CMD "$TARBALL_URL" >"$TARBALL_FILE"
 
     if [ -n "$SHA256" ]; then
         if ! verify_sha256 "$TARBALL_FILE" "$SHA256"; then

@@ -228,6 +228,12 @@ Show git diff between two worktrees
 .B doctor
 Check system health and configuration
 .TP
+.B skill \fR[\fB\-\-path\fR|\fB\-\-install\fR [\fIDIR\fR]]
+Print the agent-facing guide to driving pwt (machine-readable flags, exit
+codes, wait primitives, worktree lifecycle). \fB\-\-install\fR copies the
+skill directory, default \fI~/.claude/skills/pwt\-cli\fR. For humans, see
+\fBpwt help\fR.
+.TP
 .B state \fR[\fB\-\-json\fR]
 Versioned snapshot of all pwt state (projects, worktrees with metadata,
 background jobs). See \fBdocs/state\-v2\-contract.md\fR.

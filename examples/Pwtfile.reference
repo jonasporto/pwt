@@ -1,0 +1,326 @@
+#!/bin/bash
+# Reference Pwtfile: the scenarios that come up when several worktrees of the
+# same project run side by side, and the strategies that solve them.
+#
+# Copy the sections you need; this file is meant to be read, not sourced as-is.
+# Run `pwt help pwtfile` for the hook contract and the PWT_* variables.
+#
+# The question every section answers is the same one: this resource is
+# global, but I have N worktrees - do I isolate it, share it, or derive it?
+#
+#   Derive   cheap, unique per worktree, no coordination      ports, DB names
+#   Isolate  correctness requires separation                  databases, queues
+#   Share    expensive to build, identical across worktrees   caches, stores
+#
+# Getting that classification wrong is the usual source of "works in one
+# worktree, breaks in another".
+
+# Port for the FIRST worktree. pwt allocates upward from here and exports the
+# result as $PWT_PORT. Never hardcode a port anywhere below - derive from it.
+PORT_BASE=5001
+
+# ---------------------------------------------------------------------------
+# setup(): runs once, right after `pwt create`
+# ---------------------------------------------------------------------------
+# Keep it ordered by dependency and delegate to step_* functions, so any one
+# of them can be re-run later with `pwt step <name>` when it fails or when
+# something changes.
+setup() {
+    local suffix
+    suffix=$(_worktree_suffix)
+
+    step_configure_files "$suffix"
+    step_install_deps
+    step_setup_databases "$suffix"
+
+    echo "Ready: port $PWT_PORT, suffix $suffix"
+}
+
+# A stable, collision-free identifier derived from the allocated port. Use it
+# to name anything that must not be shared: databases, containers, volumes,
+# queue namespaces.
+_worktree_suffix() {
+    echo "_wt${PWT_PORT}"
+}
+
+# ---------------------------------------------------------------------------
+# Scenario: config files that must differ per worktree
+# ---------------------------------------------------------------------------
+# The file is git-ignored and machine-specific, so it cannot come from the
+# repo. Copy a template, then substitute the values this worktree needs.
+step_configure_files() {
+    local suffix="${1:?step_configure_files needs a suffix (e.g. _wt5001)}"
+
+    # pwtfile_copy copies from the main app when the file is absent here
+    pwtfile_copy ".env"
+
+    # Rewrite only the keys that must differ; leave the rest of the file alone
+    pwtfile_replace ".env" "PORT=" "PORT=${PWT_PORT}"
+    pwtfile_replace ".env" "DATABASE_SUFFIX=" "DATABASE_SUFFIX=${suffix}"
+
+    echo "  ✓ .env configured for port ${PWT_PORT}"
+}
+
+# ---------------------------------------------------------------------------
+# Scenario: dependencies - expensive to install, identical across worktrees
+# ---------------------------------------------------------------------------
+# Strategy: SHARE the store, ISOLATE the tree. A content-addressed store
+# (pnpm, a package cache) plus per-worktree links gives correctness without
+# paying install cost N times.
+#
+# Fall back to a plain install when the sharing mechanism is unavailable:
+# a Pwtfile that only works on a perfectly configured machine is a Pwtfile
+# that fails at 2am.
+step_install_deps() {
+    if command -v pnpm >/dev/null 2>&1; then
+        # Shared content-addressed store; the worktree gets links, not copies
+        pnpm install --frozen-lockfile
+    elif [ -f package-lock.json ]; then
+        npm ci
+    else
+        echo "  ⚠ no lockfile found; skipping dependency install"
+        return 0
+    fi
+}
+
+# A cache that is safe to share is worth sharing explicitly: symlink it to a
+# single location instead of rebuilding it per worktree.
+step_share_caches() {
+    # pwtfile_symlink points a per-worktree path at a shared one
+    pwtfile_symlink ".cache" "${MAIN_APP}/.cache"
+}
+
+# ---------------------------------------------------------------------------
+# Scenario: databases - correctness requires isolation
+# ---------------------------------------------------------------------------
+# Never let two worktrees share a mutable database: one migration or one
+# destructive test run corrupts the other's state, and the symptom appears in
+# the *other* worktree, hours later.
+#
+# Cloning a seeded database is much faster than migrating from empty, so try
+# the clone first and fall back to a full setup.
+step_setup_databases() {
+    local suffix="${1:?step_setup_databases needs a suffix (e.g. _wt5001)}"
+    local db="app_development${suffix}"
+
+    if _database_exists "$db"; then
+        echo "  ✓ database $db already exists"
+        return 0
+    fi
+
+    if _clone_database "app_development" "$db"; then
+        echo "  ✓ cloned app_development → $db"
+    else
+        echo "  … no donor database; creating from scratch"
+        _create_database "$db"
+    fi
+}
+
+_database_exists() { psql -lqt 2>/dev/null | cut -d'|' -f1 | grep -qw "$1"; }
+_clone_database() { createdb -T "$1" "$2" 2>/dev/null; }
+_create_database() { createdb "$1" && bin/rails db:schema:load 2>/dev/null; }
+
+# ---------------------------------------------------------------------------
+# Scenario: stateful services (Redis, search, queues)
+# ---------------------------------------------------------------------------
+# Two viable strategies, and the choice is about blast radius:
+#
+#   Shared instance, isolated namespace  cheap, one process, but a FLUSHALL
+#                                        in one worktree hits every other
+#   One container per worktree           complete isolation, costs memory and
+#                                        needs cleanup in teardown()
+#
+# Start with the namespace; move to per-worktree containers for the services
+# your tests actually destroy.
+_service_namespace() {
+    # Derive a numeric namespace from the port: stable, unique, no registry
+    echo $((PWT_PORT % 16))
+}
+
+step_configure_services() {
+    local ns
+    ns=$(_service_namespace)
+    pwtfile_replace ".env" "REDIS_URL=" "REDIS_URL=redis://localhost:6379/${ns}"
+    echo "  ✓ using Redis database ${ns}"
+}
+
+# Per-worktree container, when isolation must be total. Name it after the
+# worktree so teardown can find it and orphans are obvious.
+_container_name() {
+    echo "app-redis-${PWT_WORKTREE}"
+}
+
+step_isolated_service() {
+    local name
+    name=$(_container_name)
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "  ⚠ docker unavailable; falling back to the shared instance"
+        step_configure_services
+        return 0
+    fi
+
+    if docker ps --format '{{.Names}}' | grep -qx "$name"; then
+        echo "  ✓ $name already running"
+        return 0
+    fi
+
+    local port
+    port=$((PWT_PORT + 1000)) # derive, never hardcode
+    docker run -d --name "$name" -p "${port}:6379" redis:7-alpine >/dev/null
+    pwtfile_replace ".env" "REDIS_URL=" "REDIS_URL=redis://localhost:${port}/0"
+    echo "  ✓ started $name on ${port}"
+}
+
+# ---------------------------------------------------------------------------
+# server(): what `pwt server` runs
+# ---------------------------------------------------------------------------
+# Two rules that are easy to get wrong:
+#
+#   1. `exec` the real process. Without it you get a wrapper shell holding a
+#      dead child, and `pwt server stop` kills the wrapper, not the server.
+#   2. Handle the stop verb. `pwt server stop` passes "stop" as "$1"; a server
+#      that ignores its arguments cannot be stopped by the tool that started
+#      it.
+server() {
+    case "${1:-start}" in
+        start)
+            exec env PORT="$PWT_PORT" bin/dev
+            ;;
+        stop)
+            # Stop what THIS worktree started; never a global "kill all"
+            _stop_worktree_processes
+            ;;
+        status)
+            _server_status
+            ;;
+        *)
+            echo "Usage: pwt server [start|stop|status]" >&2
+            return 2
+            ;;
+    esac
+}
+
+_stop_worktree_processes() {
+    # Ask pwt which jobs belong here rather than parsing state files: the
+    # on-disk format is versioned and this interface is not.
+    if command -v jq >/dev/null 2>&1; then
+        pwt jobs list --porcelain |
+            jq -r --arg wt "$PWT_WORKTREE" \
+                '.[] | select(.worktree == $wt and .status == "running") | .id' |
+            while read -r id; do pwt jobs stop "$id"; done
+    fi
+
+    # Plus anything started outside pwt's job registry
+    [ -f tmp/pids/server.pid ] && kill "$(cat tmp/pids/server.pid)" 2>/dev/null
+    return 0
+}
+
+_server_status() {
+    if curl -sf "http://localhost:${PWT_PORT}/up" >/dev/null 2>&1; then
+        echo "running on ${PWT_PORT}"
+    else
+        echo "not responding on ${PWT_PORT}"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# doctor(): project-specific health, run by `pwt doctor`
+# ---------------------------------------------------------------------------
+# pwt checks the machine and the worktree layout; only the project knows what
+# "healthy" means for its own stack. Print a line per problem and nothing when
+# everything is fine, so a clean run stays quiet.
+doctor() {
+    [ -f .env ] || echo "⚠ .env missing - run: pwt step configure_files \$(pwt port)"
+    [ -d node_modules ] || echo "⚠ dependencies not installed - run: pwt step install_deps"
+    [ -s .npmrc ] || echo "⚠ .npmrc is empty (registry auth missing)"
+
+    local db
+    db="app_development$(_worktree_suffix)"
+    _database_exists "$db" || echo "⚠ database $db missing - run: pwt step setup_databases \$(pwt port)"
+}
+
+# ---------------------------------------------------------------------------
+# teardown(): runs on `pwt remove`
+# ---------------------------------------------------------------------------
+# Remove exactly what setup() created for THIS worktree, and nothing shared.
+# Deleting a shared cache here is how one cleanup breaks every other worktree.
+teardown() {
+    local suffix
+    suffix=$(_worktree_suffix)
+
+    dropdb "app_development${suffix}" 2>/dev/null || true
+
+    local container
+    container=$(_container_name)
+    docker rm -f "$container" >/dev/null 2>&1 || true
+
+    echo "Cleaned up resources for ${PWT_WORKTREE}"
+}
+
+# ---------------------------------------------------------------------------
+# Custom commands: any function becomes `pwt <name>`
+# ---------------------------------------------------------------------------
+test() {
+    # Tests need their own isolated database, or a run in one worktree
+    # destroys another's fixtures
+    RAILS_ENV=test DATABASE_SUFFIX="$(_worktree_suffix)" bin/rails test "$@"
+}
+
+console() {
+    exec env DATABASE_SUFFIX="$(_worktree_suffix)" bin/rails console
+}
+
+logs() {
+    tail -f "log/development.log"
+}
+
+# ---------------------------------------------------------------------------
+# Notes that save debugging time
+# ---------------------------------------------------------------------------
+#
+# * Every step_* function should be independently re-runnable. When setup
+#   fails halfway, the fix is `pwt step <name>`, not recreating the worktree.
+#
+# * Take arguments explicitly and fail loudly when they are missing
+#   (`${1:?message}`). A step that silently defaults a database suffix will
+#   happily point at the wrong database.
+#
+# * Derive from $PWT_PORT for anything that needs to be unique. It is already
+#   guaranteed collision-free by pwt, so you need no registry of your own.
+#
+# * Under `--bg` and `--no-input`, $PWT_AGENT is 1. Use it to skip prompts and
+#   interactive confirmations rather than assuming a terminal exists.
+#
+# * Read pwt state through `pwt <cmd> --porcelain`, never by parsing files in
+#   ~/.pwt. The on-disk format is versioned and changes; the CLI interface is
+#   the contract.
+#
+# * A Pwtfile is sourced with `set -u` in effect for pwt's own variables, so
+#   reference optional ones as "${VAR:-}".
+
+# ---------------------------------------------------------------------------
+# branch_name(): the project owns its naming convention
+# ---------------------------------------------------------------------------
+# `branch_prefix` in project config only prepends a string. When the team's
+# convention is a shape rather than a prefix - feature/TICKET_slug,
+# team/area/ticket, a date, a JIRA project code - define it here instead.
+#
+#   $1  worktree name as typed by the user
+#   $2  description, if one was given
+#   $PWT_BRANCH_PREFIX  the configured prefix, to use or ignore
+#
+# `pwt create --branch <name>` always wins over this hook, and returning
+# nothing falls back to pwt's default.
+branch_name() {
+    local worktree="$1" description="${2:-}"
+
+    if [ -n "$description" ]; then
+        local slug
+        slug=$(echo "$description" | tr '[:upper:] ' '[:lower:]-' |
+            sed 's/[^a-z0-9-]//g; s/--*/-/g; s/^-//; s/-$//' | cut -c1-30)
+        echo "feature/${worktree}_${slug}"
+    else
+        echo "feature/${worktree}"
+    fi
+}

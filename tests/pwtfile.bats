@@ -875,3 +875,66 @@ EOF
     # Cleanup
     "$PWT_BIN" remove "$wt_name" -y 2>/dev/null || rm -rf "$wt_dir"
 }
+
+# ============================================
+# branch_name() hook - the project owns its naming convention
+# ============================================
+
+@test "Pwtfile branch_name hook names the branch" {
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+branch_name() {
+    echo "feature/$1"
+}
+EOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create HOOK-BR HEAD
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"feature/HOOK-BR"* ]]
+}
+
+@test "Pwtfile branch_name receives the description as \$2" {
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+branch_name() {
+    echo "wip/$1--$(echo "${2:-nodesc}" | tr ' ' '-')"
+}
+EOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create HOOK-DESC HEAD "my change"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wip/HOOK-DESC--my-change"* ]]
+}
+
+@test "an invalid branch_name result is named, not passed to git" {
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+branch_name() {
+    echo "has spaces/$1"
+}
+EOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create HOOK-BAD HEAD
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"invalid branch name"* ]]
+}
+
+@test "--branch overrides the branch_name hook" {
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+branch_name() {
+    echo "hook/should-not-win"
+}
+EOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create HOOK-OVER --branch explicit/wins --from HEAD
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"explicit/wins"* ]]
+    [[ "$output" != *"hook/should-not-win"* ]]
+}
+
+@test "no branch_name hook keeps the default prefix behaviour" {
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+server() { echo srv; }
+EOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create HOOK-NONE HEAD
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test/HOOK-NONE"* ]]
+}

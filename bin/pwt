@@ -2793,6 +2793,44 @@ read_port_base() {
     fi
 }
 
+# Ask the project's Pwtfile to name the branch, if it wants to.
+# Usage: _pwtfile_branch_name <worktree> <description>
+# Prints the branch name, or nothing when the project defines no hook.
+# Branch conventions differ per team; the core keeps only the default.
+_pwtfile_branch_name() {
+    local worktree="$1" description="${2:-}"
+    local pwtfile
+    pwtfile=$(get_project_pwtfile 2>/dev/null) || return 0
+    [ -n "$pwtfile" ] && [ -f "$pwtfile" ] || return 0
+    grep -qE '^[[:space:]]*(function[[:space:]]+)?branch_name[[:space:]]*\(\)' "$pwtfile" 2>/dev/null || return 0
+
+    # Run in a subshell so the Pwtfile cannot leak state into create()
+    (
+        set +e
+        PWT_WORKTREE="$worktree" \
+            PWT_DESCRIPTION="$description" \
+            PWT_BRANCH_PREFIX="${BRANCH_PREFIX:-}" \
+            PWT_PROJECT="${CURRENT_PROJECT:-}"
+        export PWT_WORKTREE PWT_DESCRIPTION PWT_BRANCH_PREFIX PWT_PROJECT
+        # shellcheck source=/dev/null
+        source "$pwtfile" >/dev/null 2>&1
+        branch_name "$worktree" "$description" 2>/dev/null
+    ) | head -1 | tr -d '\n'
+}
+
+# Reject a hook result git would refuse, and name the culprit: otherwise the
+# user gets a raw git error about a branch they never typed.
+_validate_hook_branch() {
+    local name="$1"
+    [ -n "$name" ] || return 0
+    if ! git check-ref-format --branch "$name" >/dev/null 2>&1; then
+        pwt_error "Pwtfile branch_name() returned an invalid branch name: '$name'"
+        echo "  Branch names cannot contain spaces, '..', '~', '^', ':' or end with '/'." >&2
+        return 1
+    fi
+    return 0
+}
+
 # Execute a single Pwtfile
 # Arguments: pwtfile_path phase label
 run_single_pwtfile() {
@@ -6836,6 +6874,107 @@ cmd_state() {
     echo "}"
 }
 
+# Command: skill
+# Print (or install) the agent-facing CLI guide that ships with pwt.
+# Printing is the default so it works from any install - npm, brew, curl -
+# without an agent having to guess where the file landed.
+cmd_skill() {
+    # Resolve across layouts: checkout, npm package, and the share/ dir that
+    # a curl or brew install uses (same shape as plugin resolution).
+    local skill_dir="" candidate
+    for candidate in \
+        "$PWT_SCRIPT_DIR/../skills/pwt-cli" \
+        "$PWT_SCRIPT_DIR/../share/pwt/skills/pwt-cli" \
+        "/usr/local/share/pwt/skills/pwt-cli" \
+        "/opt/homebrew/share/pwt/skills/pwt-cli" \
+        "$HOME/.local/share/pwt/skills/pwt-cli"; do
+        if [ -f "$candidate/SKILL.md" ]; then
+            skill_dir="$candidate"
+            break
+        fi
+    done
+    [ -n "$skill_dir" ] || skill_dir="$PWT_SCRIPT_DIR/../skills/pwt-cli"
+    local skill_file="$skill_dir/SKILL.md"
+    local action="print" dest=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --path) action="path" ;;
+            --install)
+                action="install"
+                if [ -n "${2:-}" ] && [[ "$2" != -* ]]; then
+                    dest="$2"
+                    shift
+                fi
+                ;;
+            -h | --help)
+                echo "Usage: pwt skill [--path] [--install [dir]]"
+                echo ""
+                echo "Print the agent-facing guide to driving pwt: machine-readable"
+                echo "flags, exit codes, wait primitives and the worktree lifecycle."
+                echo ""
+                echo "Options:"
+                echo "  (none)            Print the guide to stdout"
+                echo "  --path            Print the file path instead"
+                echo "  --install [dir]   Copy the skill into dir"
+                echo "                    (default: ~/.claude/skills/pwt-cli)"
+                echo ""
+                echo "For humans, see 'pwt help' and 'pwt help pwtfile'."
+                return 0
+                ;;
+            *)
+                pwt_error "Unknown option: $1"
+                echo "Usage: pwt skill [--path] [--install [dir]]" >&2
+                return "$EXIT_USAGE"
+                ;;
+        esac
+        shift
+    done
+
+    if [ ! -f "$skill_file" ]; then
+        pwt_error "Skill not found: $skill_file"
+        echo "  This install may be missing skills/ - see the project README." >&2
+        return "$EXIT_NOT_FOUND"
+    fi
+
+    case "$action" in
+        path)
+            echo "$skill_file"
+            ;;
+        print)
+            cat "$skill_file"
+            ;;
+        install)
+            # ~/.agents/skills is the cross-agent root (Codex, Cursor, Zed);
+            # ~/.claude/skills is Claude Code's. Install into both by default
+            # so the guide is not tied to a single agent.
+            local targets=()
+            if [ -n "$dest" ]; then
+                targets=("$dest")
+            else
+                targets=("$HOME/.claude/skills/pwt-cli" "$HOME/.agents/skills/pwt-cli")
+            fi
+
+            local target
+            for target in "${targets[@]}"; do
+                mkdir -p "$target" || {
+                    pwt_error "Could not create: $target"
+                    return "$EXIT_ERROR"
+                }
+                # Copy the whole directory: a skill may grow scripts or
+                # references beside SKILL.md.
+                cp -R "$skill_dir/." "$target/" || {
+                    pwt_error "Could not copy the skill into: $target"
+                    return "$EXIT_ERROR"
+                }
+                echo -e "${GREEN}✓${NC} skill installed: $target"
+            done
+            echo "  Re-run after upgrading pwt to refresh the copy."
+            ;;
+    esac
+    return 0
+}
+
 cmd_doctor() {
     # Handle --help
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -7583,6 +7722,7 @@ Project Setup:
   discover [path]                Find unconfigured git repos
   project [action] [args]        Manage project configs
   doctor                         Check system health and configuration
+  skill [--install]              Print the agent-facing CLI guide
 
 Other:
   port                           Show current port
@@ -7648,6 +7788,8 @@ Lifecycle Hooks:
   teardown()    Runs when worktree removed
   doctor()      Runs as part of "pwt doctor" - project health checks
                 (deps installed, registry auth, services reachable...)
+  branch_name() Names the branch for "pwt create" ($1 worktree, $2 desc).
+                Owns the project's naming convention; --branch still wins.
 
 Custom Commands:
   xxx()         Any function becomes "pwt xxx"
@@ -7803,6 +7945,7 @@ show_help_brief() {
     echo "  auto-remove [target] [--execute] Remove worktrees merged into target"
     echo "  restore [backup] [worktree]    Recover backed up changes from trash"
     echo "  doctor                         Check system health and configuration"
+    echo "  skill [--install]              Print the agent-facing CLI guide"
     echo "  state --json                   Versioned JSON snapshot of all pwt state"
     echo "  state migrate [--check]        Inspect/apply state schema migrations"
     echo "  self|versions [use <target>]   List installed pwt versions / switch active one"
@@ -8961,6 +9104,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             require_project
             shift # remove "step" from args
             cmd_step "$@"
+            ;;
+        skill)
+            shift
+            cmd_skill "$@"
             ;;
         doctor)
             shift # remove "doctor" from args

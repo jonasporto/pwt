@@ -91,3 +91,48 @@ EOF
     [[ "$output" == *"beta"* ]]
     [[ "$output" != *"step_alpha"* ]]
 }
+
+# ============================================
+# pwt skill - the agent-facing guide
+# ============================================
+
+@test "skill prints the guide to stdout" {
+    run "$PWT_BIN" skill
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Driving pwt as an agent"* ]]
+    [[ "$output" == *"Exit codes"* ]]
+}
+
+@test "skill --path prints a readable file" {
+    run "$PWT_BIN" skill --path
+    [ "$status" -eq 0 ]
+    [ -f "$output" ]
+}
+
+@test "skill --install copies the whole directory" {
+    local dest="$TEST_TEMP_DIR/skills/pwt-cli"
+    run "$PWT_BIN" skill --install "$dest"
+    [ "$status" -eq 0 ]
+    [ -f "$dest/SKILL.md" ]
+    grep -q "Driving pwt as an agent" "$dest/SKILL.md"
+}
+
+@test "skill rejects an unknown option" {
+    run "$PWT_BIN" skill --bogus
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"Unknown option"* ]]
+}
+
+@test "skill --help explains the modes" {
+    run "$PWT_BIN" skill --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--install"* ]]
+}
+
+@test "skill guide carries no project-specific context" {
+    run "$PWT_BIN" skill
+    [ "$status" -eq 0 ]
+    # It must teach discovery, not encode one project
+    [[ "$output" == *"pwt project show"* ]]
+    [[ "$output" == *"pwt steps"* ]]
+}

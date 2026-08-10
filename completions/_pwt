@@ -45,6 +45,7 @@ _pwt_commands() {
         'state:Versioned JSON snapshot of pwt state'
         'fix-port:Resolve port conflict'
         'doctor:Check system health and configuration'
+        'skill:Print the agent-facing CLI guide'
         'meta:Manage worktree metadata'
         'm:Manage worktree metadata (alias)'
         'alias:Set project short alias'

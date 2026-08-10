@@ -323,8 +323,22 @@ cmd_create() {
 	if [ -n "$base_ref" ]; then
 		# Base ref provided: create new branch from it
 		# Format: [prefix]ticket-name or [prefix]ticket-name-description-slug
+		local hook_branch=""
+		if [ -z "$explicit_branch" ]; then
+			# A project may define branch_name() in its Pwtfile to own the
+			# naming convention. Branch strategies differ per team, so the
+			# core only provides the default; --branch still wins.
+			hook_branch=$(_pwtfile_branch_name "$worktree_name" "$description") || hook_branch=""
+			if [ -n "$hook_branch" ] && ! _validate_hook_branch "$hook_branch"; then
+				release_metadata_lock
+				exit $EXIT_USAGE
+			fi
+		fi
+
 		if [ -n "$explicit_branch" ]; then
 			new_branch_name="$explicit_branch"
+		elif [ -n "$hook_branch" ]; then
+			new_branch_name="$hook_branch"
 		elif [ -n "$description" ]; then
 			# Convert description to slug: lowercase, spaces -> hyphens, remove special chars
 			local slug=$(echo "$description" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')

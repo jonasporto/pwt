@@ -12,12 +12,12 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Get version from tag
@@ -45,13 +45,14 @@ jobs:
         env:
           PWT_TEST_JOBS: 1
 
+      # No extra assets: bin/pwt alone stopped working when the code went
+      # modular (it sources lib/pwt/*.sh), and the auto-attached source
+      # archives are the correct way to get the whole tree. install.sh is
+      # fetched from raw.githubusercontent.com by the documented curl flow.
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
-          files: |
-            bin/pwt
-            install.sh
 
       - name: Publish to npm
         run: npm publish --access public

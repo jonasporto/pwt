@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-10
+
+Minor (not patch) because the internal state format changed and commands were
+removed. External consumers of `~/.pwt` should read `state-version` and
+`docs/state-v2-contract.md`.
+
 ### Added
 - `pwt state --json`: versioned snapshot of all state (projects, worktrees
   with metadata, background jobs) for external consumers.
@@ -53,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installer now lives in the `pwt-statusline` plugin).
 - Gateway returned an undefined `EXIT_DEPENDENCY`, crashing the error path
   under `set -u` when node was absent.
+- The v1→v2 migration checked `jq` failures only for `meta.json`: a malformed
+  project `config.json`, `gateway.json`, job or trash file silently became an
+  empty conversion sealed by the `.v1.bak` rename. Malformed files are now
+  left unconverted, reported, and picked up by `pwt state migrate`.
+- Concurrent first runs after the upgrade could interleave the auto-migration
+  (it had no lock and shared a fixed staging file); it now serializes behind
+  an `mkdir` lock and stages per-process.
 - `pwt shell-init` emitted a function pointing at the *installed* pwt instead
   of the binary that generated it, silently mixing versions.
 

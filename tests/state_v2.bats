@@ -668,3 +668,49 @@ both"; do
     run state_get "$STATE_FILE" note
     [ "$output" = "$v" ]
 }
+
+# Regression: only the meta.json conversion checked jq's exit status. A
+# malformed projects/*/config.json (or jobs/trash/gateway .json) ran jq with
+# its failure discarded, wrote an EMPTY conversion, and still renamed the
+# source to .v1.bak - silently losing the project's path/worktrees_dir.
+@test "migration: a malformed project config.json is left unconverted, not emptied" {
+    rm -f "$PWT_DIR/state-version"
+    mkdir -p "$PWT_DIR/projects/proj-bad" "$PWT_DIR/projects/proj-ok"
+    echo '{ this is not json' >"$PWT_DIR/projects/proj-bad/config.json"
+    cat >"$PWT_DIR/projects/proj-ok/config.json" <<'JSON'
+{"path": "/tmp/ok", "worktrees_dir": "/tmp/ok-worktrees"}
+JSON
+
+    run "$PWT_BIN" version
+
+    # The good project converted normally
+    [ -f "$PWT_DIR/projects/proj-ok/config" ]
+    grep -q '^path=/tmp/ok$' "$PWT_DIR/projects/proj-ok/config"
+    [ -f "$PWT_DIR/projects/proj-ok/config.json.v1.bak" ]
+
+    # The bad one is NOT sealed: source stays, no empty config, and the
+    # failure is reported instead of swallowed
+    [ -f "$PWT_DIR/projects/proj-bad/config.json" ]
+    [ ! -f "$PWT_DIR/projects/proj-bad/config.json.v1.bak" ]
+    [ ! -f "$PWT_DIR/projects/proj-bad/config" ]
+    [[ "$output" == *"could not convert"* ]]
+    [[ "$output" == *"left unconverted"* ]] || [[ "$output" == *"left as .json"* ]]
+}
+
+@test "migration: a malformed job .json does not vanish from disk" {
+    rm -f "$PWT_DIR/state-version"
+    mkdir -p "$PWT_DIR/jobs"
+    printf 'not json at all' >"$PWT_DIR/jobs/20260810-bad.json"
+    cat >"$PWT_DIR/jobs/20260810-ok.json" <<'JSON'
+{"pid": 12345, "worktree": "WT-OK", "command": "server"}
+JSON
+
+    run "$PWT_BIN" version
+
+    [ -f "$PWT_DIR/jobs/20260810-ok.job" ]
+    grep -q '^pid=12345$' "$PWT_DIR/jobs/20260810-ok.job"
+
+    # The malformed job stays as .json for manual recovery; no .job was forged
+    [ -f "$PWT_DIR/jobs/20260810-bad.json" ]
+    [ ! -f "$PWT_DIR/jobs/20260810-bad.job" ]
+}

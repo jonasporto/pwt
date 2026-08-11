@@ -74,7 +74,7 @@ DEFAULT_BRANCH="" # Detected from remote (master or main)
 BASE_PORT=5000
 
 # Version
-PWT_VERSION="0.1.14"
+PWT_VERSION="0.2.0"
 PWT_VERSION_CHECK_URL="https://api.github.com/repos/jonasporto/pwt/releases/latest"
 PWT_VERSION_CACHE="$PWT_DIR/version-check"
 PWT_VERSION_CACHE_TTL=18000 # 5 hours
@@ -681,6 +681,33 @@ ensure_state_v2() {
 # One-time conversion of v1 JSON state to v2 key=value files.
 # This is the ONLY code path that reads legacy JSON, and the only
 # remaining use of jq. Converted sources are kept as *.v1.bak.
+# Convert one flat v1 JSON file into a key=value file, with the same guard
+# the meta.json path has: jq output is staged and its exit status checked, so
+# a malformed file (or valid JSON that is not an object — to_entries aborts
+# mid-stream) is left UNCONVERTED in place for `pwt state migrate` instead of
+# silently becoming an empty conversion sealed by the .v1.bak rename.
+# Usage: _migrate_json_kv <src.json> <dest> <jq_filter> [touch_empty]
+_migrate_json_kv() {
+    local src="$1" dest="$2" filter="$3" touch_empty="${4:-}"
+    local staged="$src.migrate.$$" key value
+    if ! jq -r "$filter" "$src" >"$staged" 2>"$staged.err"; then
+        pwt_error "  ⚠ could not convert $src (left unconverted):"
+        sed 's/^/      /' "$staged.err" >&2
+        rm -f "$staged" "$staged.err"
+        _MIGRATE_SKIPPED=$((${_MIGRATE_SKIPPED:-0} + 1))
+        return 1
+    fi
+    rm -f "$staged.err"
+    while IFS=$'\t' read -r key value; do
+        [ -n "$key" ] || continue
+        printf '%s=%s\n' "$key" "$value" >>"$dest"
+    done <"$staged"
+    rm -f "$staged"
+    [ "$touch_empty" != "touch_empty" ] || [ -f "$dest" ] || : >"$dest"
+    mv "$src" "$src.v1.bak"
+    return 0
+}
+
 migrate_state_v1() {
     if ! command -v jq >/dev/null 2>&1; then
         pwt_error "Error: legacy pwt state (v1 JSON) found, but jq is not installed"
@@ -696,6 +723,7 @@ migrate_state_v1() {
     fi
 
     echo -e "${BLUE}Migrating pwt state to v2 (key=value files)...${NC}" >&2
+    _MIGRATE_SKIPPED=0
 
     local f dir project wt key value
 
@@ -748,94 +776,66 @@ migrate_state_v1() {
     fi
 
     # projects/<name>/config.json → projects/<name>/config
+    # A config of {} yields no lines but the file must exist, or the project
+    # would vanish from `pwt project list` — hence touch_empty.
     for f in "$PWT_DIR"/projects/*/config.json; do
         [ -f "$f" ] || continue
-        dir=$(dirname "$f")
-        while IFS=$'\t' read -r key value; do
-            [ -n "$key" ] || continue
-            printf '%s=%s\n' "$key" "$value" >>"$dir/config"
-        done < <(jq -r '
+        _migrate_json_kv "$f" "$(dirname "$f")/config" '
             to_entries[] | select(.value != null) |
             [.key, (.value | if type == "array" then join(",") else tostring end)] | @tsv
-        ' "$f" 2>/dev/null)
-        # A config of {} yields no lines; without this the file would simply
-        # not exist and the project would vanish from `pwt project list`.
-        [ -f "$dir/config" ] || : >"$dir/config"
-        mv "$f" "$f.v1.bak"
+        ' touch_empty || :
     done
 
     # projects/<name>/gateway.json → projects/<name>/gateway.state
     for f in "$PWT_DIR"/projects/*/gateway.json; do
         [ -f "$f" ] || continue
-        dir=$(dirname "$f")
-        while IFS=$'\t' read -r key value; do
-            [ -n "$key" ] || continue
-            printf '%s=%s\n' "$key" "$value" >>"$dir/gateway.state"
-        done < <(jq -r '
+        _migrate_json_kv "$f" "$(dirname "$f")/gateway.state" '
             to_entries[] | select(.value != null) |
             [.key, (.value | tostring)] | @tsv
-        ' "$f" 2>/dev/null)
-        [ -f "$dir/gateway.state" ] || : >"$dir/gateway.state"
-        mv "$f" "$f.v1.bak"
+        ' touch_empty || :
     done
 
     # Global config.json → config (nested objects flatten to dotted keys)
     if [ -f "$PWT_DIR/config.json" ]; then
-        while IFS=$'\t' read -r key value; do
-            [ -n "$key" ] || continue
-            printf '%s=%s\n' "$key" "$value" >>"$PWT_DIR/config"
-        done < <(jq -r '
+        _migrate_json_kv "$PWT_DIR/config.json" "$PWT_DIR/config" '
             paths(scalars) as $p |
             [($p | map(tostring) | join(".")), (getpath($p) | tostring)] | @tsv
-        ' "$PWT_DIR/config.json" 2>/dev/null)
-        [ -f "$PWT_DIR/config" ] || : >"$PWT_DIR/config"
-        mv "$PWT_DIR/config.json" "$PWT_DIR/config.json.v1.bak"
+        ' touch_empty || :
     fi
 
     # claude-statusline.json → claude-statusline
     if [ -f "$PWT_DIR/claude-statusline.json" ]; then
-        while IFS=$'\t' read -r key value; do
-            [ -n "$key" ] || continue
-            printf '%s=%s\n' "$key" "$value" >>"$PWT_DIR/claude-statusline"
-        done < <(jq -r '
+        _migrate_json_kv "$PWT_DIR/claude-statusline.json" "$PWT_DIR/claude-statusline" '
             to_entries[] | select(.value != null) |
             [.key, (.value | tostring)] | @tsv
-        ' "$PWT_DIR/claude-statusline.json" 2>/dev/null)
-        [ -f "$PWT_DIR/claude-statusline" ] || : >"$PWT_DIR/claude-statusline"
-        mv "$PWT_DIR/claude-statusline.json" "$PWT_DIR/claude-statusline.json.v1.bak"
+        ' || :
     fi
 
     # jobs/<id>.json → jobs/<id>.job
     for f in "$PWT_DIR"/jobs/*.json; do
         [ -f "$f" ] || continue
-        local job_base="${f%.json}"
-        while IFS=$'\t' read -r key value; do
-            [ -n "$key" ] || continue
-            printf '%s=%s\n' "$key" "$value" >>"$job_base.job"
-        done < <(jq -r '
+        _migrate_json_kv "$f" "${f%.json}.job" '
             to_entries[] | select(.value != null) |
             [.key, (.value | tostring)] | @tsv
-        ' "$f" 2>/dev/null)
-        mv "$f" "$f.v1.bak"
+        ' || :
     done
 
     # trash/<backup>.json → trash/<backup>.trash
     for f in "$PWT_DIR"/trash/*.json; do
         [ -f "$f" ] || continue
-        local trash_base="${f%.json}"
-        while IFS=$'\t' read -r key value; do
-            [ -n "$key" ] || continue
-            printf '%s=%s\n' "$key" "$value" >>"$trash_base.trash"
-        done < <(jq -r '
+        _migrate_json_kv "$f" "${f%.json}.trash" '
             to_entries[] | select(.value != null) |
             [.key, (.value | tostring)] | @tsv
-        ' "$f" 2>/dev/null)
-        mv "$f" "$f.v1.bak"
+        ' || :
     done
 
     # Old caches were built from JSON configs; rebuild lazily
     rm -f "$PWT_DIR/cache/project-index" 2>/dev/null || true
 
+    if [ "${_MIGRATE_SKIPPED:-0}" -gt 0 ]; then
+        echo -e "${YELLOW}⚠ $_MIGRATE_SKIPPED file(s) could not be converted and were left as .json${NC}" >&2
+        echo "  Fix or remove them, then run 'pwt state migrate' ('--verify' lists leftovers)." >&2
+    fi
     echo -e "${GREEN}✓ State migrated to v2${NC} (originals kept as *.v1.bak; 'pwt doctor' lists them)" >&2
     return 0
 }
@@ -5444,6 +5444,8 @@ _find_plugin() {
     [ -d "/opt/homebrew/share/pwt/plugins" ] && dirs+=("/opt/homebrew/share/pwt/plugins")
     [ -d "/usr/local/share/pwt/plugins" ] && dirs+=("/usr/local/share/pwt/plugins")
     [ -d "$HOME/.local/share/pwt/plugins" ] && dirs+=("$HOME/.local/share/pwt/plugins")
+    # Bundled next to the script (checkout / npm package layout)
+    [ -n "${PWT_SCRIPT_DIR:-}" ] && [ -d "$PWT_SCRIPT_DIR/../plugins" ] && dirs+=("$PWT_SCRIPT_DIR/../plugins")
 
     local seen=""
     local dir
@@ -8871,6 +8873,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
                 # ~/.local (common PREFIX for source/curl installs)
                 [ -d "$HOME/.local/share/pwt/plugins" ] && dirs+=("$HOME/.local/share/pwt/plugins")
+
+                # Bundled next to the script (checkout / npm package layout)
+                [ -n "${PWT_SCRIPT_DIR:-}" ] && [ -d "$PWT_SCRIPT_DIR/../plugins" ] && dirs+=("$PWT_SCRIPT_DIR/../plugins")
 
                 # Search all directories (unique)
                 local seen=""

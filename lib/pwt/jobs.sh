@@ -277,7 +277,8 @@ _clean_jobs() {
 			_mark_job_stopped "$j_id"
 			count=$((count + 1))
 		elif [ "$j_status" = "stopped" ]; then
-			rm -f "$job_file" "$PWT_JOBS_DIR/${j_id}.log"
+			rm -f "$job_file" "$PWT_JOBS_DIR/${j_id}.log" \
+				"$PWT_JOBS_DIR/${j_id}.sh" "$PWT_JOBS_DIR/${j_id}.exit"
 			count=$((count + 1))
 		fi
 	done

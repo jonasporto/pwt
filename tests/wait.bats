@@ -121,6 +121,53 @@ EOF
     [[ "$output" == *"stopped"* ]]
 }
 
+# Regression (first seen on a slow CI runner): when the grace window
+# outlives a short-lived job, the launcher used to misread the finished
+# process as "failed to start" and register nothing. A grace longer than
+# the job reproduces that deterministically.
+@test "a --bg job that finishes before the startup check is still a job" {
+    cd "$TEST_REPO"
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+server() {
+    sleep 1
+}
+EOF
+    "$PWT_BIN" create TEST-WAIT-FAST HEAD
+
+    cd "$TEST_WORKTREES/TEST-WAIT-FAST"
+    PWT_BG_GRACE_SECONDS=3 run "$PWT_BIN" server --bg
+    echo "server --bg output: $output"
+    [ "$status" -eq 0 ]
+
+    local job_id
+    job_id=$(job_id_from_output)
+    [ -n "$job_id" ] || dump_jobs_dir
+    [ -n "$job_id" ]
+
+    run "$PWT_BIN" jobs wait "$job_id" --timeout 5
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"stopped"* ]]
+}
+
+# A job that CRASHES during the grace window must still be a launch error,
+# with its exit code surfaced (the generated script records it).
+@test "a --bg job that crashes during the startup check reports the exit code" {
+    cd "$TEST_REPO"
+    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+server() {
+    exit 3
+}
+EOF
+    "$PWT_BIN" create TEST-WAIT-CRASH HEAD
+
+    cd "$TEST_WORKTREES/TEST-WAIT-CRASH"
+    PWT_BG_GRACE_SECONDS=2 run "$PWT_BIN" server --bg
+    echo "server --bg output: $output"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"failed to start"* ]]
+    [[ "$output" == *"exit 3"* ]]
+}
+
 @test "pwt jobs wait times out with exit 5" {
     cd "$TEST_REPO"
     cat >"$TEST_REPO/Pwtfile" <<'EOF'

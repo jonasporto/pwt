@@ -2929,13 +2929,25 @@ pwt_arg() {
 }
 cd '${PWT_WORKTREE_PATH}' || exit 1
 source '${pwtfile}'
+# Record the phase's exit status: a detached daemon is reaped by init, so
+# this file is the launcher's only way to tell "finished fast, rc 0" from
+# "crashed on startup" when the process is already gone at the grace check.
+_pwt_rc=0
 if type '${phase}' &>/dev/null; then
+    # Subshell: an \`exit N\` inside the Pwtfile function must not skip the
+    # status write below
     if [ "\${PWT_ARGC:-0}" -gt 0 ]; then
-        '${phase}' "\${PWT_ARGV[@]}"
+        ('${phase}' "\${PWT_ARGV[@]}")
+        _pwt_rc=\$?
     else
-        '${phase}'
+        ('${phase}')
+        _pwt_rc=\$?
     fi
+else
+    _pwt_rc=127
 fi
+echo "\$_pwt_rc" >'${PWT_JOBS_DIR}/${job_id}.exit'
+exit "\$_pwt_rc"
 BGEOF
         chmod +x "$bg_script"
 
@@ -2979,15 +2991,40 @@ BGEOF
         fi
 
         # Grace period: poll instead of a fixed sleep so startup reports fast and
-        # early crashes are still caught (override with PWT_BG_GRACE_SECONDS)
+        # early crashes are still caught (override with PWT_BG_GRACE_SECONDS).
+        # The .exit file the generated script writes is the authoritative
+        # end-of-job signal: kill -0 alone lies when the pid gets recycled.
         local _grace_ticks
         _grace_ticks=$(awk "BEGIN { print int(${PWT_BG_GRACE_SECONDS:-0.5} / 0.05) }" 2>/dev/null || echo 10)
         [ "$_grace_ticks" -ge 1 ] 2>/dev/null || _grace_ticks=10
-        while [ "$_grace_ticks" -gt 0 ] && kill -0 "$bg_pid" 2>/dev/null; do
+        while [ "$_grace_ticks" -gt 0 ] &&
+            [ ! -f "$PWT_JOBS_DIR/${job_id}.exit" ] &&
+            kill -0 "$bg_pid" 2>/dev/null; do
             sleep 0.05
             _grace_ticks=$((_grace_ticks - 1))
         done
-        if kill -0 "$bg_pid" 2>/dev/null; then
+
+        local early_rc=""
+        if [ -f "$PWT_JOBS_DIR/${job_id}.exit" ]; then
+            early_rc=$(cat "$PWT_JOBS_DIR/${job_id}.exit" 2>/dev/null)
+            rm -f "$PWT_JOBS_DIR/${job_id}.exit"
+        fi
+
+        if [ "$early_rc" = "0" ]; then
+            # Finished fine before the startup check (short job / slow box):
+            # still a job, so its id and log stay addressable.
+            _save_job "$job_id" "$bg_pid" "$bg_pid" "$phase" "$worktree" "$project" "$log_file"
+            _mark_job_stopped "$job_id"
+            echo -e "${GREEN}✓${NC} Background job completed (finished before the startup check)"
+            echo "{\"job_id\":\"$job_id\",\"pid\":$bg_pid,\"log\":\"$log_file\"}"
+            [ "$PWT_QUIET" = true ] || echo "  pwt jobs logs $job_id       # view output"
+        elif [ -n "$early_rc" ] || ! kill -0 "$bg_pid" 2>/dev/null; then
+            pwt_error "Background job failed to start${early_rc:+ (exit $early_rc)}"
+            echo "Last output:" >&2
+            tail -20 "$log_file" 2>/dev/null >&2 || echo "(no output)" >&2
+            rm -f "$PWT_JOBS_DIR/${job_id}.job" 2>/dev/null
+            return $EXIT_ERROR
+        else
             local pgid
             pgid=$(ps -o pgid= -p "$bg_pid" 2>/dev/null | tr -d ' ')
             _save_job "$job_id" "$bg_pid" "${pgid:-$bg_pid}" "$phase" "$worktree" "$project" "$log_file"
@@ -3002,12 +3039,6 @@ BGEOF
                 echo "  pwt jobs logs $job_id -f    # follow output"
                 echo "  pwt jobs stop $job_id       # stop"
             fi
-        else
-            pwt_error "Background job failed to start"
-            echo "Last output:" >&2
-            tail -20 "$log_file" 2>/dev/null >&2 || echo "(no output)" >&2
-            rm -f "$PWT_JOBS_DIR/${job_id}.job" 2>/dev/null
-            return $EXIT_ERROR
         fi
 
         _idx=$((_idx + 1))
@@ -3198,8 +3229,17 @@ run_pwtfile() {
             [ -f "$global_pwtfile" ] && run_single_pwtfile "$global_pwtfile" "$phase" "Global Pwtfile" || true
             ;;
         server)
-            # Local only: server is project-specific
-            [ -n "$project_pwtfile" ] && run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile" || true
+            # Local only: server is project-specific. A foreground server's
+            # own exit status is deliberately swallowed (Ctrl-C is normal),
+            # but a failed --bg LAUNCH must reach the caller: agents rely on
+            # the exit code to know no job was registered.
+            if [ -n "$project_pwtfile" ]; then
+                local _server_rc=0
+                run_single_pwtfile "$project_pwtfile" "$phase" "Pwtfile" || _server_rc=$?
+                if [ "$PWT_BG" = true ] && [ "$_server_rc" -ne 0 ]; then
+                    return "$_server_rc"
+                fi
+            fi
             ;;
         *)
             # Custom commands: project > global (fallback)

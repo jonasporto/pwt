@@ -55,6 +55,19 @@ job_id_from_output() {
     echo "$output" | grep -o '"job_id":"[^"]*"' | head -1 | sed 's/"job_id":"//;s/"//'
 }
 
+# On CI-only launch failures the generated job script and its log are the
+# only evidence; dump them into the bats failure output.
+dump_jobs_dir() {
+    echo "--- jobs dir ---"
+    ls -la "$PWT_DIR/jobs" 2>/dev/null || echo "(no jobs dir)"
+    local f
+    for f in "$PWT_DIR"/jobs/*.sh "$PWT_DIR"/jobs/*.log; do
+        [ -f "$f" ] || continue
+        echo "--- $f ---"
+        cat "$f"
+    done
+}
+
 # ============================================
 # pwt jobs wait
 # ============================================
@@ -77,6 +90,7 @@ EOF
 
     local job_id
     job_id=$(job_id_from_output)
+    [ -n "$job_id" ] || dump_jobs_dir
     [ -n "$job_id" ]
 
     run "$PWT_BIN" jobs wait "$job_id" --timeout 10
@@ -101,6 +115,7 @@ EOF
 
     run "$PWT_BIN" jobs wait TEST-WAIT-NAME --timeout 10
     echo "jobs wait output: $output"
+    [ "$status" -eq 0 ] || dump_jobs_dir
     [ "$status" -eq 0 ]
     [[ "$output" == *"TEST-WAIT-NAME"* ]]
     [[ "$output" == *"stopped"* ]]

@@ -7,6 +7,17 @@ PWD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PWT_BIN="$PWD_DIR/bin/pwt"
 PWT_LIB_DIR="$PWD_DIR/lib/pwt"
 
+_pwt_build_test_repo() {
+    local dest="$1"
+    mkdir -p "$dest"
+    git init -q "$dest"
+    git -C "$dest" config user.email "test@test.com"
+    git -C "$dest" config user.name "Test User"
+    touch "$dest/README.md"
+    git -C "$dest" add README.md
+    git -C "$dest" commit -q -m "Initial commit"
+}
+
 # Create a temporary directory for each test
 setup_test_env() {
     export TEST_TEMP_DIR=$(mktemp -d)
@@ -18,16 +29,21 @@ setup_test_env() {
     # State contract v2: declare schema so pwt skips legacy-migration checks
     echo '2' > "$PWT_DIR/state-version"
 
-    # Create a temporary git repo for testing
+    # Create a temporary git repo for testing. Every test needs one, so the
+    # init+config+commit sequence is done once per bats process and copied
+    # per test: a cp -R of a tiny repo is several times cheaper, and a copy
+    # is exactly as isolated as a fresh init. Falls back to building in
+    # place on bats < 1.4 (no BATS_*_TMPDIR).
     export TEST_REPO="$TEST_TEMP_DIR/test-repo"
-    mkdir -p "$TEST_REPO"
-    git init -q "$TEST_REPO"
+    local tmpl_root="${BATS_SUITE_TMPDIR:-${BATS_FILE_TMPDIR:-}}"
+    if [ -n "$tmpl_root" ]; then
+        local tmpl="$tmpl_root/pwt-template-repo"
+        [ -d "$tmpl/.git" ] || _pwt_build_test_repo "$tmpl"
+        cp -R "$tmpl" "$TEST_REPO"
+    else
+        _pwt_build_test_repo "$TEST_REPO"
+    fi
     cd "$TEST_REPO"
-    git config user.email "test@test.com"
-    git config user.name "Test User"
-    touch README.md
-    git add README.md
-    git commit -q -m "Initial commit"
 }
 
 # Clean up temporary directory after each test
@@ -38,9 +54,27 @@ teardown_test_env() {
 }
 
 # Source specific functions from pwt for unit testing
-# This extracts a function from pwt without running the whole script
+# This extracts a function from pwt without running the whole script.
+# Extraction greps+seds the whole ~7000-line binary, so files that pull in a
+# dozen functions per test were rescanning it dozens of times per test: the
+# extracted snippet is cached per bats process (tmpdirs are wiped per run,
+# and bin/pwt cannot change mid-run, so staleness is impossible).
 source_pwt_function() {
     local func_name="$1"
+    local cache_root="${BATS_SUITE_TMPDIR:-${BATS_FILE_TMPDIR:-}}"
+    if [ -n "$cache_root" ]; then
+        local snip="$cache_root/pwt-func-cache/$func_name.sh"
+        if [ ! -f "$snip" ]; then
+            mkdir -p "$cache_root/pwt-func-cache"
+            {
+                grep -E '^(RED|GREEN|YELLOW|BLUE|NC)=' "$PWT_BIN" | head -5
+                sed -n "/^$func_name()/,/^}/p" "$PWT_BIN"
+            } >"$snip"
+        fi
+        # shellcheck disable=SC1090
+        source "$snip"
+        return
+    fi
     # Extract colors and the function definition from pwt
     eval "$(grep -E '^(RED|GREEN|YELLOW|BLUE|NC)=' "$PWT_BIN" | head -5)"
     eval "$(sed -n "/^$func_name()/,/^}/p" "$PWT_BIN")"

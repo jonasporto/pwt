@@ -32,10 +32,17 @@
   "keywords": [
     "git",
     "worktree",
+    "git-worktree",
     "workflow",
     "cli",
     "bash",
-    "development"
+    "development",
+    "parallel-development",
+    "ai-agents",
+    "agentic-coding",
+    "claude-code",
+    "port-management",
+    "dev-server"
   ],
   "author": "Jonas Porto",
   "license": "MIT",

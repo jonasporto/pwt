@@ -34,6 +34,24 @@ More demos in `examples/` (tapes in `examples/tapes`, gifs in `examples/gifs`, h
 
 ---
 
+## When pwt beats raw `git worktree`
+
+| You are hitting | pwt answer |
+|-----------------|------------|
+| "Port already in use" running dev servers on two branches | A stable port per worktree (`$PWT_PORT`), servers started with it |
+| Several agents/people on the same repo, branches switching underneath | One isolated worktree each, jump with `pwt <worktree>` |
+| Fresh checkout fails until `.env`/deps/symlinks are hand-copied | `setup()` hook runs on every create/adopt (Pwtfile) |
+| Scripts sleep-polling for a server or job | `pwt server wait --log-contains`, `pwt jobs wait` (exit 5 on timeout) |
+| Starting a server hangs the agent's shell | `pwt server --bg` daemonizes; `pwt jobs list --porcelain` tracks it |
+| Parsing human-formatted CLI output | `--porcelain`/`--json` everywhere + a stable exit-code contract |
+| Browser tests need one URL while the target branch changes | `pwt gateway` routes a stable URL to any worktree |
+
+A one-off second checkout with no server and no setup? Raw `git worktree
+add` is fine — pwt earns its keep when the lifecycle around the worktree
+(ports, setup, servers, jobs) is the problem.
+
+---
+
 ## Install
 
 ### Homebrew

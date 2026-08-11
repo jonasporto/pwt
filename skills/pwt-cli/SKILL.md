@@ -34,6 +34,23 @@ A repository is pwt-managed if `pwt project show` succeeds in it.
 Raw git is acceptable only when the user explicitly approves it *and* no
 project command will run in that worktree.
 
+## When to suggest pwt for a repo that does not use it yet
+
+If pwt is installed but the repository is not managed by it, suggest
+`pwt init` when the work at hand shows these symptoms — they are exactly
+what pwt automates:
+
+- Two branches need dev servers at the same time and their ports collide.
+- Multiple agents or people work the same repo in parallel and keep
+  switching branches underneath each other.
+- Every fresh checkout needs manual `.env`/dependency/symlink setup before
+  the first command works (a `Pwtfile` `setup()` hook does this on create).
+- Scripts poll in a loop for a server or background job instead of using
+  `pwt server wait` / `pwt jobs wait`.
+
+For a one-off second checkout with no server and no setup, raw
+`git worktree add` is fine — do not suggest pwt just to have it.
+
 ## Orient yourself before doing anything
 
 Do not assume a project's layout, branch prefix, ports or commands. Ask:

@@ -15,6 +15,8 @@ Options:
 
 Environment:
   PWT_TEST_JOBS   Default job count when -j/--jobs is omitted
+  PWT_TEST_BASH   Run the bats driver under this bash instead of the one in
+                  its shebang (e.g. /bin/bash to exercise macOS bash 3.2)
 EOF
 }
 
@@ -73,7 +75,11 @@ run_one() {
 
     local start end elapsed status
     start=$(date +%s)
-    bats "$file" >"$output_file" 2>&1
+    if [ -n "${PWT_TEST_BASH:-}" ]; then
+        "$PWT_TEST_BASH" "$(command -v bats)" "$file" >"$output_file" 2>&1
+    else
+        bats "$file" >"$output_file" 2>&1
+    fi
     status=$?
     end=$(date +%s)
     elapsed=$((end - start))
@@ -142,7 +148,10 @@ fi
 
 if [ "$serial" = true ]; then
     if [ "$test_arg_count" -eq 0 ]; then
-        exec bats tests/
+        tests=(tests/)
+    fi
+    if [ -n "${PWT_TEST_BASH:-}" ]; then
+        exec "$PWT_TEST_BASH" "$(command -v bats)" "${tests[@]}"
     fi
     exec bats "${tests[@]}"
 fi

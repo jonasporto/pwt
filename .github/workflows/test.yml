@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, master]
 
+# A newer push supersedes the runs of the older one: cancel them instead of
+# queueing, so iterating quickly never waits on stale results.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Check if PR should run tests (skip for external PRs without issue reference)
   should-run:
@@ -61,11 +67,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Every job gets a timeout: a leaked daemon fd once held the coverage job
     # for the full 6h default, burning the runner for nothing.
-    timeout-minutes: 25
+    timeout-minutes: 15
     strategy:
       fail-fast: false
+      # The two macOS passes (Homebrew bash 5.x and system bash 3.2) used to
+      # run back-to-back in one job, making it the wall-clock long pole; as
+      # separate matrix entries they run side by side.
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: macos-latest
+            name: macos-bash5
+          - os: macos-latest
+            name: macos-bash32
+    name: test (${{ matrix.name }})
 
     steps:
       - name: Checkout repository
@@ -87,20 +103,22 @@ jobs:
       - name: Make pwt executable
         run: chmod +x bin/pwt
 
+      # scripts/test.sh parallelizes across .bats files (test files are
+      # sandboxed; ports were the one shared resource, randomized per file
+      # since 2026-08-05).
       - name: Run tests
+        if: matrix.name != 'macos-bash32'
         run: make test
-        env:
-          PWT_TEST_JOBS: 1
 
       # macOS ships bash 3.2.57, where BATS silently swallows a failing [[ ]]
-      # unless it is the test's last command. The run above uses whichever
+      # unless it is the test's last command. The pass above uses whichever
       # bash `env bash` finds (Homebrew's 5.x on GitHub runners), so this
-      # second pass is what actually exercises the 3.2 target users get.
+      # entry is what actually exercises the 3.2 target users get.
       - name: Run tests under macOS system bash 3.2
-        if: runner.os == 'macOS'
-        run: /bin/bash "$(command -v bats)" tests/
+        if: matrix.name == 'macos-bash32'
+        run: scripts/test.sh
         env:
-          PWT_TEST_JOBS: 1
+          PWT_TEST_BASH: /bin/bash
 
   # Runs the whole suite with `set -u` forced on, which mechanically enforces
   # the CLAUDE.md rule that every PWT_* variable must be exported with a
@@ -125,10 +143,9 @@ jobs:
       - name: Run suite under set -u
         run: |
           chmod +x bin/pwt
-          bats tests/
+          scripts/test.sh
         env:
           BASH_ENV: ${{ github.workspace }}/.github/workflows/set_nounset.bash
-          PWT_TEST_JOBS: 1
 
   # Minimal Linux box: no jq, no lsof, no column, no curl. pwt must still
   # start, degrade gracefully and pass everything that does not need those
@@ -178,53 +195,8 @@ jobs:
       # and degrades cleanly with only bash+git+coreutils); the ubuntu job
       # covers the suite.
 
-  # Line coverage, reported never gated. kcov only works on Linux: below bash
-  # 4.2 it falls back to stderr for its trace, and under bats, bats owns
-  # stderr - so macOS always reports 0%. Distro packages are unusable too
-  # (Ubuntu 22.04 ships kcov 38, which reports 0%; 24.04 does not package it).
-  #
-  # kcov must receive the script path, and its bash engine does not follow
-  # exec'd children, so wrapping bats measures nothing. See docs/quality.md
-  # for the injection method and the 62.70% baseline.
-  coverage:
-    needs: should-run
-    if: needs.should-run.outputs.run == 'true'
-    runs-on: ubuntu-latest
-    # The kcov run is ~15x the plain suite plus the kcov build; 90 min is
-    # generous headroom, while the 6h default just burns the runner on a hang.
-    timeout-minutes: 90
-    continue-on-error: true
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bats jq cmake binutils-dev libcurl4-openssl-dev \
-            zlib1g-dev libdw-dev libiberty-dev
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Actions"
-
-      - name: Build kcov v43
-        run: |
-          git clone --depth 1 --branch v43 https://github.com/SimonKagstrom/kcov /tmp/kcov
-          cmake -S /tmp/kcov -B /tmp/kcov/build
-          make -C /tmp/kcov/build -j"$(nproc)"
-          sudo make -C /tmp/kcov/build install
-
-      - name: Measure coverage
-        run: scripts/coverage
-        env:
-          PWT_TEST_JOBS: 1
-
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
-          if-no-files-found: ignore
+  # Line coverage moved to its own weekly workflow (coverage.yml): the kcov
+  # run is ~15x the plain suite, which will never fit the fast per-push loop.
 
   shellcheck:
     needs: should-run
@@ -246,10 +218,16 @@ jobs:
       - name: Run ShellCheck (warnings, informational)
         run: shellcheck -x -S warning bin/pwt lib/pwt/*.sh || true
 
-      # Pinned via go install: apt's shfmt is older and formats differently,
-      # which would make CI disagree with the local baseline (brew 3.13.x).
+      # Pinned static binary: apt's shfmt is older and formats differently,
+      # which would make CI disagree with the local baseline (brew 3.13.x),
+      # and `go install` spent ~40s compiling what a download gets in ~2s.
       - name: Install shfmt
-        run: go install mvdan.cc/sh/v3/cmd/shfmt@v3.13.1 && echo "$HOME/go/bin" >> "$GITHUB_PATH"
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL -o "$HOME/.local/bin/shfmt" \
+            https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_linux_amd64
+          chmod +x "$HOME/.local/bin/shfmt"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # A gate since the 2026-08-09 reformat: the backlog is zero, so any
       # drift is new and cheap to fix. Same file list as scripts/check.

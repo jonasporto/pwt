@@ -1,0 +1,76 @@
+name: Coverage
+
+# Line coverage, reported never gated — so it does not belong in the fast
+# per-push loop (the kcov run is ~15x the plain suite). Weekly plus manual
+# dispatch, and it exits early when main has not moved since the last
+# successful measurement.
+#
+# kcov only works on Linux: below bash 4.2 it falls back to stderr for its
+# trace, and under bats, bats owns stderr - so macOS always reports 0%.
+# Distro packages are unusable too (Ubuntu 22.04 ships kcov 38, which
+# reports 0%; 24.04 does not package it).
+#
+# kcov must receive the script path, and its bash engine does not follow
+# exec'd children, so wrapping bats measures nothing. See docs/quality.md
+# for the injection method and the 62.70% baseline.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Mondays 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    # Generous headroom over the expected ~45min; the 6h default once burned
+    # a runner on a hung daemon fd.
+    timeout-minutes: 90
+    steps:
+      - name: Skip when main has not moved since the last successful run
+        id: fresh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow coverage.yml \
+            --status success --limit 1 --json headSha -q '.[0].headSha' || true)
+          if [ -n "$last" ] && [ "$last" = "$GITHUB_SHA" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "HEAD $GITHUB_SHA already measured; nothing new since."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.fresh.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        if: steps.fresh.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats jq cmake binutils-dev libcurl4-openssl-dev \
+            zlib1g-dev libdw-dev libiberty-dev
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+      - name: Build kcov v43
+        if: steps.fresh.outputs.run == 'true'
+        run: |
+          git clone --depth 1 --branch v43 https://github.com/SimonKagstrom/kcov /tmp/kcov
+          cmake -S /tmp/kcov -B /tmp/kcov/build
+          make -C /tmp/kcov/build -j"$(nproc)"
+          sudo make -C /tmp/kcov/build install
+
+      - name: Measure coverage
+        if: steps.fresh.outputs.run == 'true'
+        run: scripts/coverage
+        env:
+          PWT_TEST_JOBS: 1
+
+      - name: Upload report
+        if: always() && steps.fresh.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: ignore

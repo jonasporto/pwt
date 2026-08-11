@@ -142,6 +142,16 @@ header.hero { text-align: center; padding: 3.5rem 1rem 2rem; }
 .term pre { border: 0; border-radius: 0; margin: 0; }
 
 /* blog */
+figure.cover { margin: 1.5rem 0; }
+figure.cover img {
+  display: block; width: 100%; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--card); padding: 1rem 0;
+}
+ul.post-list img.thumb {
+  display: block; width: 100%; max-height: 180px; object-fit: cover;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  margin-bottom: 0.4rem;
+}
 article header h1 { font-size: 2rem; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
 .post-meta { color: var(--muted); font-size: 0.9rem; }
 ul.post-list { list-style: none; padding: 0; display: grid; gap: 1.1rem; }

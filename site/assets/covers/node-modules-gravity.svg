@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Heaviest objects in the universe: Sun, neutron star, black hole, and node_modules bending spacetime, node_modules deepest of all">
+  <defs>
+    <style>
+      .sheet { stroke: #57606a; stroke-width: 2.5; fill: none; }
+      .well  { stroke: #0969da; stroke-width: 2.5; fill: none; }
+      .label { font: 600 30px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #57606a; }
+      .label-hot { font: 700 30px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #0969da; }
+      .title { font: 700 44px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #57606a; }
+    </style>
+  </defs>
+
+  <!-- Sun: shallow dip -->
+  <text x="150" y="88" text-anchor="middle" class="label">Sun</text>
+  <g>
+    <path class="sheet" d="M40 140 H110 Q150 200 190 140 H260"/>
+    <path class="sheet" d="M52 170 H118 Q150 218 182 170 H248"/>
+    <path class="sheet" d="M64 200 H126 Q150 234 174 200 H236"/>
+    <circle cx="150" cy="196" r="26" fill="#f59e0b"/>
+  </g>
+
+  <!-- Neutron star: deep narrow dip -->
+  <text x="450" y="88" text-anchor="middle" class="label">Neutron star</text>
+  <g>
+    <path class="sheet" d="M340 140 H410 Q450 150 448 250 Q450 330 452 250 Q450 150 490 140 H560"/>
+    <path class="sheet" d="M352 170 H418 Q446 180 448 260"/>
+    <path class="sheet" d="M548 170 H482 Q454 180 452 260"/>
+    <circle cx="450" cy="330" r="12" fill="#0969da"/>
+  </g>
+
+  <!-- Black hole: deeper still -->
+  <text x="750" y="88" text-anchor="middle" class="label">Black hole</text>
+  <g>
+    <path class="sheet" d="M640 140 H710 Q750 148 748 300 Q750 430 752 300 Q750 148 790 140 H860"/>
+    <path class="sheet" d="M652 170 H718 Q746 178 748 310"/>
+    <path class="sheet" d="M848 170 H782 Q754 178 752 310"/>
+    <circle cx="750" cy="430" r="11" fill="#1a1f24"/>
+    <circle cx="750" cy="430" r="16" fill="none" stroke="#57606a" stroke-width="2"/>
+  </g>
+
+  <!-- node_modules: off the chart -->
+  <text x="1050" y="88" text-anchor="middle" class="label-hot">node_modules</text>
+  <g>
+    <path class="well" d="M940 140 H1010 Q1050 146 1048 300 L1048 630"/>
+    <path class="well" d="M1160 140 H1090 Q1050 146 1052 300 L1052 630"/>
+    <path class="well" d="M952 170 H1018 Q1046 176 1046 330 L1046 630"/>
+    <path class="well" d="M1148 170 H1082 Q1054 176 1054 330 L1054 630"/>
+    <path class="well" d="M964 200 H1026 Q1044 206 1044 360 L1044 630"/>
+    <path class="well" d="M1136 200 H1074 Q1056 206 1056 360 L1056 630"/>
+  </g>
+
+  <!-- Title -->
+  <text x="70" y="450" class="title">HEAVIEST</text>
+  <text x="70" y="505" class="title">OBJECTS IN</text>
+  <text x="70" y="560" class="title">THE UNIVERSE</text>
+</svg>

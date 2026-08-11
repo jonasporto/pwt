@@ -6,5 +6,8 @@ layout: default
     <h1>{{ page.title }}</h1>
     <p class="post-meta">{{ page.date | date: "%B %-d, %Y" }}</p>
   </header>
+  {% if page.cover %}
+  <figure class="cover"><img src="{{ page.cover | relative_url }}" alt="{{ page.cover_alt | default: page.title }}"></figure>
+  {% endif %}
   {{ content }}
 </article>

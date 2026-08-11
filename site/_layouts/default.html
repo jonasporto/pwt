@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% if page.title %}{{ page.title }} · pwt{% else %}{{ site.title }}{% endif %}</title>
 <meta name="description" content="{{ page.description | default: site.description }}">
+{% if page.cover %}
+<meta property="og:image" content="{{ page.cover | absolute_url }}">
+<meta name="twitter:card" content="summary_large_image">
+{% endif %}
+<meta property="og:title" content="{{ page.title | default: site.title }}">
+<meta property="og:description" content="{{ page.description | default: site.description }}">
 <link rel="stylesheet" href="{{ '/assets/style.css' | relative_url }}">
 <link rel="alternate" type="application/atom+xml" title="pwt blog" href="{{ '/blog/feed.xml' | relative_url }}">
 </head>

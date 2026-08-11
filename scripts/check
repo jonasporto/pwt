@@ -103,23 +103,24 @@ check_format() {
     fi
 }
 
-# Distinguish "tests failed" from "the run died": a bats killed by a signal
+# Distinguish "tests failed" from "the run died": a run killed by a signal
 # exits non-zero with zero `not ok` lines, and reporting that as "0 failing"
-# hides the real problem.
+# hides the real problem. Counts scripts/test.sh per-FILE result lines
+# ("ok tests/foo.bats (4s)"); failing files dump their full bats log below.
 _report_bats() {
     local rc="$1" log="$2" label="$3" passed failed
-    passed=$(grep -c '^ok' "$log" 2>/dev/null || true)
+    passed=$(grep -c '^ok tests/' "$log" 2>/dev/null || true)
     passed=${passed:-0}
-    failed=$(grep -c '^not ok' "$log" 2>/dev/null || true)
+    failed=$(grep -c '^not ok tests/' "$log" 2>/dev/null || true)
     failed=${failed:-0}
 
     if [ "$rc" -eq 0 ]; then
-        pass "$label ($passed tests)"
+        pass "$label ($passed files)"
     elif [ "$failed" -gt 0 ]; then
-        fail "$label ($failed failing of $((passed + failed)))"
-        grep -E '^not ok' "$log" | head -10
+        fail "$label ($failed failing file(s) of $((passed + failed)))"
+        grep -E '^not ok tests/' "$log" | head -10
     else
-        fail "$label (run aborted: exit $rc after $passed tests - see $log)"
+        fail "$label (run aborted: exit $rc after $passed files - see $log)"
     fi
 }
 
@@ -132,7 +133,10 @@ check_tests() {
     fi
 
     local rc
-    bats tests/ >/tmp/pwt-check-tests.log 2>&1
+    # scripts/test.sh parallelizes across .bats files (~2min instead of the
+    # ~6.5min serial pass that used to make the pre-push hook outlive
+    # GitHub's SSH idle window).
+    scripts/test.sh >/tmp/pwt-check-tests.log 2>&1
     rc=$?
     _report_bats "$rc" /tmp/pwt-check-tests.log \
         "bats under bash $(bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)"
@@ -145,7 +149,7 @@ check_tests() {
         local v32
         v32=$(/bin/bash --version | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
         local rc32
-        /bin/bash "$(command -v bats)" tests/ >/tmp/pwt-check-32.log 2>&1
+        PWT_TEST_BASH=/bin/bash scripts/test.sh >/tmp/pwt-check-32.log 2>&1
         rc32=$?
         _report_bats "$rc32" /tmp/pwt-check-32.log "bats under system bash $v32"
     fi

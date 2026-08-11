@@ -67,8 +67,8 @@ teardown() {
     # Install
     make install PREFIX="$INSTALL_PREFIX"
 
-    # Modify a module (simulate old version)
-    echo "# old version" >"$INSTALL_PREFIX/lib/pwt/project.sh"
+    # Modify a module (simulate old version); >| for noclobber test shells
+    echo "# old version" >|"$INSTALL_PREFIX/lib/pwt/project.sh"
 
     # Update
     PATH="$INSTALL_PREFIX/bin:$PATH" make update

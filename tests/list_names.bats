@@ -15,7 +15,7 @@ setup() {
 
     # Create project config
     mkdir -p "$PWT_DIR/projects/test-repo"
-    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
+    cat >|"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -93,7 +93,7 @@ teardown() {
     cd "$TEST_REPO"
 
     # Add aliases array to the project config
-    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
+    cat >|"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -117,7 +117,7 @@ EOF
     cd "$TEST_REPO"
 
     # Add single alias string to the project config
-    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
+    cat >|"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
@@ -159,7 +159,7 @@ EOF
     cd "$TEST_REPO"
 
     # Add alias to config
-    cat >"$PWT_DIR/projects/test-repo/config" <<EOF
+    cat >|"$PWT_DIR/projects/test-repo/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/

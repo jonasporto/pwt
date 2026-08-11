@@ -26,6 +26,10 @@
 #   pwt project set myproject worktrees_dir ~/path/to/worktrees
 
 set -euo pipefail
+# BASH_ENV can inject shell options into every non-interactive bash (a user
+# with `set -o noclobber` there would break every internal `>` state write),
+# so reset the ones pwt's own redirections rely on.
+set +o noclobber
 
 # PWT directory structure
 # PWT_DIR can be overridden via environment for testing/sandbox
@@ -1183,7 +1187,9 @@ state_version_read() {
 # Declare the on-disk state schema version
 state_version_write() {
     mkdir -p "$PWT_DIR"
-    printf '%s\n' "$PWT_STATE_VERSION" >"$PWT_DIR/state-version"
+    # >| so the function also works when sourced into a shell that has
+    # noclobber set (unit tests source it; bin/pwt itself resets the option)
+    printf '%s\n' "$PWT_STATE_VERSION" >|"$PWT_DIR/state-version"
 }
 
 # ============================================

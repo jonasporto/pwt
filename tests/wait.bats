@@ -70,6 +70,9 @@ EOF
 
     cd "$TEST_WORKTREES/TEST-WAIT-DONE"
     run "$PWT_BIN" server --bg
+    # Surface the launch output in the bats failure log (CI-only failures
+    # are undebuggable without it: `run` swallows it otherwise)
+    echo "server --bg output: $output"
     [ "$status" -eq 0 ]
 
     local job_id
@@ -93,9 +96,11 @@ EOF
 
     cd "$TEST_WORKTREES/TEST-WAIT-NAME"
     run "$PWT_BIN" server --bg
+    echo "server --bg output: $output"
     [ "$status" -eq 0 ]
 
     run "$PWT_BIN" jobs wait TEST-WAIT-NAME --timeout 10
+    echo "jobs wait output: $output"
     [ "$status" -eq 0 ]
     [[ "$output" == *"TEST-WAIT-NAME"* ]]
     [[ "$output" == *"stopped"* ]]

@@ -236,8 +236,10 @@ jobs:
       - name: Run ShellCheck (warnings, informational)
         run: shellcheck -x -S warning bin/pwt lib/pwt/*.sh || true
 
+      # Pinned via go install: apt's shfmt is older and formats differently,
+      # which would make CI disagree with the local baseline (brew 3.13.x).
       - name: Install shfmt
-        run: sudo apt-get install -y shfmt
+        run: go install mvdan.cc/sh/v3/cmd/shfmt@v3.13.1 && echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
       # A gate since the 2026-08-09 reformat: the backlog is zero, so any
       # drift is new and cheap to fix. Same file list as scripts/check.

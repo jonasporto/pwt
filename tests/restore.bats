@@ -177,7 +177,7 @@ _seed_untracked() {
 
 @test "restore reports a patch that cannot apply cleanly, without failing hard" {
     "$PWT_BIN" create CONFLICT-WT HEAD >/dev/null
-    echo "diverged content" >"$TEST_WORKTREES/CONFLICT-WT/file.txt"
+    echo "diverged content" >|"$TEST_WORKTREES/CONFLICT-WT/file.txt"
 
     _seed_backup "CONFLICT-BK_20260101_120000" "CONFLICT-WT"
     _seed_patch "CONFLICT-BK_20260101_120000"

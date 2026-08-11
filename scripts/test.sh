@@ -168,10 +168,12 @@ test_list=$(mktemp "${TMPDIR:-/tmp}/pwt-tests.XXXXXX")
 output_dir=$(mktemp -d "${TMPDIR:-/tmp}/pwt-test-output.XXXXXX")
 trap 'rm -f "$test_list"; rm -rf "$output_dir"' EXIT
 
+# >| beats noclobber: mktemp already created the file, and the nounset CI
+# job's BASH_ENV forces `set -o noclobber` on every bash it spawns.
 if [ "$test_arg_count" -eq 0 ]; then
-    collect_tests > "$test_list"
+    collect_tests >| "$test_list"
 else
-    collect_tests "${tests[@]}" > "$test_list"
+    collect_tests "${tests[@]}" >| "$test_list"
 fi
 if [ "$?" -ne 0 ]; then
     exit 2

@@ -1,0 +1,25 @@
+title: pwt — Power Worktrees
+description: A powerful Git worktree workflow for today's multi-project development.
+url: "https://jonasporto.github.io"
+baseurl: "/pwt"
+
+markdown: kramdown
+permalink: /blog/:title/
+
+plugins:
+  - jekyll-feed
+
+feed:
+  path: blog/feed.xml
+
+defaults:
+  - scope:
+      path: ""
+      type: posts
+    values:
+      layout: post
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor

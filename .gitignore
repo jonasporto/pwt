@@ -10,3 +10,8 @@ homebrew-pwt/
 
 # kcov output
 coverage/
+
+# Jekyll build output (site/ is built by Pages CI)
+site/_site/
+site/.jekyll-cache/
+site/Gemfile.lock

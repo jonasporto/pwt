@@ -1,86 +1,42 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pwt — Power Worktrees</title>
-<meta name="description" content="A powerful Git worktree workflow for today's multi-project development.">
-<style>
-  :root {
-    --bg: #ffffff;
-    --fg: #1a1f24;
-    --muted: #57606a;
-    --accent: #0969da;
-    --code-bg: #f6f8fa;
-    --border: #d0d7de;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0d1117;
-      --fg: #e6edf3;
-      --muted: #8b949e;
-      --accent: #58a6ff;
-      --code-bg: #161b22;
-      --border: #30363d;
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    background: var(--bg);
-    color: var(--fg);
-    line-height: 1.6;
-  }
-  main { max-width: 760px; margin: 0 auto; padding: 0 1.25rem 4rem; }
-  header.hero { text-align: center; padding: 4.5rem 1rem 2.5rem; }
-  .hero h1 { font-size: 2.6rem; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
-  .hero h1 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  .hero p.tagline { font-size: 1.25rem; color: var(--muted); margin: 0 auto 1.75rem; max-width: 34em; }
-  .cta { display: inline-flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
-  .cta a {
-    display: inline-block; padding: 0.6rem 1.2rem; border-radius: 8px;
-    text-decoration: none; font-weight: 600; border: 1px solid var(--border); color: var(--fg);
-  }
-  .cta a.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  h2 { margin-top: 3rem; font-size: 1.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
-  ul.features { list-style: none; padding: 0; display: grid; gap: 0.6rem; }
-  ul.features li strong { display: block; }
-  ul.features li span { color: var(--muted); }
-  pre {
-    background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
-    padding: 1rem; overflow-x: auto; font-size: 0.9rem;
-  }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  p code, li code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
-  .comment { color: var(--muted); }
-  footer { text-align: center; color: var(--muted); padding: 2rem 1rem; border-top: 1px solid var(--border); font-size: 0.9rem; }
-  footer a { color: var(--accent); text-decoration: none; }
-  a { color: var(--accent); }
-</style>
-</head>
-<body>
+---
+layout: default
+description: A powerful Git worktree workflow for today's multi-project development.
+---
 <header class="hero">
   <h1><code>pwt</code> — Power Worktrees</h1>
-  <p class="tagline">A powerful Git worktree workflow for today's multi-project development.</p>
+  <p class="tagline">One branch per worktree, one port per server, one stable workflow —
+  for humans and AI agents working in parallel.</p>
+  <p><code class="install-line">brew install jonasporto/pwt/pwt</code></p>
   <div class="cta">
     <a class="primary" href="https://github.com/jonasporto/pwt">View on GitHub</a>
     <a href="https://www.npmjs.com/package/@jonasporto/pwt">npm package</a>
+    <a href="{{ '/blog/' | relative_url }}">Read the blog</a>
   </div>
 </header>
 
-<main>
-  <h2>Why pwt</h2>
-  <ul class="features">
-    <li><strong>Work in parallel</strong><span>Multiple projects, or parallel changes within the same project.</span></li>
-    <li><strong>One stable workflow</strong><span>Keep one editor open, swap branches underneath it.</span></li>
-    <li><strong>No local conflicts</strong><span>Automatic per-worktree ports and predictable dev servers.</span></li>
-    <li><strong>Project-aware automation</strong><span>Run setup, servers, and custom commands via Pwtfile.</span></li>
-    <li><strong>Built on Git worktrees</strong><span>Falls back to clones when isolation is required.</span></li>
-  </ul>
+<h2>Why pwt</h2>
+<ul class="cards">
+  <li><strong>Work in parallel</strong><span>Multiple projects, or parallel changes within the same project — without stashing or branch juggling.</span></li>
+  <li><strong>One stable workflow</strong><span>Keep one editor open, swap branches underneath it.</span></li>
+  <li><strong>No local conflicts</strong><span>Automatic per-worktree ports and predictable dev servers.</span></li>
+  <li><strong>Project-aware automation</strong><span>Setup, servers, and custom commands defined per project in a Pwtfile.</span></li>
+  <li><strong>Background jobs</strong><span>Real detached daemons with logs, exit codes, and wait primitives.</span></li>
+  <li><strong>Agent-ready</strong><span>Porcelain output, stable exit codes, and <code>pwt skill</code> for AI-driven workflows.</span></li>
+</ul>
 
-  <h2>Install</h2>
-  <pre><code><span class="comment"># Homebrew</span>
+<h2>Quick start</h2>
+<div class="term">
+  <div class="term-bar"><i></i><i></i><i></i></div>
+  <pre><code>cd ~/projects/myapp
+pwt init                        <span class="comment"># Initialize project</span>
+pwt add feat/user-auth          <span class="comment"># Create worktree from branch</span>
+pwt feat/user-auth              <span class="comment"># Jump to a worktree</span>
+pwt server --bg                 <span class="comment"># Start its dev server, detached</span>
+pwt list                        <span class="comment"># List worktrees with git status</span></code></pre>
+</div>
+
+<h2>Install</h2>
+<pre><code><span class="comment"># Homebrew</span>
 brew install jonasporto/pwt/pwt
 
 <span class="comment"># npm</span>
@@ -89,18 +45,10 @@ npm i -g @jonasporto/pwt
 <span class="comment"># curl</span>
 curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh | bash</code></pre>
 
-  <h2>Quick start</h2>
-  <pre><code>cd ~/projects/myapp
-pwt init                        <span class="comment"># Initialize project</span>
-pwt add feat/user-auth          <span class="comment"># Create worktree from branch</span>
-pwt feat/user-auth              <span class="comment"># Jump to a worktree</span>
-pwt cd --select                 <span class="comment"># Interactive worktree picker</span>
-pwt list                        <span class="comment"># List worktrees with git status</span></code></pre>
-
-  <h2>Pwtfile — project hooks</h2>
-  <p>Think <em>Makefile</em>, but for the worktree lifecycle. pwt stays project-agnostic;
-  your Pwtfile defines what setup, servers, and health mean for your stack.</p>
-  <pre><code>PORT_BASE=5001
+<h2>Pwtfile — project hooks</h2>
+<p>Think <em>Makefile</em>, but for the worktree lifecycle. pwt stays project-agnostic;
+your Pwtfile defines what setup, servers, and health mean for your stack.</p>
+<pre><code>PORT_BASE=5001
 
 setup() {
     pwtfile_copy ".env.local"
@@ -115,32 +63,38 @@ server() {
     esac
 }</code></pre>
 
-  <h2>Stable gateway</h2>
-  <p>Each worktree gets its own port, and one stable project URL can route to whichever
-  worktree you're testing:</p>
-  <pre><code>pwt gateway up --port 5999
+<h2>Stable gateway</h2>
+<p>Each worktree gets its own port, and one stable project URL routes to whichever
+worktree you're testing:</p>
+<pre><code>pwt gateway up --port 5999
 pwt gateway use feat/user-auth
 open "$(pwt gateway url)"</code></pre>
 
-  <h2>Built for agents too</h2>
-  <p>Driving pwt from an AI agent or a script? <code>pwt skill</code> prints the agent guide:
-  machine-readable output (<code>list --porcelain</code>, <code>state --json</code>), a stable
-  exit-code table, and wait primitives (<code>pwt server wait</code>, <code>pwt jobs wait</code>)
-  that replace poll loops.</p>
+<h2>Built for agents too</h2>
+<p>Driving pwt from an AI agent or a script? <code>pwt skill</code> prints the agent guide:
+machine-readable output (<code>list --porcelain</code>, <code>state --json</code>), a stable
+exit-code table, and wait primitives (<code>pwt server wait</code>, <code>pwt jobs wait</code>)
+that replace poll loops. See also <a href="{{ '/llms.txt' | relative_url }}">llms.txt</a>.</p>
 
-  <h2>Documentation</h2>
-  <p>
-    <a href="https://github.com/jonasporto/pwt#readme">README</a> ·
-    <a href="https://github.com/jonasporto/pwt/blob/main/INSTALL.md">Install guide</a> ·
-    <a href="https://github.com/jonasporto/pwt/blob/main/FAQ.md">FAQ</a> ·
-    <a href="https://github.com/jonasporto/pwt/blob/main/CHANGELOG.md">Changelog</a> ·
-    <a href="https://github.com/jonasporto/pwt/blob/main/docs/state-v2-contract.md">State contract</a> ·
-    <a href="llms.txt">llms.txt</a>
-  </p>
-</main>
+{% if site.posts.size > 0 %}
+<h2>Latest from the blog</h2>
+<ul class="post-list">
+  {% for post in site.posts limit: 3 %}
+  <li>
+    <h3><a href="{{ post.url | relative_url }}">{{ post.title }}</a></h3>
+    <span class="post-meta">{{ post.date | date: "%B %-d, %Y" }}</span>
+    <p>{{ post.description }}</p>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
 
-<footer>
-  MIT © Jonas Porto · <a href="https://github.com/jonasporto/pwt">github.com/jonasporto/pwt</a>
-</footer>
-</body>
-</html>
+<h2>Documentation</h2>
+<p>
+  <a href="https://github.com/jonasporto/pwt#readme">README</a> ·
+  <a href="https://github.com/jonasporto/pwt/blob/main/INSTALL.md">Install guide</a> ·
+  <a href="https://github.com/jonasporto/pwt/blob/main/FAQ.md">FAQ</a> ·
+  <a href="https://github.com/jonasporto/pwt/blob/main/CHANGELOG.md">Changelog</a> ·
+  <a href="https://github.com/jonasporto/pwt/blob/main/docs/state-v2-contract.md">State contract</a> ·
+  <a href="{{ '/llms.txt' | relative_url }}">llms.txt</a>
+</p>

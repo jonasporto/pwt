@@ -1,0 +1,16 @@
+---
+layout: default
+title: Blog
+description: Notes from building pwt — bash, Git worktrees, CI, and developer tooling.
+---
+<h2>Blog</h2>
+<ul class="post-list">
+  {% for post in site.posts %}
+  <li>
+    <h3><a href="{{ post.url | relative_url }}">{{ post.title }}</a></h3>
+    <span class="post-meta">{{ post.date | date: "%B %-d, %Y" }}</span>
+    <p>{{ post.description }}</p>
+  </li>
+  {% endfor %}
+</ul>
+<p class="post-meta">Subscribe via <a href="{{ '/blog/feed.xml' | relative_url }}">RSS</a>.</p>

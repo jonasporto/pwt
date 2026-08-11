@@ -55,9 +55,12 @@ awk -v line="$PREAMBLE" 'NR == 2 { print line; next } { print }' \
 chmod +x "$WORK/src/bin/pwt"
 
 echo "Running suite under kcov (expect ~15x the normal runtime)..."
+# timeout: a daemon that leaks an inherited fd makes kcov wait on its trace
+# pipe forever (bats then never returns). Killing the run after the cap still
+# lets the merge below report every collector gathered up to that point.
 (
     cd "$WORK/src" || exit 1
-    PWT_COV_DIR="$OUT/collect" bats "${@:-tests/}"
+    PWT_COV_DIR="$OUT/collect" timeout "${PWT_COV_TIMEOUT:-75m}" bats "${@:-tests/}"
 ) || echo "note: some --bg tests fail under instrumentation; see docs/quality.md"
 
 echo "Merging collectors..."

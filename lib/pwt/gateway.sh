@@ -221,28 +221,33 @@ _gateway_start() {
 	[ -f "$state_file" ] || : >"$state_file"
 	_gateway_write_proxy_script
 
+	# Same perl daemonizer as _run_pwtfile_bg: node's spawn() only controls
+	# fds 0-2, so a detached child keeps every inherited fd above stderr open
+	# (kcov's bash-trace pipe, caller pipes). kcov then waits on that pipe
+	# forever after pwt exits, hanging the coverage run on the first gateway
+	# test. Closing 3..max before exec'ing node removes the whole class.
 	local pid
 	pid=$(
 		PWT_GATEWAY_HOST="127.0.0.1" \
 			PWT_GATEWAY_PORT="$port" \
 			PWT_GATEWAY_STATE="$state_file" \
 			PWT_GATEWAY_PROJECT="$CURRENT_PROJECT" \
-			node - "$script" "$log_file" <<'NODE'
-const { spawn } = require("child_process");
-const fs = require("fs");
-
-const script = process.argv[2];
-const logFile = process.argv[3];
-const out = fs.openSync(logFile, "a");
-const child = spawn(process.execPath, [script], {
-  detached: true,
-  stdio: ["ignore", out, out],
-  env: process.env
-});
-
-child.unref();
-console.log(child.pid);
-NODE
+			perl -e '
+			use POSIX qw(setsid);
+			my ($script, $log) = @ARGV;
+			my $pid = fork();
+			if ($pid == 0) {
+				setsid();
+				open(STDIN, "<", "/dev/null");
+				open(STDOUT, ">>", $log);
+				open(STDERR, ">&STDOUT");
+				my $max = POSIX::sysconf(&POSIX::_SC_OPEN_MAX) || 256;
+				$max = 4096 if $max > 4096 || $max < 0;
+				POSIX::close($_) for 3 .. $max;
+				exec("node", $script) or die "exec failed: $!";
+			}
+			print "$pid\n";
+		' "$script" "$log_file"
 	)
 	if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
 		pwt_error "Error: Gateway failed to spawn"

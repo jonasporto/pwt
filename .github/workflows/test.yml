@@ -10,6 +10,7 @@ jobs:
   # Check if PR should run tests (skip for external PRs without issue reference)
   should-run:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       run: ${{ steps.check.outputs.run }}
     steps:
@@ -58,6 +59,9 @@ jobs:
     needs: should-run
     if: needs.should-run.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
+    # Every job gets a timeout: a leaked daemon fd once held the coverage job
+    # for the full 6h default, burning the runner for nothing.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -106,6 +110,7 @@ jobs:
     needs: should-run
     if: needs.should-run.outputs.run == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -132,6 +137,7 @@ jobs:
     needs: should-run
     if: needs.should-run.outputs.run == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     container: debian:12-slim
     steps:
       - name: Install the bare minimum
@@ -184,6 +190,9 @@ jobs:
     needs: should-run
     if: needs.should-run.outputs.run == 'true'
     runs-on: ubuntu-latest
+    # The kcov run is ~15x the plain suite plus the kcov build; 90 min is
+    # generous headroom, while the 6h default just burns the runner on a hang.
+    timeout-minutes: 90
     continue-on-error: true
     steps:
       - name: Checkout repository
@@ -221,6 +230,7 @@ jobs:
     needs: should-run
     if: needs.should-run.outputs.run == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

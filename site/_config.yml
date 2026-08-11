@@ -3,6 +3,10 @@ description: A powerful Git worktree workflow for today's multi-project developm
 url: "https://jonasporto.github.io"
 baseurl: "/pwt"
 
+# GA4 measurement ID (public by design; ships in every visitor's HTML).
+# The snippet only renders in production builds, so local previews stay clean.
+google_analytics: ""
+
 markdown: kramdown
 permalink: /blog/:title/
 

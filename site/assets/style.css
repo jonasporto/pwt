@@ -6,6 +6,17 @@
   --code-bg: #f6f8fa;
   --border: #d0d7de;
   --card: #f6f8fa;
+  /* rouge syntax tokens (GitHub-flavored) */
+  --tok-kw: #cf222e;
+  --tok-str: #0a3069;
+  --tok-com: #6e7781;
+  --tok-fn: #8250df;
+  --tok-var: #953800;
+  --tok-num: #0550ae;
+  --tok-ins: #1a7f37;
+  --tok-ins-bg: #dafbe1;
+  --tok-del: #cf222e;
+  --tok-del-bg: #ffebe9;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -16,6 +27,16 @@
     --code-bg: #161b22;
     --border: #30363d;
     --card: #161b22;
+    --tok-kw: #ff7b72;
+    --tok-str: #a5d6ff;
+    --tok-com: #8b949e;
+    --tok-fn: #d2a8ff;
+    --tok-var: #ffa657;
+    --tok-num: #79c0ff;
+    --tok-ins: #3fb950;
+    --tok-ins-bg: rgba(46, 160, 67, 0.15);
+    --tok-del: #f85149;
+    --tok-del-bg: rgba(248, 81, 73, 0.15);
   }
 }
 * { box-sizing: border-box; }
@@ -36,6 +57,46 @@ pre {
 }
 pre code { background: none; padding: 0; }
 .comment { color: var(--muted); }
+
+/* rouge syntax highlighting (kramdown fenced code with a language tag) */
+div.highlighter-rouge { position: relative; }
+.highlight .c, .highlight .c1, .highlight .cm, .highlight .cp { color: var(--tok-com); font-style: italic; }
+.highlight .k, .highlight .kd, .highlight .kn, .highlight .kc, .highlight .kp,
+.highlight .kr, .highlight .kt, .highlight .ow { color: var(--tok-kw); }
+.highlight .s, .highlight .s1, .highlight .s2, .highlight .sb, .highlight .sh,
+.highlight .si, .highlight .sx, .highlight .sr, .highlight .ss { color: var(--tok-str); }
+.highlight .se { color: var(--tok-var); }
+.highlight .nb, .highlight .bp, .highlight .no { color: var(--tok-num); }
+.highlight .nf, .highlight .fm, .highlight .nc, .highlight .nn { color: var(--tok-fn); }
+.highlight .nv, .highlight .vi, .highlight .vg, .highlight .vc, .highlight .na,
+.highlight .nt { color: var(--tok-var); }
+.highlight .m, .highlight .mi, .highlight .mf, .highlight .mh, .highlight .mo { color: var(--tok-num); }
+.highlight .gi { color: var(--tok-ins); background: var(--tok-ins-bg); }
+.highlight .gd { color: var(--tok-del); background: var(--tok-del-bg); }
+.highlight .gh, .highlight .gu { color: var(--tok-fn); font-weight: 600; }
+.highlight .err { color: inherit; background: none; }
+
+/* hint callouts: blockquote + {: .hint} (or .hint-agent) in kramdown */
+blockquote.hint, blockquote.hint-agent {
+  margin: 1.25rem 0; padding: 0.8rem 1rem; border-radius: 8px;
+  background: var(--card); border: 1px solid var(--border);
+  border-left: 4px solid var(--accent); color: var(--fg);
+}
+blockquote.hint p, blockquote.hint-agent p { margin: 0; }
+blockquote.hint-agent::before {
+  content: "FOR AGENTS"; display: block; font-size: 0.7rem; font-weight: 700;
+  letter-spacing: 0.08em; color: var(--accent); margin-bottom: 0.25rem;
+}
+
+/* copy button on code blocks */
+.copy-btn {
+  position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.25rem 0.6rem;
+  font-size: 0.75rem; font-family: inherit; cursor: pointer;
+  color: var(--muted); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; opacity: 0; transition: opacity 0.15s;
+}
+div.highlighter-rouge:hover .copy-btn, .term:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { color: var(--accent); }
 h2 { margin-top: 3rem; font-size: 1.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
 
 /* top nav */

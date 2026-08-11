@@ -21,5 +21,19 @@
 <footer>
   MIT © Jonas Porto · <a href="https://github.com/jonasporto/pwt">github.com/jonasporto/pwt</a> · <a href="{{ '/blog/feed.xml' | relative_url }}">RSS</a>
 </footer>
+<script>
+  document.querySelectorAll('div.highlighter-rouge, .term').forEach(function (block) {
+    var pre = block.querySelector('pre'); if (!pre) return;
+    var btn = document.createElement('button');
+    btn.className = 'copy-btn'; btn.type = 'button'; btn.textContent = 'copy';
+    btn.addEventListener('click', function () {
+      navigator.clipboard.writeText(pre.innerText).then(function () {
+        btn.textContent = 'copied'; setTimeout(function () { btn.textContent = 'copy'; }, 1500);
+      });
+    });
+    block.style.position = 'relative';
+    block.appendChild(btn);
+  });
+</script>
 </body>
 </html>

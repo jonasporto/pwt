@@ -3,6 +3,7 @@ title: "63 Git worktrees, one node_modules problem"
 description: "Copying node_modules per worktree costs seconds and gigabytes. A homemade shared store almost worked. pnpm's copy-on-write clones actually did, with four gotchas found the hard way."
 featured: true
 cover: /assets/covers/node-modules-gravity.png
+og_image: /assets/covers/node-modules-gravity-card.png
 cover_alt: "Heaviest objects in the universe: Sun, neutron star and black hole bend spacetime a little; node_modules bends it off the chart"
 ---
 

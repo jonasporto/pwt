@@ -77,9 +77,13 @@ exit-code table, and wait primitives (<code>pwt server wait</code>, <code>pwt jo
 that replace poll loops. See also <a href="{{ '/llms.txt' | relative_url }}">llms.txt</a>.</p>
 
 {% if site.posts.size > 0 %}
-<h2>Latest from the blog</h2>
+<h2>From the blog</h2>
+{% comment %} Curated: posts with `featured: true` in front matter; falls
+back to the latest three when nothing is marked. {% endcomment %}
+{% assign featured = site.posts | where: "featured", true %}
+{% if featured.size == 0 %}{% assign featured = site.posts | slice: 0, 3 %}{% endif %}
 <ul class="post-list">
-  {% for post in site.posts limit: 3 %}
+  {% for post in featured limit: 4 %}
   <li>
     <h3><a href="{{ post.url | relative_url }}">{{ post.title }}</a></h3>
     <span class="post-meta">{{ post.date | date: "%B %-d, %Y" }}</span>
@@ -87,6 +91,7 @@ that replace poll loops. See also <a href="{{ '/llms.txt' | relative_url }}">llm
   </li>
   {% endfor %}
 </ul>
+<p><a href="{{ '/blog/' | relative_url }}">All posts →</a></p>
 {% endif %}
 
 <h2>Documentation</h2>

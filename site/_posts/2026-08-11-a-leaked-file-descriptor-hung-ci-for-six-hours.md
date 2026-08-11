@@ -1,6 +1,7 @@
 ---
 title: "A leaked file descriptor hung our CI for six hours (five times in a row)"
 description: "Debugging a kcov coverage job that sat silent until GitHub's 6-hour timeout: node's spawn() only controls fds 0–2, and one daemon kept a trace pipe open."
+featured: true
 ---
 
 pwt's coverage job hung until GitHub Actions' six-hour default timeout in

@@ -65,7 +65,9 @@ wrong place silently gives you the strict layout, where the build dies on
 the first *phantom dependency*: a package your code imports but never
 declared, resolving only because yarn's flat layout happened to hoist it.
 The app had four of them (starting with `@popperjs/core`). Hoisted mode
-reproduces the flat layout while you declare them properly.
+reproduces the flat layout while you declare them properly. If your code
+has no phantom dependencies, current pnpm's default isolated linker works
+as is; hoisted is the bridge, not the destination.
 
 **2. Postinstall scripts need an explicit decision.** Recent pnpm refuses
 to run dependency build scripts without approval, and then exits non-zero.
@@ -98,33 +100,45 @@ cache".
 
 All of this belongs in the one place that runs on every worktree creation.
 With [pwt](https://github.com/jonasporto/pwt) that is the `Pwtfile`, the
-per-project file where you define what "set up a worktree" means. A
-trimmed version of the real `setup()`:
+per-project file where you define what "set up a worktree" means. This
+exact file was written and verified by an agent driving pwt in a scratch
+repo (two worktrees created, isolation checked by tampering one tree and
+diffing the other, fallback proven by breaking pnpm on purpose):
 
 ```bash
+# Pwtfile - runs on `pwt create` for every new worktree
+
+setup() {
+    node_deps
+}
+
+# Fast, isolated node_modules per worktree:
+# yarn.lock stays the source of truth; pnpm does the installing.
+# `pnpm import` (yarn.lock -> pnpm-lock.yaml) is paid once per lockfile
+# hash, then cached, so every later worktree skips straight to install.
 node_deps() {
     local key lockcache
     key=$(cat yarn.lock package.json | shasum | cut -d' ' -f1)
-    lockcache="$HOME/.cache/myapp/pnpm-locks/$key"
+    lockcache="${PWT_DIR:-$HOME/.pwt}/cache/$PWT_PROJECT/pnpm-locks/$key"
 
-    if [ -f "$lockcache" ]; then
-        cp "$lockcache" pnpm-lock.yaml            # 76s import paid once, ever
-    elif ! pnpm import 2>/dev/null; then
-        yarn install --frozen-lockfile            # unconvertible old branch
-        return
+    if [ -f "$lockcache/pnpm-lock.yaml" ]; then
+        cp "$lockcache/pnpm-lock.yaml" .
+    elif pnpm import; then
+        mkdir -p "$lockcache"
+        cp pnpm-lock.yaml "$lockcache/"
     else
-        cp pnpm-lock.yaml "$lockcache"
+        # pnpm couldn't convert this lockfile - fall back to plain yarn
+        yarn install --frozen-lockfile
+        return
     fi
 
-    pnpm install --frozen-lockfile --ignore-scripts   # ~3s from the store
-}
-
-setup() {
-    pwtfile_copy ".env.local"
-    node_deps
-    ./scripts/setup
+    pnpm install --frozen-lockfile --ignore-scripts
 }
 ```
+
+In the scratch repo the second worktree's whole `pwt create` took 1.0s
+against 2.5s for the first (which pays the `pnpm import`). On the real
+monolith the same shape lands at ~3s per worktree.
 
 `pwt create feature-x` runs `setup()` in the new worktree. Dependencies are
 ready in about 3 seconds, the disk stays flat no matter how many worktrees

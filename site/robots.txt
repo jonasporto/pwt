@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://jonasporto.github.io/pwt/sitemap.xml

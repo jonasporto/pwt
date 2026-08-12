@@ -1,7 +1,11 @@
 ---
 title: "A leaked file descriptor hung our CI for six hours (five times in a row)"
-description: "A kcov coverage job sat silent until GitHub's 6-hour timeout. The cause: node's spawn() only controls fds 0-2, and one daemon kept a trace pipe open."
+description: "A coverage job sat silent until GitHub's 6-hour timeout. The cause: one file descriptor leaked into a daemon."
 featured: true
+image:
+  path: /assets/covers/card-fd.png
+  width: 1200
+  height: 630
 ---
 
 pwt's coverage job hit GitHub Actions' six-hour default timeout in **every

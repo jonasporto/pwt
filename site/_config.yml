@@ -2,6 +2,10 @@ title: pwt — Power Worktrees
 description: A powerful Git worktree workflow for today's multi-project development.
 url: "https://jonasporto.github.io"
 baseurl: "/pwt"
+lang: en
+author:
+  name: Jonas Porto
+  url: https://github.com/jonasporto
 
 # GA4 measurement ID (public by design; ships in every visitor's HTML).
 # The snippet only renders in production builds, so local previews stay clean.
@@ -12,6 +16,8 @@ permalink: /blog/:title/
 
 plugins:
   - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
 
 feed:
   path: blog/feed.xml

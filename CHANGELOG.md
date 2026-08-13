@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-13
+
 ### Added
 - Agent discovery surfaces: `llms.txt` on the project site, a
   "When pwt beats raw git worktree" decision table in the README, and a

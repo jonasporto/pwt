@@ -3058,6 +3058,10 @@ BGEOF
                 echo -e "${GREEN}✓${NC} Background job started"
                 echo "{\"job_id\":\"$job_id\",\"pid\":$bg_pid,\"log\":\"$log_file\"}"
                 echo ""
+                # `wait` comes first on purpose: an agent that does not see it
+                # here writes its own `until ... sleep` loop instead, which is
+                # what session logs actually show it doing.
+                echo "  pwt jobs wait $job_id       # block until it finishes"
                 echo "  pwt jobs logs $job_id       # view output"
                 echo "  pwt jobs logs $job_id -f    # follow output"
                 echo "  pwt jobs stop $job_id       # stop"

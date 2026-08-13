@@ -265,3 +265,24 @@ EOF
     job_id=$(echo "$output" | grep -o '"job_id":"[^"]*"' | head -1 | sed 's/"job_id":"//;s/"//')
     "$PWT_BIN" jobs stop "$job_id" 2>/dev/null || true
 }
+
+# Session logs showed agents hand-rolling `until ... sleep` loops instead of
+# using the wait primitive, so the launch output has to name it at the moment
+# the user (or agent) is about to wait.
+@test "--bg launch output offers jobs wait before logs" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
+slowtask() {
+    sleep 2
+}
+PWTFILE
+    cd "$TEST_REPO"
+    "$PWT_BIN" create BG-WAIT-HINT HEAD >/dev/null 2>&1
+    run "$PWT_BIN" BG-WAIT-HINT slowtask --bg
+
+    [[ "$output" == *"pwt jobs wait"* ]]
+    [[ "$output" == *"block until it finishes"* ]]
+    # and it must come before the logs hint
+    wait_line=$(echo "$output" | grep -n "pwt jobs wait" | head -1 | cut -d: -f1)
+    logs_line=$(echo "$output" | grep -n "pwt jobs logs" | head -1 | cut -d: -f1)
+    [ "$wait_line" -lt "$logs_line" ]
+}

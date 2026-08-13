@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `--bg` launch output now offers `pwt jobs wait <id>` first, before the logs
+  and stop hints. Session logs showed agents hand-rolling `until ... sleep`
+  loops (251 sleeps and 75 until-loops across 23,770 commands) while the wait
+  primitives were used 5 times, so the hint has to appear where the wait
+  decision is made.
+
 ## [0.2.1] - 2026-08-13
 
 ### Added

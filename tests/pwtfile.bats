@@ -938,3 +938,52 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"test/HOOK-NONE"* ]]
 }
+
+# ============================================
+# Hook status reporting
+# ============================================
+
+# The status line used to be printed unconditionally, so a setup() that died
+# halfway (a failed config rewrite, a missing tool) still showed a checkmark
+# and the worktree looked ready when it was not.
+@test "a failing setup() reports the failure instead of a checkmark" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
+setup() {
+    echo "starting"
+    false
+}
+PWTFILE
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create HOOK-FAIL HEAD
+
+    [[ "$output" != *"Pwtfile (setup) completed"* ]]
+    [[ "$output" == *"Pwtfile (setup) failed"* ]]
+}
+
+@test "a successful setup() still reports completed" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
+setup() {
+    echo "all good"
+}
+PWTFILE
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create HOOK-OK HEAD
+
+    [[ "$output" == *"Pwtfile (setup) completed"* ]]
+    [[ "$output" != *"failed"* ]]
+}
+
+# A failing setup() must not abort worktree creation: the checkout is already
+# on disk and the user needs it to fix whatever broke.
+@test "a failing setup() still leaves a usable worktree" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
+setup() {
+    false
+}
+PWTFILE
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create HOOK-FAIL-USABLE HEAD
+
+    [ "$status" -eq 0 ]
+    [ -d "$TEST_WORKTREES/HOOK-FAIL-USABLE" ]
+}

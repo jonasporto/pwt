@@ -54,9 +54,12 @@ step_configure_files() {
     # pwtfile_copy copies from the main app when the file is absent here
     pwtfile_copy ".env"
 
-    # Rewrite only the keys that must differ; leave the rest of the file alone
-    pwtfile_replace ".env" "PORT=" "PORT=${PWT_PORT}"
-    pwtfile_replace ".env" "DATABASE_SUFFIX=" "DATABASE_SUFFIX=${suffix}"
+    # Rewrite only the keys that must differ; leave the rest of the file alone.
+    # Match to the end of the line: pwtfile_replace is a plain substring swap,
+    # so replacing "PORT=" in a file that already reads PORT=3000 would produce
+    # PORT=50013000. The _re variant consumes the old value.
+    pwtfile_replace_re ".env" "PORT=.*" "PORT=${PWT_PORT}"
+    pwtfile_replace_re ".env" "DATABASE_SUFFIX=.*" "DATABASE_SUFFIX=${suffix}"
 
     echo "  ✓ .env configured for port ${PWT_PORT}"
 }
@@ -140,7 +143,7 @@ _service_namespace() {
 step_configure_services() {
     local ns
     ns=$(_service_namespace)
-    pwtfile_replace ".env" "REDIS_URL=" "REDIS_URL=redis://localhost:6379/${ns}"
+    pwtfile_replace_re ".env" "REDIS_URL=.*" "REDIS_URL=redis://localhost:6379/${ns}"
     echo "  ✓ using Redis database ${ns}"
 }
 
@@ -168,7 +171,7 @@ step_isolated_service() {
     local port
     port=$((PWT_PORT + 1000)) # derive, never hardcode
     docker run -d --name "$name" -p "${port}:6379" redis:7-alpine >/dev/null
-    pwtfile_replace ".env" "REDIS_URL=" "REDIS_URL=redis://localhost:${port}/0"
+    pwtfile_replace_re ".env" "REDIS_URL=.*" "REDIS_URL=redis://localhost:${port}/0"
     echo "  ✓ started $name on ${port}"
 }
 

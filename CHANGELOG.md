@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "When pwt beats raw git worktree" decision table in the README, and a
   matching when-to-suggest section in the shipped agent skill.
 
+### Fixed
+- `pwtfile_replace_re` could not write a replacement containing `/`. Pattern
+  and replacement were interpolated into perl's `s///`, so any filesystem
+  path (`DATABASE_URL`, `REDIS_URL`, a socket path: the common case when
+  rewriting a `.env`) closed the substitution early. perl aborted with
+  "Unknown regexp modifier", the file was left untouched, and pwt reported
+  success. Both are now passed to perl as arguments. The replacement is a
+  literal string, so `$1`-style backreferences are no longer expanded.
+- Pwtfile hooks printed `✓ <label> (<phase>) completed` unconditionally: a
+  `setup()` that died halfway looked exactly like one that worked. The line
+  now reflects the hook's exit status (`⚠ ... failed (exit N)`), and signal
+  terminations (130/143) still count as normal, since Ctrl-C is how a
+  foreground server is stopped. A failing hook still does not abort worktree
+  creation.
+- `examples/Pwtfile.reference` rewrote `.env` keys with `pwtfile_replace`,
+  a substring swap: on a file already containing `PORT=3000` the documented
+  recipe produced `PORT=50013000`. The reference now uses the line-anchored
+  `pwtfile_replace_re` form.
+
 ## [0.2.0] - 2026-08-10
 
 Minor (not patch) because the internal state format changed and commands were

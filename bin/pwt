@@ -2431,6 +2431,14 @@ pwtfile_replace_literal() {
 # Regex replacement using perl (cross-platform, unlike sed -E)
 # Usage: pwtfile_replace_re <file> <pattern> <replacement>
 # Example: pwtfile_replace_re "config.yml" "port:\s*\d+" "port: 5007"
+#
+# The replacement is a LITERAL string, not a perl expression: '$1' and other
+# backreferences are not expanded. That is deliberate. Both arguments are
+# passed to perl as arguments instead of being interpolated into the s///
+# script, because a replacement containing '/' (any filesystem path, which is
+# the common case when rewriting a .env) used to close the substitution early:
+# perl aborted with "Unknown regexp modifier" and left the file untouched
+# while pwt reported success.
 pwtfile_replace_re() {
     local file="$1"
     local pattern="$2"
@@ -2438,7 +2446,8 @@ pwtfile_replace_re() {
     [ -f "$file" ] || return 0
 
     if command -v perl >/dev/null 2>&1; then
-        perl -i -pe "s/$pattern/$replacement/g" "$file"
+        perl -i -pe 'BEGIN { $p = shift; $r = shift } s/$p/$r/g' \
+            "$pattern" "$replacement" "$file"
     else
         echo "  ! perl not found, skipping regex replace in $file"
         return 1
@@ -2793,6 +2802,7 @@ run_single_pwtfile() {
     local pwtfile="$1"
     local phase="$2"
     local label="$3"
+    local _phase_rc=0
 
     [ ! -f "$pwtfile" ] && return 0
 
@@ -2827,7 +2837,7 @@ run_single_pwtfile() {
             if type "$phase" &>/dev/null; then
                 _run_pwtfile_phase_with_args "$phase"
             fi
-        ) </dev/null
+        ) </dev/null || _phase_rc=$?
     else
         (
             cd "$PWT_WORKTREE_PATH"
@@ -2846,9 +2856,22 @@ run_single_pwtfile() {
             if type "$phase" &>/dev/null; then
                 _run_pwtfile_phase_with_args "$phase"
             fi
-        )
+        ) || _phase_rc=$?
     fi
-    echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
+
+    # The status line used to be unconditional, so a hook that died halfway
+    # still printed a checkmark: a setup() whose config rewrite failed looked
+    # identical to one that worked. Signals are not failures here - Ctrl-C on
+    # a foreground server is the normal way to stop it.
+    case "$_phase_rc" in
+        0 | 130 | 143)
+            echo -e "  ${GREEN}✓${NC} $label ($phase) completed"
+            ;;
+        *)
+            echo -e "  ${YELLOW}⚠${NC} $label ($phase) failed (exit $_phase_rc)" >&2
+            ;;
+    esac
+    return "$_phase_rc"
 }
 
 # Run a Pwtfile phase in the background as a daemon

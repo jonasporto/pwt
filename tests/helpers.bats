@@ -236,6 +236,74 @@ _test_confirm() {
     [ "$status" -eq 0 ]
 }
 
+# A replacement containing '/' used to close the s/// early: perl aborted with
+# "Unknown regexp modifier" and left the file untouched. Paths are THE common
+# replacement when rewriting a .env, so this is the primary use, not an edge.
+@test "pwtfile_replace_re writes a replacement containing slashes" {
+    if ! command -v perl >/dev/null 2>&1; then
+        skip "perl not installed"
+    fi
+
+    source_pwt_function pwtfile_replace_re
+
+    echo "DATABASE_URL=sqlite3:db/dev.sqlite3" >"$TEST_TEMP_DIR/test.env"
+    run pwtfile_replace_re "$TEST_TEMP_DIR/test.env" \
+        "DATABASE_URL=.*" "DATABASE_URL=/var/data/app_wt5001.sqlite3"
+    [ "$status" -eq 0 ]
+
+    run cat "$TEST_TEMP_DIR/test.env"
+    [ "$output" = "DATABASE_URL=/var/data/app_wt5001.sqlite3" ]
+}
+
+@test "pwtfile_replace_re keeps the replacement literal (no perl interpolation)" {
+    if ! command -v perl >/dev/null 2>&1; then
+        skip "perl not installed"
+    fi
+
+    source_pwt_function pwtfile_replace_re
+
+    echo "DATABASE_URL=old" >"$TEST_TEMP_DIR/test.env"
+    # '@host' would be an array and '$pw' a scalar if the replacement were
+    # interpolated as perl source; both must survive verbatim.
+    pwtfile_replace_re "$TEST_TEMP_DIR/test.env" \
+        "DATABASE_URL=.*" 'DATABASE_URL=postgres://u:p@host/db$pw'
+
+    run cat "$TEST_TEMP_DIR/test.env"
+    [ "$output" = 'DATABASE_URL=postgres://u:p@host/db$pw' ]
+}
+
+@test "pwtfile_replace_re still treats the pattern as a regex" {
+    if ! command -v perl >/dev/null 2>&1; then
+        skip "perl not installed"
+    fi
+
+    source_pwt_function pwtfile_replace_re
+
+    printf "port:   3000\n" >"$TEST_TEMP_DIR/test.yml"
+    pwtfile_replace_re "$TEST_TEMP_DIR/test.yml" "port:\s*\d+" "port: 5001"
+
+    run cat "$TEST_TEMP_DIR/test.yml"
+    [ "$output" = "port: 5001" ]
+}
+
+# The recipe examples/Pwtfile.reference ships: a substring swap would leave
+# PORT=50013000 behind, so the reference uses the line-anchored _re form.
+@test "pwtfile_replace_re rewrites a key that already has a value" {
+    if ! command -v perl >/dev/null 2>&1; then
+        skip "perl not installed"
+    fi
+
+    source_pwt_function pwtfile_replace_re
+
+    printf "PORT=3000\nOTHER=keep\n" >"$TEST_TEMP_DIR/test.env"
+    pwtfile_replace_re "$TEST_TEMP_DIR/test.env" "PORT=.*" "PORT=5001"
+
+    run cat "$TEST_TEMP_DIR/test.env"
+    [[ "$output" == *"PORT=5001"* ]]
+    [[ "$output" != *"3000"* ]]
+    [[ "$output" == *"OTHER=keep"* ]]
+}
+
 # ============================================
 # detect_submodules tests
 # ============================================

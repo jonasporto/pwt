@@ -2620,19 +2620,39 @@ format_relative_time() {
 # Get git status symbols
 # Usage: get_status_symbols <dir>
 # Output: "+!?" format (+ staged, ! modified, ? untracked)
-get_status_symbols() {
-    local dir="$1"
+# Derive the "+!?" symbols from pre-captured `git status --porcelain` output.
+# On a large working tree the status walk is the expensive part, so callers
+# that need both symbols and change-detection capture porcelain once and
+# feed it to every consumer.
+# Usage: status_symbols_from_porcelain <porcelain-output>
+status_symbols_from_porcelain() {
+    local porcelain="$1"
     local symbols=""
+    local staged=false modified=false untracked=false line
 
-    local staged=$(git -C "$dir" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
-    local modified=$(git -C "$dir" diff --numstat 2>/dev/null | wc -l | tr -d ' ')
-    local untracked=$(git -C "$dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        case "$line" in
+            \?\?*) untracked=true ;;
+            *)
+                [ "${line:0:1}" != " " ] && staged=true
+                [ "${line:1:1}" != " " ] && modified=true
+                ;;
+        esac
+    done <<<"$porcelain"
 
-    [ "$staged" -gt 0 ] && symbols="${symbols}+"
-    [ "$modified" -gt 0 ] && symbols="${symbols}!"
-    [ "$untracked" -gt 0 ] && symbols="${symbols}?"
+    [ "$staged" = true ] && symbols="${symbols}+"
+    [ "$modified" = true ] && symbols="${symbols}!"
+    [ "$untracked" = true ] && symbols="${symbols}?"
 
     echo "$symbols"
+}
+
+get_status_symbols() {
+    # One git call parsed in bash. The previous version ran three git
+    # commands each piped through `wc | tr`: nine forks per call, and this
+    # runs once per row of `pwt list` (752 `tr` forks in one measured list)
+    status_symbols_from_porcelain "$(git -C "$1" status --porcelain 2>/dev/null)"
 }
 
 # Get divergence from a ref (ahead/behind)
@@ -2643,12 +2663,13 @@ get_divergence() {
     local ref="$2"
     local result=""
 
-    local ahead=$(git -C "$dir" rev-list --count "HEAD...$ref" --left-only 2>/dev/null || echo "0")
-    local behind=$(git -C "$dir" rev-list --count "HEAD...$ref" --right-only 2>/dev/null || echo "0")
-
-    # Remove whitespace
-    ahead=$(echo "$ahead" | tr -d ' ')
-    behind=$(echo "$behind" | tr -d ' ')
+    # One --left-right call gives both counts ("A<TAB>B"); it used to be two
+    # rev-list calls plus two `tr` forks to strip whitespace
+    local counts=$(git -C "$dir" rev-list --left-right --count "HEAD...$ref" 2>/dev/null) || counts=""
+    local ahead="${counts%%[[:space:]]*}"
+    local behind="${counts##*[[:space:]]}"
+    case "$ahead" in *[!0-9]* | "") ahead=0 ;; esac
+    case "$behind" in *[!0-9]* | "") behind=0 ;; esac
 
     [ "$ahead" -gt 0 ] && result="↑${ahead}"
     [ "$behind" -gt 0 ] && result="${result}↓${behind}"
@@ -2668,12 +2689,12 @@ get_remote_divergence() {
     [ -z "$upstream" ] && return
 
     local result=""
-    local ahead=$(git -C "$dir" rev-list --count "${upstream}..HEAD" 2>/dev/null || echo "0")
-    local behind=$(git -C "$dir" rev-list --count "HEAD..${upstream}" 2>/dev/null || echo "0")
-
-    # Remove whitespace
-    ahead=$(echo "$ahead" | tr -d ' ')
-    behind=$(echo "$behind" | tr -d ' ')
+    # HEAD...upstream --left-right: left = ahead of upstream, right = behind
+    local counts=$(git -C "$dir" rev-list --left-right --count "HEAD...${upstream}" 2>/dev/null) || counts=""
+    local ahead="${counts%%[[:space:]]*}"
+    local behind="${counts##*[[:space:]]}"
+    case "$ahead" in *[!0-9]* | "") ahead=0 ;; esac
+    case "$behind" in *[!0-9]* | "") behind=0 ;; esac
 
     [ "$ahead" -gt 0 ] && result="⇡${ahead}"
     [ "$behind" -gt 0 ] && result="${result}⇣${behind}"
@@ -2693,6 +2714,14 @@ is_previous_worktree() {
 # Usage: visual_width <string>
 visual_width() {
     local str="$1"
+    # Pure-ASCII fast path: character count equals byte count, so ${#str}
+    # answers without forking. This runs for every cell of every list row
+    # (330 `wc -m` forks in one measured list), and cells are ASCII almost
+    # always; only multi-byte content pays the subprocess below.
+    if [[ "$str" != *[![:ascii:]]* ]]; then
+        echo "${#str}"
+        return 0
+    fi
     # Use wc -m to count characters (not bytes)
     # Preserve current locale or fallback to UTF-8 for proper Unicode handling
     local lc="${LC_ALL:-${LC_CTYPE:-${LANG:-C.UTF-8}}}"
@@ -5679,7 +5708,7 @@ cmd_implicit_cd() {
         -?*) return 1 ;;
     esac
     case "$target" in
-        init | discover | create | add | track | adopt | setup | list | ls | tree | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
+        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
             return 1
             ;;
     esac

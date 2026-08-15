@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `pwt list` recompute path is substantially cheaper. Measured on a real
+  66-worktree Rails project: `list --refresh` 16.5s → 12.7s. The status
+  walk now runs once per row instead of twice (`check_merge_status`
+  accepts the row's pre-captured porcelain), `get_status_symbols` parses
+  one `git status --porcelain` in bash instead of three git commands
+  piped through `wc | tr` (752 `tr` forks eliminated per list),
+  divergence uses one `--left-right --count` call instead of two, hash
+  and age share one `git log` call, `visual_width` answers ASCII cells
+  without forking, and the row pool is a rolling window sized up to 8
+  by core count instead of a batch-of-4 barrier.
+- `pwt list` fetches the remote at most once per 60s
+  (`PWT_LIST_FETCH_TTL`); `list --refresh` still always fetches. The
+  fetch cost ~3s per list against a real remote and dominated lists
+  that missed the row cache (any metadata write clears that cache).
+
+### Fixed
+- A worktree whose name contains a command name (e.g. `skill-refactor`)
+  hijacked that command through the shell wrapper's navigation probe:
+  `pwt skill` changed directory instead of printing the guide. `skill`
+  joined the implicit-cd blocklist, and a new sync test asserts every
+  completion-listed command is in that blocklist, so the next new
+  command cannot reintroduce the class.
+
 ## [0.2.4] - 2026-08-15
 
 ### Added

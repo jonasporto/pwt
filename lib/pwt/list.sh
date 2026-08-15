@@ -118,10 +118,31 @@ prefetch_remote_refs() {
 		return 0 # No main app
 	fi
 
+	# Fetching on every list costs a network round-trip (~3s observed against
+	# a real remote) to refresh data that rarely changes between two lists run
+	# seconds apart. Fetch at most once per PWT_LIST_FETCH_TTL seconds
+	# (default 60); `pwt list --refresh` always fetches.
+	local stamp="${LIST_CACHE_DIR:-$PWT_DIR/cache}/${CURRENT_PROJECT:-unknown}.fetch-stamp"
+	if [ "${LIST_REFRESH_MODE:-false}" != true ] && [ -f "$stamp" ]; then
+		local now=$(date +%s)
+		local stamp_mtime=""
+		if stat --version >/dev/null 2>&1; then
+			stamp_mtime=$(stat -c %Y "$stamp" 2>/dev/null) # GNU stat
+		else
+			stamp_mtime=$(stat -f %m "$stamp" 2>/dev/null) # BSD stat (macOS)
+		fi
+		if [ -n "$stamp_mtime" ] && [ $((now - stamp_mtime)) -lt "${PWT_LIST_FETCH_TTL:-60}" ]; then
+			PREFETCH_DONE=true
+			return 0
+		fi
+	fi
+
 	cd "$MAIN_APP"
 	# Fetch only default branch (faster than --prune which fetches all)
 	local target="${DEFAULT_BRANCH:-master}"
 	git fetch origin "$target" --quiet 2>/dev/null || true
+	mkdir -p "${LIST_CACHE_DIR:-$PWT_DIR/cache}" 2>/dev/null || true
+	touch "$stamp" 2>/dev/null || true
 	PREFETCH_DONE=true
 }
 
@@ -137,14 +158,23 @@ check_merge_status() {
 		return
 	fi
 
-	# Check for uncommitted changes (staged, modified, or untracked)
+	# Check for uncommitted changes (staged, modified, or untracked).
+	# An optional third argument carries pre-captured `git status
+	# --porcelain` output: the list row already paid for the status walk,
+	# and on a large tree a second walk is the most expensive thing this
+	# function could do (the duplicate accounted for roughly half of
+	# `pwt list --refresh` on a 66-worktree Rails project).
 	local has_changes=false
-	local counts
-	counts=$(git_status_counts "$dir")
-	local staged modified untracked entries
-	read -r staged modified untracked entries <<<"$counts"
-	if [ "$entries" -gt 0 ]; then
-		has_changes=true
+	if [ $# -ge 3 ]; then
+		[ -n "$3" ] && has_changes=true
+	else
+		local counts
+		counts=$(git_status_counts "$dir")
+		local staged modified untracked entries
+		read -r staged modified untracked entries <<<"$counts"
+		if [ "$entries" -gt 0 ]; then
+			has_changes=true
+		fi
 	fi
 
 	# If there are uncommitted changes, ALWAYS show as open (unsafe to remove)
@@ -492,19 +522,33 @@ cmd_list_compact() {
 	local row_dir
 	row_dir=$(mktemp -d "${TMPDIR:-/tmp}/pwt-list.XXXXXX")
 	local row_idx=0
-	local jobs_in_batch=0
-	local max_jobs=4
+	local jobs_running=0
+	local pid_queue=""
+	# Pool width: each row forks several git processes of its own, and git is
+	# internally multi-threaded, so cap below the core count
+	local max_jobs
+	max_jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	case "$max_jobs" in *[!0-9]* | "") max_jobs=4 ;; esac
+	[ "$max_jobs" -gt 8 ] && max_jobs=8
+	[ "$max_jobs" -lt 4 ] && max_jobs=4
 	while IFS=$'\t' read -r name dir; do
 		[ -n "$name" ] && [ -d "$dir" ] || continue
 		row_idx=$((row_idx + 1))
 		(
-			# Git info
+			# Git info (hash and age come from one git call; see Age below)
 			local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
-			local hash=$(get_short_hash "$dir")
+			local head_line hash age_ts
+			head_line=$(git -C "$dir" log -1 --format=$'%h\t%ct' 2>/dev/null) || true
+			hash="${head_line%%$'\t'*}"
+			age_ts="${head_line#*$'\t'}"
+			[ -n "$hash" ] || hash="?"
+			case "$age_ts" in *[!0-9]* | "") age_ts=0 ;; esac
 			local base=$(get_base_branch "$name" "$dir")
 
-			# Status symbols
-			local status=$(get_status_symbols "$dir")
+			# Status symbols (porcelain captured once; check_merge_status
+			# below reuses it instead of walking the tree a second time)
+			local porcelain=$(git -C "$dir" status --porcelain 2>/dev/null)
+			local status=$(status_symbols_from_porcelain "$porcelain")
 			local is_dirty=false
 			[ -n "$status" ] && is_dirty=true
 
@@ -519,8 +563,7 @@ cmd_list_compact() {
 			# Remote divergence
 			local remote_div=$(get_remote_divergence "$dir")
 
-			# Age
-			local age_ts=$(git -C "$dir" log -1 --format=%ct 2>/dev/null || echo "0")
+			# Age (timestamp collected with the hash above)
 			local age=$(format_relative_time "$age_ts")
 
 			# Markers: @ = current, * = previous
@@ -532,7 +575,7 @@ cmd_list_compact() {
 			fi
 
 			# Check merge status for tips
-			local merge_status=$(check_merge_status "$dir" "${DEFAULT_BRANCH:-master}" 2>/dev/null)
+			local merge_status=$(check_merge_status "$dir" "${DEFAULT_BRANCH:-master}" "$porcelain" 2>/dev/null)
 			if [[ "$merge_status" == *"merged"* ]] || [[ "$merge_status" == *"clean"* ]]; then
 				touch "$row_dir/merged"
 			fi
@@ -566,10 +609,21 @@ cmd_list_compact() {
 			print_table_row "$marker" "$name" "$branch" "$hash" "$base" "${status:-·}" "${main_div:-·}" "${remote_div:-·}" "$age" "$meta" \
 				>"$row_dir/$(printf '%05d' "$row_idx").row"
 		) </dev/null &
-		jobs_in_batch=$((jobs_in_batch + 1))
-		if [ "$jobs_in_batch" -ge "$max_jobs" ]; then
-			wait
-			jobs_in_batch=0
+		# Rolling window instead of batch-and-barrier: a barrier makes the
+		# whole batch wait for its slowest row (bash 3.2 has no `wait -n`,
+		# so the window advances by waiting on the oldest pid)
+		pid_queue="$pid_queue $!"
+		jobs_running=$((jobs_running + 1))
+		if [ "$jobs_running" -ge "$max_jobs" ]; then
+			pid_queue="${pid_queue# }"
+			local oldest="${pid_queue%% *}"
+			if [ "$oldest" = "$pid_queue" ]; then
+				pid_queue=""
+			else
+				pid_queue="${pid_queue#* }"
+			fi
+			wait "$oldest" 2>/dev/null || true
+			jobs_running=$((jobs_running - 1))
 		fi
 	done < <(list_worktree_entries)
 	wait

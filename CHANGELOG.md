@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-15
+
 ### Added
 - `pwt meta unset [worktree] <field>`: remove a custom metadata field
   (phase, reviewer, marker, ...). Structural fields (path, branch, port,

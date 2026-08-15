@@ -183,6 +183,15 @@ step that the project's own `setup()` calls with arguments needs the same
 arguments from you — under `set -u`, a missing one fails with
 `$1: unbound variable`, which is the step asking for input, not a pwt error.
 
+Inside Pwtfile functions these helpers are available: `pwtfile_copy <path>`
+(copy from main checkout), `pwtfile_symlink <path>`,
+`pwtfile_replace_re <file> <pattern> <replacement>`, and
+`pwtfile_git_exclude <pattern>...` (alias `git_exclude`) — appends patterns
+idempotently to the repo's common `.git/info/exclude`, so generated files
+(derived lockfiles, agent configs) are ignored in every worktree without
+ever being committed. When asked to keep a generated file out of git
+without touching `.gitignore`, declare it there in `setup()`.
+
 ## Worktree lifecycle
 
 ```bash

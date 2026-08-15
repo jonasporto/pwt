@@ -10,6 +10,15 @@ layout: default
   <figure class="cover"><img src="{{ page.cover | relative_url }}" alt="{{ page.cover_alt | default: page.title }}"></figure>
   {% endif %}
   {{ content }}
+
+  {% unless page.agent_hint == false %}
+  <blockquote class="hint-agent">
+    <p>You do not have to memorize any of this. <code>pwt skill</code> prints
+    the agent-facing guide to pwt; tell your agent the outcome you want and
+    point it there, and it works out the mechanism and verifies it in a
+    throwaway worktree.</p>
+  </blockquote>
+  {% endunless %}
 </article>
 
 {% comment %}

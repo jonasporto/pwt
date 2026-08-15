@@ -3,7 +3,6 @@ title: "63 Git worktrees, one node_modules problem"
 description: "63 worktrees, 7 real dependency sets: pnpm's copy-on-write clones replaced 29GB of copied node_modules. Gotchas included."
 featured: true
 tags: [worktrees, env-config, performance]
-agent_hint: false
 cover: /assets/covers/node-modules-gravity.png
 image:
   path: /assets/covers/node-modules-gravity-card.png
@@ -153,9 +152,3 @@ ready in about 3 seconds, the disk stays flat no matter how many worktrees
 exist, and nobody has to remember any of this. That is the actual pitch for
 worktree tooling: the one-time cost of figuring this out gets encoded once,
 in the Pwtfile, and every branch after that just works.
-
-> You don't need to copy this by hand. If you work with an AI agent, point
-> it at your repo and ask it to build the Pwtfile: `pwt skill` prints the
-> agent guide (porcelain output, exit codes, wait primitives), and the agent
-> can test its own `setup()` by creating a throwaway worktree.
-{: .hint-agent}

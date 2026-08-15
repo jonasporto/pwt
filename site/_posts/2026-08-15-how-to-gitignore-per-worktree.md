@@ -3,7 +3,6 @@ title: "How to gitignore per worktree"
 description: "The .git/worktrees/<name>/info/exclude file every answer cites is never read by git. Here is the measurement, the method that actually works, and the two gotchas inside it."
 featured: true
 tags: [worktrees, env-config, cli]
-agent_hint: false
 ---
 
 You want a file ignored in one worktree only: not committed to
@@ -131,13 +130,12 @@ safe to run on every worktree creation, and a fresh machine converges the
 first time it creates a worktree. The knowledge travels in the commit; the
 ignore state stays out of it.
 
-## You do not have to memorize any of this
+## What this looks like with an agent
 
 The honest summary of this post is "git has four ignore layers, one famous
 path is fake, one config key silently replaces another, and paths must be
-absolute". Nobody should keep that in their head, and with an agent in the
-loop, nobody has to. `pwt skill` prints the agent-facing guide to pwt,
-including the Pwtfile helpers:
+absolute". Nobody should keep that in their head. Stated as an outcome
+instead:
 
 ```
 you> ignore the generated pnpm files in every worktree,
@@ -146,9 +144,6 @@ agent> runs pwt skill, reads the guide, adds
        pwtfile_git_exclude "pnpm-lock.yaml" "pnpm-workspace.yaml"
        to setup(), creates a throwaway worktree, checks git status
 ```
-
-Point the agent at the repo, state the outcome you want, and let it find
-the mechanism in the guide. That is what the guide is for.
 
 [pwt](https://github.com/jonasporto/pwt) is a git worktree manager for
 parallel development: `brew install jonasporto/pwt/pwt`. The exclude

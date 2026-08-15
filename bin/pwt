@@ -1226,10 +1226,11 @@ is_list_cache_valid() {
     [ "$age" -lt "$LIST_CACHE_TTL" ]
 }
 
-# Clear list cache for current project
+# Clear list cache for current project (table and porcelain variants)
 clear_list_cache() {
     local cache_file=$(get_list_cache_file)
     [ -f "$cache_file" ] && rm -f "$cache_file" || true
+    [ -f "$cache_file.porcelain" ] && rm -f "$cache_file.porcelain" || true
 }
 
 # Read cached list with dirty-only filter

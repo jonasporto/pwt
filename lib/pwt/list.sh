@@ -233,45 +233,61 @@ list_worktree_entries() {
 
 # Command: list (porcelain output)
 # Internal function for JSON output (pure bash, json_escape for escaping)
+# Rows are computed in the same rolling parallel pool as the table view:
+# the serial loop cost one full status walk per worktree back to back
+# (13s measured on a 66-worktree project; agents read this format).
 cmd_list_porcelain() {
 	local show_dirty_only="${1:-false}"
 	local worktrees_json=""
 
+	local row_dir
+	row_dir=$(mktemp -d "${TMPDIR:-/tmp}/pwt-listp.XXXXXX")
+	local row_idx=0
+	local jobs_running=0
+	local pid_queue=""
+	local max_jobs
+	max_jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	case "$max_jobs" in *[!0-9]* | "") max_jobs=4 ;; esac
+	[ "$max_jobs" -gt 8 ] && max_jobs=8
+	[ "$max_jobs" -lt 4 ] && max_jobs=4
+
 	while IFS=$'\t' read -r name dir; do
 		[ -n "$name" ] && [ -d "$dir" ] || continue
-		local port=$(get_metadata "$name" "port")
-		local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
-		local commit=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "?")
+		row_idx=$((row_idx + 1))
+		(
+			local port=$(get_metadata "$name" "port")
+			local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
+			local commit=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || echo "?")
 
-		# Check for uncommitted changes
-		local is_dirty=false
-		local counts
-		counts=$(git_status_counts "$dir")
-		local staged modified untracked entries
-		read -r staged modified untracked entries <<<"$counts"
-		if [ "$entries" -gt 0 ]; then
-			is_dirty=true
-		fi
+			# Check for uncommitted changes
+			local is_dirty=false
+			local counts
+			counts=$(git_status_counts "$dir")
+			local staged modified untracked entries
+			read -r staged modified untracked entries <<<"$counts"
+			if [ "$entries" -gt 0 ]; then
+				is_dirty=true
+			fi
 
-		# Skip if --dirty and not dirty
-		if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
-			continue
-		fi
+			# Skip if --dirty and not dirty (exit: row runs in a subshell)
+			if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
+				exit 0
+			fi
 
-		local meta_base=$(get_metadata "$name" "base")
-		local meta_desc=$(get_metadata "$name" "description")
+			local meta_base=$(get_metadata "$name" "base")
+			local meta_desc=$(get_metadata "$name" "description")
 
-		# Build worktree JSON object (jq pretty style: 2-space nesting)
-		# json_escape_var: zero forks per field (this loop is hot)
-		local wt_json _e_name _e_path _e_branch _e_commit _e_port _e_base _e_desc
-		json_escape_var _e_name "$name"
-		json_escape_var _e_path "$dir"
-		json_escape_var _e_branch "$branch"
-		json_escape_var _e_commit "$commit"
-		json_escape_var _e_port "${port:-}"
-		json_escape_var _e_base "${meta_base:-}"
-		json_escape_var _e_desc "${meta_desc:-}"
-		wt_json="    {
+			# Build worktree JSON object (jq pretty style: 2-space nesting)
+			# json_escape_var: zero forks per field (this loop is hot)
+			local wt_json _e_name _e_path _e_branch _e_commit _e_port _e_base _e_desc
+			json_escape_var _e_name "$name"
+			json_escape_var _e_path "$dir"
+			json_escape_var _e_branch "$branch"
+			json_escape_var _e_commit "$commit"
+			json_escape_var _e_port "${port:-}"
+			json_escape_var _e_base "${meta_base:-}"
+			json_escape_var _e_desc "${meta_desc:-}"
+			wt_json="    {
       \"name\": \"$_e_name\",
       \"path\": \"$_e_path\",
       \"branch\": \"$_e_branch\",
@@ -281,14 +297,36 @@ cmd_list_porcelain() {
       \"base\": \"$_e_base\",
       \"description\": \"$_e_desc\"
     }"
-
-		# Append to array
-		worktrees_json+="${worktrees_json:+,
-}$wt_json"
+			printf '%s' "$wt_json" >"$row_dir/$(printf '%05d' "$row_idx").row"
+		) </dev/null &
+		pid_queue="$pid_queue $!"
+		jobs_running=$((jobs_running + 1))
+		if [ "$jobs_running" -ge "$max_jobs" ]; then
+			pid_queue="${pid_queue# }"
+			local oldest="${pid_queue%% *}"
+			if [ "$oldest" = "$pid_queue" ]; then
+				pid_queue=""
+			else
+				pid_queue="${pid_queue#* }"
+			fi
+			wait "$oldest" 2>/dev/null || true
+			jobs_running=$((jobs_running - 1))
+		fi
 	done < <(list_worktree_entries)
+	wait
 
-	# Output final JSON with proper escaping
+	local row_file
+	for row_file in "$row_dir"/*.row; do
+		[ -f "$row_file" ] || continue
+		worktrees_json+="${worktrees_json:+,
+}$(cat "$row_file")"
+	done
+	rm -rf "$row_dir"
+
+	# Output final JSON with proper escaping.
+	# generated_at lets consumers of a cached document judge freshness.
 	echo "{"
+	echo "  \"generated_at\": $(date +%s),"
 	echo "  \"project\": $(json_str "$CURRENT_PROJECT"),"
 	echo "  \"main_app\": $(json_str "$MAIN_APP"),"
 	echo "  \"worktrees_dir\": $(json_str "$WORKTREES_DIR"),"
@@ -381,9 +419,35 @@ cmd_list() {
 		return
 	fi
 
-	# Porcelain mode: output JSON
+	# Porcelain mode: JSON, cached with the same contract as the table view
+	# (agents poll this format; the uncached serial version cost 13s per
+	# call on a 66-worktree project). The full document is cached; --dirty
+	# filters compute live. `generated_at` in the JSON carries freshness.
 	if [ "$porcelain" = true ]; then
-		cmd_list_porcelain "$show_dirty_only"
+		if [ "$show_dirty_only" = true ]; then
+			cmd_list_porcelain true
+			return
+		fi
+		local pcache
+		pcache="$(get_list_cache_file).porcelain"
+		if [ "$LIST_REFRESH_MODE" = true ]; then
+			init_cache_dir
+			cmd_list_porcelain false >"$pcache"
+			cat "$pcache"
+			return
+		fi
+		if [ -f "$pcache" ] && [ "$(_pwt_file_age_seconds "$pcache")" -lt "$LIST_CACHE_TTL" ]; then
+			cat "$pcache"
+			return
+		fi
+		if [ -f "$pcache" ] && [ "${PWT_LIST_ASYNC_REFRESH:-1}" != "0" ] && command -v perl >/dev/null 2>&1; then
+			cat "$pcache"
+			_spawn_list_regen "$pcache" --porcelain
+			return
+		fi
+		init_cache_dir
+		cmd_list_porcelain false >"$pcache"
+		cat "$pcache"
 		return
 	fi
 
@@ -435,13 +499,73 @@ cmd_list() {
 		return
 	fi
 
-	# Default: use cache if valid, else regenerate
+	# Default: a valid cache is served as-is. A stale cache is ALSO served
+	# instantly - a read should never wait on 66 status walks - and the
+	# recompute happens in a detached background run that rewrites the
+	# cache for the next read (full fidelity: it fetches too). Only the
+	# first-ever list, with nothing to serve, computes synchronously.
+	# Escape hatch: PWT_LIST_ASYNC_REFRESH=0 restores blocking regeneration.
 	if is_list_cache_valid; then
 		read_cache
+	elif [ -f "$cache_file" ] && [ "${PWT_LIST_ASYNC_REFRESH:-1}" != "0" ] && command -v perl >/dev/null 2>&1; then
+		read_cache
+		_spawn_list_regen "$cache_file"
+		echo -e "${DIM}(cached $(list_cache_age_seconds)s ago; refreshing in background)${NC}" >&2
 	else
 		generate_cache
 		read_cache
 	fi
+}
+
+# Age of a file in seconds (0 when unreadable)
+_pwt_file_age_seconds() {
+	local file="$1" mtime now
+	now=$(date +%s)
+	if stat --version >/dev/null 2>&1; then
+		mtime=$(stat -c %Y "$file" 2>/dev/null) # GNU stat
+	else
+		mtime=$(stat -f %m "$file" 2>/dev/null) # BSD stat (macOS)
+	fi
+	[ -n "$mtime" ] || mtime=$now
+	echo $((now - mtime))
+}
+
+# Age of the list cache in seconds
+list_cache_age_seconds() {
+	_pwt_file_age_seconds "$(get_list_cache_file)"
+}
+
+# Regenerate the list cache in a detached background pwt run.
+# The perl launcher closes every inherited fd: a plain `&` child keeps the
+# caller's pipes open, and bats/CI/$(...) callers then block until it exits
+# (same failure the jobs daemon already solves this way).
+# A regen stamp debounces repeated spawns while one is already running.
+_spawn_list_regen() {
+	local cache_file="$1"
+	shift
+	local stamp="${cache_file}.regen-stamp"
+
+	if [ -f "$stamp" ]; then
+		# A regen normally lands well inside 120s; after that assume it died
+		if [ "$(_pwt_file_age_seconds "$stamp")" -lt 120 ]; then
+			return 0
+		fi
+	fi
+	touch "$stamp" 2>/dev/null || true
+
+	perl -e '
+        use POSIX qw(setsid);
+        my $pid = fork();
+        exit 0 if $pid;
+        setsid();
+        open(STDIN, "<", "/dev/null");
+        open(STDOUT, ">", "/dev/null");
+        open(STDERR, ">&STDOUT");
+        my $max = POSIX::sysconf(&POSIX::_SC_OPEN_MAX) || 256;
+        $max = 4096 if $max > 4096 || $max < 0;
+        for my $fd (3 .. $max) { POSIX::close($fd); }
+        exec(@ARGV) or die "exec failed: $!";
+    ' "$0" --project "${CURRENT_PROJECT:-}" --quiet list --refresh "$@" 2>/dev/null || true
 }
 
 # Print a table row with fixed column widths

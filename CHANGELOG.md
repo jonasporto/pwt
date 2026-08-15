@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `pwt list` reads never block on recomputation: a stale cache is served
+  instantly (milliseconds) and the recompute runs in a detached
+  background pwt that rewrites the cache for the next read, with a
+  stderr note showing the served age. First-ever runs and `--refresh`
+  stay synchronous; `PWT_LIST_ASYNC_REFRESH=0` restores blocking.
+- `pwt list --porcelain` (the format agents poll) is now cached under
+  the same contract as the table view and computes rows in the same
+  parallel pool. Measured on a 66-worktree project: 13.3s every call
+  before; now 9.2s cold and 0.03s from cache. The JSON gained a
+  top-level `generated_at` (epoch) field so consumers can judge the
+  document's freshness; metadata writes invalidate this cache too.
 - `pwt list` recompute path is substantially cheaper. Measured on a real
   66-worktree Rails project: `list --refresh` 16.5s → 12.7s. The status
   walk now runs once per row instead of twice (`check_merge_status`

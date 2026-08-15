@@ -71,6 +71,24 @@ $ pwt alias ui
 enter dozens of times a day, this is the feature that pays the
 registration back within the hour.
 
+And the worktree name does not have to be the worktree name. Any unique
+fragment matches, which in practice means the ticket number is the whole
+address:
+
+```
+$ pwt 1234                 # worktree is TICKET-1234-fix-login
+~/Projects/app-worktrees/TICKET-1234-fix-login
+
+$ pwt 1240                 # fragment matches two worktrees
+Multiple matches for '1240':
+  TICKET-1240-api
+  TICKET-1240-api-retry
+```
+
+Unique fragment: you are there. Ambiguous fragment: pwt lists the
+candidates and refuses to guess, which is the correct behavior at 4pm
+with six worktrees named almost the same thing.
+
 ## What the registration unlocks later
 
 Nothing above touched worktrees, and that is the point: registration is

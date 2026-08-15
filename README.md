@@ -4,7 +4,7 @@
 
 [![Tests](https://github.com/jonasporto/pwt/actions/workflows/test.yml/badge.svg)](https://github.com/jonasporto/pwt/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.2.2-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.3-green.svg)](CHANGELOG.md)
 
 ## Demos
 
@@ -222,7 +222,7 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | `list` | List worktrees with git status (`--dirty`) |
 | `cd <worktree>` | Navigate to worktree (`@` main, `-` previous, `--select`) |
 | `project` | List all configured projects |
-| `<worktree>` | Navigate to worktree inside the current project |
+| `<worktree>` | Navigate to worktree inside the current project (any unique fragment matches: `pwt 1234` finds `TICKET-1234-fix-login`) |
 | `<project> <worktree>` | Jump to worktree in another project |
 | `editor` | Open editor in current worktree |
 | `server` | Start dev server (from Pwtfile) |

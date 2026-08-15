@@ -67,6 +67,11 @@ pwt help pwtfile          # the hook contract and PWT_* variables
 worktrees with metadata, jobs) — useful when you want a single snapshot
 rather than several calls.
 
+Worktree arguments accept any unique fragment of the name: `pwt 1234 logs`
+resolves `TICKET-1234-fix-login`. An ambiguous fragment exits non-zero and
+prints the candidates; retry with the full name from that list (or from
+`pwt list --porcelain`) instead of guessing.
+
 Everything a project-specific playbook would hard-code is discoverable this
 way, and discovery cannot go stale.
 

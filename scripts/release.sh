@@ -22,6 +22,9 @@ sed -i '' "s/^PWT_VERSION=.*/PWT_VERSION=\"$VERSION\"/" bin/pwt
 # Update package.json
 jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
 
+# Update README version badge (scripts/check enforces the match)
+sed -i '' "s/version-[0-9.]*-green/version-$VERSION-green/" README.md
+
 # Update Formula (local copy)
 if [ -f Formula/pwt.rb ]; then
     sed -i '' "s|archive/refs/tags/v[^\"]*|archive/refs/tags/v$VERSION|" Formula/pwt.rb

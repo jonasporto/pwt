@@ -987,3 +987,80 @@ PWTFILE
     [ "$status" -eq 0 ]
     [ -d "$TEST_WORKTREES/HOOK-FAIL-USABLE" ]
 }
+
+# ============================================
+# pwtfile_git_exclude helper
+# ============================================
+
+@test "pwtfile_git_exclude writes to the repo's common .git/info/exclude" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
+setup() {
+    pwtfile_git_exclude "pnpm-lock.yaml" "pnpm-workspace.yaml"
+}
+PWTFILE
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create EXCL-BASIC HEAD
+    [ "$status" -eq 0 ]
+
+    # Patterns land in the MAIN repo's exclude file, not the worktree's git dir
+    grep -qxF "pnpm-lock.yaml" "$TEST_REPO/.git/info/exclude"
+    grep -qxF "pnpm-workspace.yaml" "$TEST_REPO/.git/info/exclude"
+
+    # git actually ignores a matching file inside the worktree
+    touch "$TEST_WORKTREES/EXCL-BASIC/pnpm-lock.yaml"
+    run git -C "$TEST_WORKTREES/EXCL-BASIC" status --porcelain
+    [[ "$output" != *"pnpm-lock.yaml"* ]]
+}
+
+@test "pwtfile_git_exclude is idempotent across creates" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
+setup() {
+    pwtfile_git_exclude "once.txt"
+}
+PWTFILE
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create EXCL-ONE HEAD
+    [ "$status" -eq 0 ]
+    run "$PWT_BIN" create EXCL-TWO HEAD
+    [ "$status" -eq 0 ]
+
+    # Pattern appears exactly once even though setup() ran twice
+    count=$(grep -cxF "once.txt" "$TEST_REPO/.git/info/exclude")
+    [ "$count" -eq 1 ]
+
+    # One call covers every worktree: the file is ignored in both
+    touch "$TEST_WORKTREES/EXCL-ONE/once.txt" "$TEST_WORKTREES/EXCL-TWO/once.txt"
+    git -C "$TEST_WORKTREES/EXCL-ONE" check-ignore -q once.txt
+    git -C "$TEST_WORKTREES/EXCL-TWO" check-ignore -q once.txt
+}
+
+@test "git_exclude short alias works and glob patterns apply" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
+setup() {
+    git_exclude "*.scratch"
+}
+PWTFILE
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create EXCL-ALIAS HEAD
+    [ "$status" -eq 0 ]
+
+    grep -qxF "*.scratch" "$TEST_REPO/.git/info/exclude"
+    touch "$TEST_WORKTREES/EXCL-ALIAS/notes.scratch"
+    git -C "$TEST_WORKTREES/EXCL-ALIAS" check-ignore -q notes.scratch
+}
+
+@test "pwtfile_git_exclude preserves existing exclude entries" {
+    mkdir -p "$TEST_REPO/.git/info"
+    echo "preexisting.txt" >"$TEST_REPO/.git/info/exclude"
+    cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
+setup() {
+    pwtfile_git_exclude "added.txt"
+}
+PWTFILE
+    cd "$TEST_REPO"
+    run "$PWT_BIN" create EXCL-KEEP HEAD
+    [ "$status" -eq 0 ]
+
+    grep -qxF "preexisting.txt" "$TEST_REPO/.git/info/exclude"
+    grep -qxF "added.txt" "$TEST_REPO/.git/info/exclude"
+}

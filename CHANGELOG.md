@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwtfile_git_exclude` (Pwtfile helper, alias `git_exclude`): declare
+  worktree-only git ignores from the Pwtfile. Patterns are appended
+  idempotently to the repo's `.git/info/exclude` (common dir), so they are
+  never committed and one call covers every worktree of the repo. Useful for
+  per-worktree generated files such as `pnpm-lock.yaml` derived from a yarn
+  project.
+
 ### Changed
 - `--bg` launch output now offers `pwt jobs wait <id>` first, before the logs
   and stop hints. Session logs showed agents hand-rolling `until ... sleep`

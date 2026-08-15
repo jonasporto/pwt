@@ -156,6 +156,9 @@ PORT_BASE=5001
 setup() {
     pwtfile_copy ".env.local"
     pwtfile_symlink ".cache"
+    # ignore generated files repo-locally (.git/info/exclude: never
+    # committed, one call covers every worktree of the repo)
+    pwtfile_git_exclude "pnpm-lock.yaml" "pnpm-workspace.yaml"
     ./scripts/setup
 }
 

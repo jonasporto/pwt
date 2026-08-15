@@ -2546,6 +2546,39 @@ pwtfile_copy() {
     echo "  ✓ Copied: $path"
 }
 
+# Ignore files in this repo without committing anything
+# Usage: pwtfile_git_exclude <pattern> [pattern...]
+# Example: pwtfile_git_exclude "pnpm-lock.yaml" "pnpm-workspace.yaml"
+#
+# Appends to .git/info/exclude in the repo's COMMON dir: the file is never
+# committed, and because worktrees share the common dir, one call from any
+# worktree covers every worktree of the repo. Idempotent per pattern, so
+# setup() can declare the same excludes on every create.
+pwtfile_git_exclude() {
+    local common_dir exclude_file pattern
+    common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+        echo "  ! Not a git repository: $PWD"
+        return 1
+    }
+    # --git-common-dir can return a path relative to $PWD
+    [[ "$common_dir" != /* ]] && common_dir="$PWD/$common_dir" || true
+    exclude_file="$common_dir/info/exclude"
+    mkdir -p "$common_dir/info"
+
+    for pattern in "$@"; do
+        [ -n "$pattern" ] || continue
+        if [ -f "$exclude_file" ] && grep -qxF -- "$pattern" "$exclude_file" 2>/dev/null; then
+            continue
+        fi
+        if ! grep -q "^# pwt: worktree-only excludes" "$exclude_file" 2>/dev/null; then
+            printf '\n# pwt: worktree-only excludes (declared in Pwtfile via pwtfile_git_exclude)\n' >>"$exclude_file"
+        fi
+        printf '%s\n' "$pattern" >>"$exclude_file"
+        echo "  ✓ Git exclude (repo-local): $pattern"
+    done
+    return 0
+}
+
 # ============================================================
 # List display helpers
 # ============================================================
@@ -2828,6 +2861,7 @@ run_single_pwtfile() {
             replace_literal() { pwtfile_replace_literal "$@"; }
             replace_re() { pwtfile_replace_re "$@"; }
             run() { pwtfile_run "$@"; }
+            git_exclude() { pwtfile_git_exclude "$@"; }
 
             # User-provided file, path known only at runtime
             # shellcheck source=/dev/null
@@ -2847,6 +2881,7 @@ run_single_pwtfile() {
             replace_literal() { pwtfile_replace_literal "$@"; }
             replace_re() { pwtfile_replace_re "$@"; }
             run() { pwtfile_run "$@"; }
+            git_exclude() { pwtfile_git_exclude "$@"; }
 
             # User-provided file, path known only at runtime
             # shellcheck source=/dev/null
@@ -7571,6 +7606,8 @@ Helper Functions:
   pwtfile_symlink "path"      Symlink from main (e.g., .cache)
   pwtfile_copy "path"         Copy from main (e.g., .env)
   pwtfile_replace_literal     Safe string replacement
+  pwtfile_git_exclude "pat".. Ignore files repo-locally (.git/info/exclude,
+                              never committed, covers all worktrees)
   run <cmd>                   Run command (silent on error)
 
 Tips:

@@ -333,6 +333,26 @@ Run before worktree removal
 .I custom_command()
 Any function becomes available as \fBpwt custom_command\fR
 
+.SS Helper Functions
+Available inside Pwtfile functions:
+.TP
+.B pwtfile_copy \fIpath\fR
+Copy a file or directory from the main checkout into the worktree
+.TP
+.B pwtfile_symlink \fIpath\fR
+Symlink a path from the main checkout into the worktree
+.TP
+.B pwtfile_replace_literal \fIfile old new\fR / \fBpwtfile_replace_re\fR \fIfile pattern replacement\fR
+Rewrite configuration values inside the worktree
+.TP
+.B pwtfile_git_exclude \fIpattern\fR...
+Append patterns to the repo's \fB.git/info/exclude\fR (common dir): ignored
+like .gitignore entries but never committed, and one call covers every
+worktree of the repo. Idempotent per pattern.
+.TP
+.B run \fIcmd\fR...
+Run a command, silently tolerating failure
+
 .SS Command Forms
 .TP
 .B pwt \fIPROJECT WORKTREE COMMAND\fR [args...]

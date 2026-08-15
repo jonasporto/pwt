@@ -190,3 +190,14 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"Already configured"* ]]
 }
+
+# The shell wrapper probes `pwt _implicit-cd "$@"` on plain `pwt init`.
+# Before the _* guard, that probe hit the `pwt <name> init` form and
+# registered a ghost project named _implicit-cd pointing at the cwd.
+@test "internal commands are never registered as projects by <name> init" {
+    cd "$SOURCE_REPO"
+    run "$PWT_BIN" _implicit-cd init
+    [ ! -d "$PWT_DIR/projects/_implicit-cd" ]
+    run "$PWT_BIN" _cd init
+    [ ! -d "$PWT_DIR/projects/_cd" ]
+}

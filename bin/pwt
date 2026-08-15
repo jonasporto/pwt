@@ -8663,9 +8663,14 @@ if [ -n "${1:-}" ]; then
             fi
             unset _wt_target _second_arg _wt_path
         fi
-    elif [ "${2:-}" = "init" ] && [ "$1" != "project" ] && [ "$1" != "gateway" ]; then
+    elif [ "${2:-}" = "init" ] && [ "$1" != "project" ] && [ "$1" != "gateway" ] && [[ "$1" != _* ]]; then
         # New project name + init command: pwt <name> init [url]
         # Exclude "project" to allow: pwt project init <name>
+        # Exclude _* : internal commands (_cd, _select, _implicit-cd) must
+        # never be registered as projects. The shell wrapper probes
+        # `pwt _implicit-cd "$@"` on plain `pwt init`, and without this
+        # guard that probe registered a ghost project named _implicit-cd
+        # pointing at the current repo.
         cmd_init_named "$1" "${3:-}"
         exit 0
     fi

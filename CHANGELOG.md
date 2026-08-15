@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Running `pwt init` with shell integration active registered a ghost
+  project named `_implicit-cd` pointing at the current repo: the shell
+  wrapper's navigation probe (`pwt _implicit-cd init`) matched the
+  `pwt <name> init` form. Internal `_*` command names are now excluded
+  from project registration. Cleanup for affected users:
+  `rm -rf ~/.pwt/projects/_implicit-cd`.
+
 ## [0.2.2] - 2026-08-15
 
 ### Added

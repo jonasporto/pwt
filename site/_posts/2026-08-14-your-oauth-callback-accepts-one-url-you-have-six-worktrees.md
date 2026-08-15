@@ -2,6 +2,7 @@
 title: "Your OAuth callback accepts one URL. You have six worktrees."
 description: "Per-branch URLs are great for browsing and useless for a provider that knows one address. The fix is the opposite shape: one stable URL you repoint."
 featured: true
+tags: [ports, proxy, jobs]
 ---
 
 Register `http://localhost:3000/auth/callback` with an identity provider,

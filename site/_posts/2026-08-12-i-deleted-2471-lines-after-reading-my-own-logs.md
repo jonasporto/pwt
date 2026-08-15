@@ -2,6 +2,7 @@
 title: "I deleted 2,471 lines after reading my own logs"
 description: "A TUI nobody ran, found by mining shell history and agent session logs. Humans navigate, agents execute, and neither one asks the CLI for a picture."
 featured: true
+tags: [agents, cli]
 ---
 
 The biggest single feature in pwt was `pwt status`, a full-screen dashboard

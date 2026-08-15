@@ -11,3 +11,50 @@ layout: default
   {% endif %}
   {{ content }}
 </article>
+
+{% comment %}
+Related posts by shared front-matter tags. GitHub Pages cannot run LSI, so
+site.related_posts is just the newest posts; this scores real overlap.
+Sort key is "<score>@@<date>@@<url>": string-sorted descending, so more
+shared tags win and ties go to the newer post. Fewer than 3 matches are
+topped up with the most recent posts.
+{% endcomment %}
+{% assign scored = "" | split: "" %}
+{% for post in site.posts %}
+  {% unless post.url == page.url %}
+    {% assign common = 0 %}
+    {% for tag in post.tags %}
+      {% if page.tags contains tag %}{% assign common = common | plus: 1 %}{% endif %}
+    {% endfor %}
+    {% if common > 0 %}
+      {% capture key %}{{ common }}@@{{ post.date | date: '%Y-%m-%d' }}@@{{ post.url }}{% endcapture %}
+      {% assign scored = scored | push: key %}
+    {% endif %}
+  {% endunless %}
+{% endfor %}
+{% assign scored = scored | sort | reverse %}
+{% assign related_urls = "" | split: "" %}
+{% for key in scored limit: 3 %}
+  {% assign u = key | split: "@@" | last %}
+  {% assign related_urls = related_urls | push: u %}
+{% endfor %}
+{% for post in site.posts %}
+  {% if related_urls.size >= 3 %}{% break %}{% endif %}
+  {% unless post.url == page.url or related_urls contains post.url %}
+    {% assign related_urls = related_urls | push: post.url %}
+  {% endunless %}
+{% endfor %}
+{% if related_urls.size > 0 %}
+<aside class="related">
+  <h2>Related posts</h2>
+  <ul>
+    {% for u in related_urls %}
+    {% assign p = site.posts | where: "url", u | first %}
+    <li>
+      <a href="{{ p.url | relative_url }}">{{ p.title }}</a>
+      <span>{{ p.description }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</aside>
+{% endif %}

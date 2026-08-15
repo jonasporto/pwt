@@ -2,6 +2,7 @@
 title: "How to deal with port allocation in git worktrees"
 description: "Every dev server in every worktree wants port 3000. Half your stack dies with EADDRINUSE, the other half silently moves to 3001, and the tab you are debugging is now served by the wrong branch."
 featured: true
+tags: [ports, worktrees, env-config, proxy]
 ---
 
 Start a dev server in a second git worktree and one of two things happens.

@@ -2,6 +2,7 @@
 title: "How to copy .env into a git worktree, and what it breaks"
 description: "Copying untracked config into a new worktree is the standard answer. Three worktrees later, two servers will not start and one branch is corrupting another's database."
 featured: true
+tags: [env-config, worktrees, ports]
 ---
 
 You created a worktree, the app will not start, and `.env` is missing. Here

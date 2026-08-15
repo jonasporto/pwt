@@ -2,6 +2,7 @@
 title: "Your agent finished. How would you know?"
 description: "I shipped a blocking wait for background jobs so agents stop polling. Then I counted: my own agents used it 5 times in 23,770 commands and hand-rolled the wait loop instead."
 featured: true
+tags: [agents, jobs, cli]
 ---
 
 I built `pwt jobs wait` so an agent could block on a background job instead

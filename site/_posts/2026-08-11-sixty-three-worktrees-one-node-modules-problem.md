@@ -2,6 +2,7 @@
 title: "63 Git worktrees, one node_modules problem"
 description: "63 worktrees, 7 real dependency sets: pnpm's copy-on-write clones replaced 29GB of copied node_modules. Gotchas included."
 featured: true
+tags: [worktrees, env-config, performance]
 cover: /assets/covers/node-modules-gravity.png
 image:
   path: /assets/covers/node-modules-gravity-card.png

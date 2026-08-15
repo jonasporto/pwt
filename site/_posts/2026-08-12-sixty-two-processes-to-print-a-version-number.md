@@ -2,6 +2,7 @@
 title: "62 processes to print a version number"
 description: "pwt spawned 62 jq processes before printing its version. Removing them took two rewrites, and only one of them was about speed."
 featured: true
+tags: [performance, bash, cli]
 ---
 
 `pwt version` used to take **306ms**. Printing a version string is not hard

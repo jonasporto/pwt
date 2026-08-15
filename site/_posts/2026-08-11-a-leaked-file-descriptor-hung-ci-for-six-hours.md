@@ -2,6 +2,7 @@
 title: "A leaked file descriptor hung our CI for six hours (five times in a row)"
 description: "A coverage job sat silent until GitHub's 6-hour timeout. The cause: one file descriptor leaked into a daemon."
 featured: true
+tags: [ci, jobs, bash]
 image:
   path: /assets/covers/card-fd.png
   width: 1200

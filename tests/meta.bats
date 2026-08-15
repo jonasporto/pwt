@@ -370,3 +370,80 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"fixing the login auth bug"* ]]
 }
+
+# ============================================
+# meta shortcut targeting (regression: the current symlink used to win
+# over pwd, so the shortcut wrote to the wrong worktree)
+# ============================================
+
+@test "meta shortcut writes to the worktree you are in, not the current symlink" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-STAND HEAD
+    "$PWT_BIN" create WT-CURRENT HEAD
+    "$PWT_BIN" use WT-CURRENT
+
+    cd "$TEST_WORKTREES/WT-STAND"
+    run "$PWT_BIN" meta phase review
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WT-STAND"* ]]
+
+    run "$PWT_BIN" meta show WT-STAND
+    [[ "$output" == *"review"* ]]
+    run "$PWT_BIN" meta show WT-CURRENT
+    [[ "$output" != *"review"* ]]
+}
+
+@test "meta shortcut works from a subdirectory of the worktree" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-SUBDIR HEAD
+    mkdir -p "$TEST_WORKTREES/WT-SUBDIR/src/deep"
+    cd "$TEST_WORKTREES/WT-SUBDIR/src/deep"
+    run "$PWT_BIN" meta phase doing
+    [ "$status" -eq 0 ]
+    run "$PWT_BIN" meta show WT-SUBDIR
+    [[ "$output" == *"doing"* ]]
+}
+
+# ============================================
+# meta unset
+# ============================================
+
+@test "pwt meta unset removes a custom field" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-UNSET HEAD
+    "$PWT_BIN" meta set WT-UNSET phase review
+    run "$PWT_BIN" meta show WT-UNSET
+    [[ "$output" == *"review"* ]]
+
+    run "$PWT_BIN" meta unset WT-UNSET phase
+    [ "$status" -eq 0 ]
+    run "$PWT_BIN" meta show WT-UNSET
+    [[ "$output" != *"phase"* ]]
+}
+
+@test "pwt meta unset <field> resolves worktree from pwd" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-UNSETPWD HEAD
+    "$PWT_BIN" meta set WT-UNSETPWD reviewer someone
+    cd "$TEST_WORKTREES/WT-UNSETPWD"
+    run "$PWT_BIN" meta unset reviewer
+    [ "$status" -eq 0 ]
+    run "$PWT_BIN" meta show WT-UNSETPWD
+    [[ "$output" != *"reviewer"* ]]
+}
+
+@test "pwt meta unset refuses structural fields" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-UNSETPORT HEAD
+    run "$PWT_BIN" meta unset WT-UNSETPORT port
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"structural"* ]]
+    run "$PWT_BIN" meta show WT-UNSETPORT
+    [[ "$output" == *"port"* ]]
+}
+
+@test "pwt meta unset on unknown worktree exits 3" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" meta unset NO-SUCH-WT phase
+    [ "$status" -eq 3 ]
+}

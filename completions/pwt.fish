@@ -138,7 +138,7 @@ complete -c pwt -n '__pwt_using_command adopt' -a '(__fish_complete_directories)
 complete -c pwt -n '__pwt_using_command setup' -a '(__fish_complete_directories)' -d 'Path'
 
 # Meta subcommands
-complete -c pwt -n '__pwt_using_command meta' -a 'list show set import' -d 'Action'
+complete -c pwt -n '__pwt_using_command meta' -a 'list show set unset import' -d 'Action'
 complete -c pwt -n '__pwt_using_command m' -a 'list show set import' -d 'Action'
 
 # Project subcommands

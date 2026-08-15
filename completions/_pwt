@@ -157,6 +157,7 @@ _pwt_meta_actions() {
         'list:List all metadata'
         'show:Show metadata for worktree'
         'set:Update metadata field'
+        'unset:Remove a custom metadata field'
         'import:Import existing worktrees'
     )
     _describe 'action' actions

@@ -4941,9 +4941,9 @@ cmd_meta() {
 
     local project="${CURRENT_PROJECT:-unknown}"
 
-    # Shortcut: pwt meta <key> [value] for current worktree
+    # Shortcut: pwt meta <key> [value] for the worktree you are standing in
     # Also: pwt meta "text with spaces" → sets description (same heuristic as create)
-    if [[ -n "$action" && ! "$action" =~ ^(list|show|set|get|delete|import|export|help|--help|-h)$ ]]; then
+    if [[ -n "$action" && ! "$action" =~ ^(list|show|set|unset|get|delete|import|export|help|--help|-h)$ ]]; then
         local key="$action"
         local shortcut_value="$name"
         local current_dir=$(pwd)
@@ -4956,11 +4956,16 @@ cmd_meta() {
             shortcut_value="$action"
         fi
 
-        # Detect current worktree from pwd or symlink
-        if current_name=$(get_current_from_symlink 2>/dev/null); then
-            : # got it from symlink
-        elif [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
-            current_name=$(basename "$current_dir")
+        # Detect the target worktree. The directory you are standing in wins;
+        # the current-symlink is only a fallback for when you are outside any
+        # worktree. It used to be the other way around, so running the
+        # shortcut inside worktree A silently wrote to whichever worktree
+        # was "current" - observed writing to the wrong one.
+        if [[ "$current_dir" == "$WORKTREES_DIR"/* ]]; then
+            current_name="${current_dir#"$WORKTREES_DIR"/}"
+            current_name="${current_name%%/*}"
+        elif current_name=$(get_current_from_symlink 2>/dev/null); then
+            : # outside any worktree: fall back to the current symlink
         fi
 
         if [ -z "$current_name" ] || [ "$current_name" = "@" ]; then
@@ -5030,6 +5035,50 @@ cmd_meta() {
             echo -e "${GREEN}✓ Updated $name.$field = $value${NC}"
             clear_list_cache # Invalidate cache so next list shows updated metadata
             ;;
+        unset)
+            # pwt meta unset <worktree> <field>
+            # pwt meta unset <field>            (worktree resolved from pwd)
+            local unset_wt="$name" unset_field="$field"
+            if [ -n "$unset_wt" ] && [ -z "$unset_field" ]; then
+                # Single argument: it is the field; resolve worktree from pwd
+                unset_field="$unset_wt"
+                unset_wt=""
+                local _cwd=$(pwd)
+                if [[ "$_cwd" == "$WORKTREES_DIR"/* ]]; then
+                    unset_wt="${_cwd#"$WORKTREES_DIR"/}"
+                    unset_wt="${unset_wt%%/*}"
+                fi
+                if [ -z "$unset_wt" ]; then
+                    pwt_error "Not in a worktree"
+                    echo "Usage: pwt meta unset <worktree> <field>"
+                    exit 1
+                fi
+            fi
+            if [ -z "$unset_wt" ] || [ -z "$unset_field" ]; then
+                pwt_error "Error: Missing arguments"
+                echo "Usage: pwt meta unset <worktree> <field>"
+                echo "       pwt meta unset <field>   (from inside a worktree)"
+                exit 1
+            fi
+            # Structural fields keep worktrees resolvable; clearing them
+            # would orphan the record, not clean it
+            case "$unset_field" in
+                path | branch | port | base | base_commit | created_at)
+                    pwt_error "Error: '$unset_field' is a structural field and cannot be unset"
+                    echo "Unset is for custom fields (phase, reviewer, marker, ...)."
+                    exit 1
+                    ;;
+            esac
+            local _unset_mf
+            _unset_mf=$(meta_file "$unset_wt" "$project")
+            if [ ! -f "$_unset_mf" ]; then
+                pwt_error "No metadata found for: $unset_wt"
+                exit $EXIT_NOT_FOUND
+            fi
+            state_del "$_unset_mf" "$unset_field"
+            echo -e "${GREEN}✓ Unset $unset_wt.$unset_field${NC}"
+            clear_list_cache
+            ;;
         -h | --help | help)
             cat <<'HELP'
 Usage: pwt meta [command] [args]
@@ -5043,12 +5092,15 @@ COMMANDS:
   list                           List all metadata (default)
   show <worktree>                Show metadata for one worktree
   set <worktree> <field> <value> Set a field on any worktree
+  unset [worktree] <field>       Remove a custom field (phase, reviewer, ...)
+                                 Structural fields (port, path, ...) refused
   import                         Import existing worktrees
 
-SHORTCUT (from inside a worktree):
+SHORTCUT (from inside a worktree - targets the worktree you are IN):
   pwt meta "text with spaces"    Set description (spaces = description)
   pwt meta <key>                 Get a field
   pwt meta <key> <value>         Set a field
+  pwt meta unset <key>           Remove a field
 
 FIELDS:
   description    Free text describing the worktree purpose
@@ -5205,12 +5257,13 @@ HELP
             ;;
         *)
             echo -e "${RED}Unknown action: $action${NC}"
-            echo "Usage: pwt meta [list|show|set|import]"
+            echo "Usage: pwt meta [list|show|set|unset|import]"
             echo ""
             echo "Commands:"
             echo "  list              - List all worktree metadata"
             echo "  show <name>       - Show metadata for a worktree"
             echo "  set <name> <field> <value> - Update a metadata field"
+            echo "  unset [name] <field> - Remove a custom metadata field"
             echo "  import            - Import metadata for existing worktrees"
             exit 1
             ;;

@@ -266,10 +266,12 @@ Only show dirty worktrees
 .SS Metadata
 .TP
 .B meta\fR|\fBm \fIKEY\fR
-Get metadata field from current worktree (shortcut).
+Get metadata field from the worktree you are standing in (shortcut; falls
+back to the current-symlink worktree when outside any worktree).
 .TP
 .B meta\fR|\fBm \fIKEY\fR \fIVALUE\fR
-Set metadata field on current worktree (shortcut).
+Set metadata field on the worktree you are standing in (shortcut; same
+resolution as the get form).
 .TP
 .B meta \fI"text with spaces"\fR
 Set description on current worktree (space heuristic).
@@ -282,6 +284,11 @@ Show metadata for worktree
 .TP
 .B meta set \fINAME\fR \fIFIELD\fR \fIVALUE\fR
 Update metadata field
+.TP
+.B meta unset \fR[\fINAME\fR] \fIFIELD\fR
+Remove a custom metadata field (phase, reviewer, marker, ...). Without
+\fINAME\fR, the worktree is resolved from the current directory. Structural
+fields (path, branch, port, base, base_commit, created_at) cannot be unset.
 
 .SS Steps (Pwtfile Automation)
 .TP

@@ -211,6 +211,7 @@ pwt server wait TICKET-123 --timeout 120
 pwt meta set TICKET-123 phase implementing
 pwt meta set TICKET-123 next "write tests"
 pwt meta set TICKET-123 blocked "waiting on review"
+pwt meta unset TICKET-123 blocked      # clear a field (custom fields only)
 
 # 4. Clean up when merged (kills the server on that port, no prompts)
 pwt remove TICKET-123 --kill-port -y
@@ -218,6 +219,8 @@ pwt remove TICKET-123 --kill-port -y
 
 Metadata keys are free-form but must match `[A-Za-z0-9_.-]+`; pass key and
 value as separate arguments (`pwt meta set WT key value`), never `key=value`.
+The short forms (`pwt meta <key>`, `pwt meta <key> <value>`,
+`pwt meta unset <key>`) target the worktree the shell is standing in.
 
 ## Destructive commands need explicit approval
 

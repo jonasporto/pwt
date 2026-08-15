@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwt meta unset [worktree] <field>`: remove a custom metadata field
+  (phase, reviewer, marker, ...). Structural fields (path, branch, port,
+  base, base_commit, created_at) are refused. Without a worktree argument
+  the target is resolved from the current directory. Previously an empty
+  value was read as a get, so fields could never be cleared; external
+  consumers (dashboards) were blocked on this.
+
+### Fixed
+- The `pwt meta <key> [value]` shortcut now targets the worktree you are
+  standing in; the current-symlink worktree is only a fallback when the
+  shell is outside any worktree. Previously the symlink won, so running
+  the shortcut inside worktree A silently read/wrote worktree B. The
+  shortcut also works from subdirectories of a worktree now.
+
 ## [0.2.3] - 2026-08-15
 
 ### Fixed

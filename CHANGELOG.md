@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-08-16
+
 ### Fixed
 - `pwt doctor` made a network call even when nobody was watching. The
   version check now runs only for an interactive terminal; unattended

@@ -32,6 +32,16 @@
   MIT © Jonas Porto · <a href="https://github.com/jonasporto/pwt">github.com/jonasporto/pwt</a> · <a href="{{ '/blog/feed.xml' | relative_url }}">RSS</a>
 </footer>
 <script>
+  // Hover anchor on every heading that has an id: docs pages set theirs
+  // explicitly, kramdown derives the rest.
+  document.querySelectorAll('main h2[id], main h3[id], main h4[id]').forEach(function (h) {
+    var a = document.createElement('a');
+    a.className = 'docs-anchor';
+    a.href = '#' + h.id;
+    a.textContent = '#';
+    a.setAttribute('aria-label', 'Link to this section');
+    h.appendChild(a);
+  });
   document.querySelectorAll('div.highlighter-rouge, .term').forEach(function (block) {
     var pre = block.querySelector('pre'); if (!pre) return;
     var btn = document.createElement('button');

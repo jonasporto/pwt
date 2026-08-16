@@ -88,6 +88,28 @@ topic_page() {
 	} >"$OUT_DIR/$file"
 }
 
+# Alias map, read from the dispatcher's own case arms: `list | ls)` means
+# ls is an alias of list. Printing the same help twice would imply two
+# commands where there is one, so aliases get a one-line section pointing
+# at the canonical anchor.
+# Output: one "alias canonical" pair per line.
+alias_pairs() {
+	awk '
+        /^if \[\[ "\$\{BASH_SOURCE\[0\]\}" == "\$\{0\}" \]\]/ { in_dispatch = 1 }
+        !in_dispatch { next }
+        # Case arms are indented 8 spaces and end in ")". The spaces around
+        # the pipes are part of the source formatting: `list | ls)`
+        /^        [a-z][a-z_| -]*\)$/ {
+            line = $0
+            sub(/\)$/, "", line)
+            gsub(/[[:space:]]/, "", line)
+            n = split(line, names, "|")
+            if (n < 2) next
+            for (i = 2; i <= n; i++) print names[i], names[1]
+        }
+    ' "$PWT_BIN"
+}
+
 # ---------------------------------------------------------------- commands
 # The canonical command list lives in the bash completion (a test asserts
 # it stays in sync with the dispatcher). Only commands whose --help
@@ -107,11 +129,27 @@ commands_page() {
 	# and posts can link to. Kramdown's implicit ids would work too, but
 	# they are derived from the heading text and would silently move the
 	# moment a heading gains a word.
-	local skipped="" documented="" cmd out
-	local body_file
+	local skipped="" documented="" cmd out canonical
+	local body_file aliases
 	body_file=$(mktemp "${TMPDIR:-/tmp}/pwt-docs-body.XXXXXX")
+	aliases=$(alias_pairs)
 
 	for cmd in $commands; do
+		# Alias of a command documented above: point at it, do not repeat it
+		canonical=$(printf '%s\n' "$aliases" | awk -v a="$cmd" '$1 == a { print $2; exit }')
+		if [ -n "$canonical" ] && [[ " $documented " == *" $canonical "* ]]; then
+			documented="$documented $cmd"
+			{
+				# Explicit, stable id; the hover anchor link is added to every
+				# heading site-wide by the layout, so it is not emitted here
+				echo "## pwt $cmd {#$cmd}"
+				echo
+				echo "Alias for [\`pwt $canonical\`](#$canonical)."
+				echo
+			} >>"$body_file"
+			continue
+		fi
+
 		out=$(pwt_out "$cmd" --help || true)
 		case "$out" in
 		Usage:*) ;;
@@ -122,8 +160,18 @@ commands_page() {
 		esac
 		documented="$documented $cmd"
 		{
+			# Explicit, stable id; the hover anchor link is added to every
+			# heading site-wide by the layout, so it is not emitted here
 			echo "## pwt $cmd {#$cmd}"
 			echo
+			# Canonical command that has aliases: name them here, so the
+			# reference answers "what else is this called" in one place
+			local its_aliases
+			its_aliases=$(printf '%s\n' "$aliases" | awk -v c="$cmd" '$2 == c { printf "[`%s`](#%s), ", $1, $1 }')
+			if [ -n "$its_aliases" ]; then
+				echo "Also available as ${its_aliases%, }."
+				echo
+			fi
 			echo '```'
 			printf '%s\n' "$out"
 			echo '```'

@@ -187,9 +187,14 @@ ul.post-list p { margin: 0.25rem 0 0; color: var(--muted); }
 p.cmd-index { display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; margin: 1.25rem 0 2rem; }
 p.cmd-index a { text-decoration: none; }
 p.cmd-index code { background: var(--card); border: 1px solid var(--border); }
-.docs-anchor { text-decoration: none; color: var(--muted); opacity: 0; margin-left: 0.4rem; font-weight: 400; }
-h2:hover .docs-anchor { opacity: 1; }
-h2[id] { scroll-margin-top: 1rem; }
+.docs-anchor {
+  text-decoration: none; color: var(--muted); opacity: 0;
+  margin-left: 0.4rem; font-weight: 400; transition: opacity 0.12s;
+}
+h2:hover .docs-anchor, h3:hover .docs-anchor, h4:hover .docs-anchor,
+.docs-anchor:focus { opacity: 1; }
+.docs-anchor:hover { color: var(--accent); }
+h2[id], h3[id], h4[id] { scroll-margin-top: 1.5rem; }
 
 aside.related { margin-top: 3.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
 aside.related h2 { margin-top: 0; font-size: 1.15rem; }

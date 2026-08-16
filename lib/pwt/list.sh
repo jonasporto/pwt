@@ -430,9 +430,14 @@ cmd_list() {
 		fi
 		local pcache
 		pcache="$(get_list_cache_file).porcelain"
-		if [ "$LIST_REFRESH_MODE" = true ]; then
+		# Atomic writes (temp + rename): a concurrent reader of the cache
+		# must never see a truncated JSON document
+		generate_pcache() {
 			init_cache_dir
-			cmd_list_porcelain false >"$pcache"
+			cmd_list_porcelain false >"$pcache.tmp.$$" && mv -f "$pcache.tmp.$$" "$pcache"
+		}
+		if [ "$LIST_REFRESH_MODE" = true ]; then
+			generate_pcache
 			cat "$pcache"
 			return
 		fi
@@ -442,11 +447,10 @@ cmd_list() {
 		fi
 		if [ -f "$pcache" ] && [ "${PWT_LIST_ASYNC_REFRESH:-1}" != "0" ] && command -v perl >/dev/null 2>&1; then
 			cat "$pcache"
-			_spawn_list_regen "$pcache" --porcelain
+			_spawn_list_regen "$pcache" list --refresh --porcelain
 			return
 		fi
-		init_cache_dir
-		cmd_list_porcelain false >"$pcache"
+		generate_pcache
 		cat "$pcache"
 		return
 	fi
@@ -473,16 +477,22 @@ cmd_list() {
 		fi
 	}
 
-	# Helper to generate cache (always full list, no -d filter)
+	# Helper to generate cache (always full list, no -d filter).
+	# Written to a temp file and renamed: with the detached background
+	# regen, a concurrent reader must never see a truncated cache.
 	generate_cache() {
 		init_cache_dir
-		cmd_list_compact "" >"$cache_file"
+		cmd_list_compact "" >"$cache_file.tmp.$$" && mv -f "$cache_file.tmp.$$" "$cache_file"
 	}
 
-	# --refresh: clear cache and regenerate
+	# --refresh: regenerate. generate_cache replaces the file atomically
+	# (temp + rename); deleting it first, as this used to do, opened a
+	# window where a concurrent reader found no cache at all. The
+	# porcelain variant is merely invalidated: its readers fall back to
+	# a synchronous compute, never to a partial document.
 	if [ "$LIST_REFRESH_MODE" = true ]; then
-		clear_list_cache
 		generate_cache
+		rm -f "$cache_file.porcelain" 2>/dev/null || true
 		read_cache
 		return
 	fi
@@ -509,7 +519,7 @@ cmd_list() {
 		read_cache
 	elif [ -f "$cache_file" ] && [ "${PWT_LIST_ASYNC_REFRESH:-1}" != "0" ] && command -v perl >/dev/null 2>&1; then
 		read_cache
-		_spawn_list_regen "$cache_file"
+		_spawn_list_regen "$cache_file" list --refresh
 		echo -e "${DIM}(cached $(list_cache_age_seconds)s ago; refreshing in background)${NC}" >&2
 	else
 		generate_cache
@@ -565,7 +575,7 @@ _spawn_list_regen() {
         $max = 4096 if $max > 4096 || $max < 0;
         for my $fd (3 .. $max) { POSIX::close($fd); }
         exec(@ARGV) or die "exec failed: $!";
-    ' "$0" --project "${CURRENT_PROJECT:-}" --quiet list --refresh "$@" 2>/dev/null || true
+    ' "$0" --project "${CURRENT_PROJECT:-}" --quiet "$@" 2>/dev/null || true
 }
 
 # Print a table row with fixed column widths
@@ -1053,6 +1063,7 @@ cmd_tree() {
 	local show_dirty_only=false
 	local show_ports=false
 	local short_mode=false
+	local tree_refresh=false
 
 	# Parse arguments
 	while [ $# -gt 0 ]; do
@@ -1073,8 +1084,12 @@ cmd_tree() {
 			short_mode=true
 			shift
 			;;
+		--refresh | -r)
+			tree_refresh=true
+			shift
+			;;
 		-h | --help)
-			echo "Usage: pwt tree [--all] [--dirty] [--ports] [--short]"
+			echo "Usage: pwt tree [--all] [--dirty] [--ports] [--short] [--refresh]"
 			echo ""
 			echo "Visual tree view of worktrees - mental map of active work."
 			echo ""
@@ -1083,6 +1098,7 @@ cmd_tree() {
 			echo "  --dirty, -d   Show only dirty worktrees"
 			echo "  --ports, -p   Show port mappings"
 			echo "  --short, -s   One line per worktree"
+			echo "  --refresh, -r Recompute synchronously (skip cache)"
 			echo ""
 			echo "Examples:"
 			echo "  pwt tree              # current project"
@@ -1142,63 +1158,96 @@ cmd_tree() {
 		local tree_entries
 		tree_entries=$(list_worktree_entries "$project" "$worktrees_dir")
 		if [ -n "$tree_entries" ]; then
-			local wt_count
-			wt_count=$(printf '%s\n' "$tree_entries" | wc -l | tr -d ' ')
+			local wt_count=0 _count_line
+			while IFS= read -r _count_line; do
+				[ -n "$_count_line" ] && wt_count=$((wt_count + 1))
+			done <<<"$tree_entries"
 			local i=0
+
+			# One status walk per worktree, computed in the same rolling
+			# parallel pool as `pwt list` (the serial loop cost ~13s on a
+			# 66-worktree project). Rows land in ordered temp files; the
+			# connector stays decided by absolute index, like before.
+			local current_name=$(get_current_from_symlink 2>/dev/null)
+			local row_dir
+			row_dir=$(mktemp -d "${TMPDIR:-/tmp}/pwt-tree.XXXXXX")
+			local jobs_running=0 pid_queue="" max_jobs
+			max_jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+			case "$max_jobs" in *[!0-9]* | "") max_jobs=4 ;; esac
+			[ "$max_jobs" -gt 8 ] && max_jobs=8
+			[ "$max_jobs" -lt 4 ] && max_jobs=4
 
 			while IFS=$'\t' read -r name dir; do
 				[ -n "$name" ] && [ -d "$dir" ] || continue
 				i=$((i + 1))
+				(
+					local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
+					local desc=$(get_metadata "$name" "description" 2>/dev/null)
+					local port=$(get_metadata "$name" "port" 2>/dev/null)
 
-				local branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
-				local desc=$(get_metadata "$name" "description" 2>/dev/null)
-				local port=$(get_metadata "$name" "port" 2>/dev/null)
+					# Status
+					local status_text=""
+					local is_dirty=false
+					local counts
+					counts=$(git_status_counts "$dir")
+					local staged modified untracked entries
+					read -r staged modified untracked entries <<<"$counts"
+					if [ "$entries" -gt 0 ]; then
+						status_text=" ${RED}*${entries}${NC}"
+						is_dirty=true
+					fi
 
-				# Status
-				local status_text=""
-				local is_dirty=false
-				local counts
-				counts=$(git_status_counts "$dir")
-				local staged modified untracked entries
-				read -r staged modified untracked entries <<<"$counts"
-				if [ "$entries" -gt 0 ]; then
-					status_text=" ${RED}*${entries}${NC}"
-					is_dirty=true
-				fi
+					# Skip if --dirty and not dirty (row runs in a subshell)
+					if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
+						exit 0
+					fi
 
-				# Skip if --dirty and not dirty
-				if [ "$show_dirty_only" = true ] && [ "$is_dirty" = false ]; then
-					continue
-				fi
+					# Current marker
+					local current_marker=""
+					if [ "$name" = "$current_name" ]; then
+						current_marker=" ${BLUE}[current]${NC}"
+					fi
 
-				# Current marker
-				local current_marker=""
-				local current_name=$(get_current_from_symlink 2>/dev/null)
-				if [ "$name" = "$current_name" ]; then
-					current_marker=" ${BLUE}[current]${NC}"
-				fi
+					# Tree connector
+					local connector="├─"
+					if [ $i -eq $wt_count ]; then
+						connector="└─"
+					fi
 
-				# Tree connector
-				local connector="├─"
-				if [ $i -eq $wt_count ]; then
-					connector="└─"
-				fi
+					# Port info
+					local port_text=""
+					if [ "$show_ports" = true ] && [ -n "$port" ]; then
+						port_text=" :$port"
+					fi
 
-				# Port info
-				local port_text=""
-				if [ "$show_ports" = true ] && [ -n "$port" ]; then
-					port_text=" :$port"
-				fi
-
-				if [ "$short_mode" = true ]; then
-					echo -e "$connector $branch$port_text$status_text$current_marker"
-				else
-					echo -e "$connector ${GREEN}$name${NC}$current_marker"
-					[ -n "$desc" ] && echo -e "│  ├─ \"$desc\""
-					echo -e "│  ├─ $branch$port_text"
-					echo -e "│  └─ status:$status_text${status_text:- ${GREEN}clean${NC}}"
+					{
+						if [ "$short_mode" = true ]; then
+							echo -e "$connector $branch$port_text$status_text$current_marker"
+						else
+							echo -e "$connector ${GREEN}$name${NC}$current_marker"
+							[ -n "$desc" ] && echo -e "│  ├─ \"$desc\""
+							echo -e "│  ├─ $branch$port_text"
+							echo -e "│  └─ status:$status_text${status_text:- ${GREEN}clean${NC}}"
+						fi
+					} >"$row_dir/$(printf '%05d' "$i").row"
+				) </dev/null &
+				pid_queue="$pid_queue $!"
+				jobs_running=$((jobs_running + 1))
+				if [ "$jobs_running" -ge "$max_jobs" ]; then
+					pid_queue="${pid_queue# }"
+					local oldest="${pid_queue%% *}"
+					if [ "$oldest" = "$pid_queue" ]; then
+						pid_queue=""
+					else
+						pid_queue="${pid_queue#* }"
+					fi
+					wait "$oldest" 2>/dev/null || true
+					jobs_running=$((jobs_running - 1))
 				fi
 			done <<<"$tree_entries"
+			wait
+			cat "$row_dir"/*.row 2>/dev/null || true
+			rm -rf "$row_dir"
 		else
 			echo -e "└─ ${DIM}(no worktrees)${NC}"
 		fi
@@ -1218,8 +1267,33 @@ cmd_tree() {
 			_render_project_tree "$project"
 		done
 	else
-		# Current project only
 		require_project
-		_render_project_tree "$CURRENT_PROJECT"
+		# Flagged variants render live; only the default variant is cached
+		if [ "$show_dirty_only" = true ] || [ "$show_ports" = true ] || [ "$short_mode" = true ]; then
+			_render_project_tree "$CURRENT_PROJECT"
+			return
+		fi
+
+		# Default variant: same cache contract as `pwt list`. Serve
+		# instantly, even stale (with an age note), and recompute in a
+		# detached background run; --refresh recomputes synchronously.
+		local tree_cache
+		tree_cache="$(get_list_cache_file).tree"
+		if [ "$tree_refresh" = true ] || [ ! -f "$tree_cache" ] ||
+			{ [ "$(_pwt_file_age_seconds "$tree_cache")" -ge "$LIST_CACHE_TTL" ] &&
+				{ [ "${PWT_LIST_ASYNC_REFRESH:-1}" = "0" ] || ! command -v perl >/dev/null 2>&1; }; }; then
+			init_cache_dir
+			_render_project_tree "$CURRENT_PROJECT" >"$tree_cache.tmp.$$" &&
+				mv -f "$tree_cache.tmp.$$" "$tree_cache"
+			cat "$tree_cache"
+			return
+		fi
+		if [ "$(_pwt_file_age_seconds "$tree_cache")" -lt "$LIST_CACHE_TTL" ]; then
+			cat "$tree_cache"
+			return
+		fi
+		cat "$tree_cache"
+		_spawn_list_regen "$tree_cache" tree --refresh
+		echo -e "${DIM}(cached $(_pwt_file_age_seconds "$tree_cache")s ago; refreshing in background)${NC}" >&2
 	fi
 }

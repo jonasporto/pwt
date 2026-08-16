@@ -491,25 +491,68 @@ _gateway_status() {
 	fi
 }
 
+# Snapshot of listening TCP ports, one per line. One lsof/ss call replaces
+# one probe per worktree (66 lsof calls cost ~10s of `pwt servers`); empty
+# output means no snapshot tool, and callers fall back to live probes.
+_ports_snapshot() {
+	if has_lsof; then
+		lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null |
+			awk 'NR>1 { n=split($9, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] }' | sort -u
+	elif command -v ss >/dev/null 2>&1; then
+		ss -lntH 2>/dev/null |
+			awk '{ n=split($4, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] }' | sort -u
+	fi
+}
+
+_ensure_ports_snapshot() {
+	[ -n "${_SERVERS_PORTS_SNAPSHOT_SET:-}" ] && return 0
+	_SERVERS_PORTS_SNAPSHOT=$(_ports_snapshot)
+	_SERVERS_PORTS_SNAPSHOT_SET=1
+}
+
+# Is <port> listening, according to the snapshot (live probe fallback)?
+_port_listening_snapshot() {
+	local port="$1"
+	[ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] || return 1
+	_ensure_ports_snapshot
+	if [ -n "$_SERVERS_PORTS_SNAPSHOT" ]; then
+		case $'\n'"$_SERVERS_PORTS_SNAPSHOT"$'\n' in
+		*$'\n'"$port"$'\n'*) return 0 ;;
+		*) return 1 ;;
+		esac
+	fi
+	_gateway_port_listening "$port"
+}
+
+# One pass over the job files (worktree<TAB>command<TAB>id<TAB>status per
+# line), instead of re-reading every job file for every worktree row.
+_ensure_jobs_index() {
+	[ -n "${_SERVERS_JOBS_INDEX_SET:-}" ] && return 0
+	load_module jobs
+	local f wt cmd id st
+	_SERVERS_JOBS_INDEX=""
+	for f in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
+		[ -f "$f" ] || continue
+		wt=$(state_get "$f" "worktree")
+		cmd=$(state_get "$f" "command")
+		id=$(state_get "$f" "id")
+		st=$(state_get "$f" "status")
+		_SERVERS_JOBS_INDEX+="${wt}"$'\t'"${cmd}"$'\t'"${id}"$'\t'"${st}"$'\n'
+	done
+	_SERVERS_JOBS_INDEX_SET=1
+}
+
 _servers_job_status_for() {
 	local name="$1"
-	local status=""
-	load_module jobs
-
-	local json_file
-	for json_file in "$PWT_JOBS_DIR"/*.job; do
-		[ -f "$json_file" ] || continue
-		local j_wt j_cmd j_id j_status
-		j_wt=$(state_get "$json_file" "worktree")
-		j_cmd=$(state_get "$json_file" "command")
-		j_id=$(state_get "$json_file" "id")
-		j_status=$(state_get "$json_file" "status")
-		[ "$j_wt" = "$name" ] && [ "$j_cmd" = "server" ] || continue
-		if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
-			status="job:$j_id"
+	local status="" wt cmd id st
+	_ensure_jobs_index
+	while IFS=$'\t' read -r wt cmd id st; do
+		[ "$wt" = "$name" ] && [ "$cmd" = "server" ] || continue
+		if [ "$st" = "running" ] && _is_job_alive "$id"; then
+			status="job:$id"
 			break
 		fi
-	done
+	done <<<"${_SERVERS_JOBS_INDEX:-}"
 	echo "$status"
 }
 
@@ -522,7 +565,7 @@ _servers_print_row() {
 	local listening="stopped"
 	local job_status
 
-	if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && _gateway_port_listening "$port"; then
+	if _port_listening_snapshot "$port"; then
 		listening="listening"
 	fi
 	job_status=$(_servers_job_status_for "$name")
@@ -533,21 +576,14 @@ _servers_print_row() {
 	printf "  path:   %s\n" "$path"
 
 	# Other running jobs for this worktree (workers, custom commands)
-	load_module jobs
-	local extra_jobs=""
-	local json_file
-	for json_file in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
-		[ -f "$json_file" ] || continue
-		local j_wt j_cmd j_id j_status
-		j_wt=$(state_get "$json_file" "worktree")
-		j_cmd=$(state_get "$json_file" "command")
-		j_id=$(state_get "$json_file" "id")
-		j_status=$(state_get "$json_file" "status")
-		[ "$j_wt" = "$name" ] && [ "$j_cmd" != "server" ] || continue
-		if [ "$j_status" = "running" ] && _is_job_alive "$j_id"; then
-			extra_jobs="${extra_jobs:+$extra_jobs, }$j_cmd ($j_id)"
+	local extra_jobs="" wt cmd id st
+	_ensure_jobs_index
+	while IFS=$'\t' read -r wt cmd id st; do
+		[ "$wt" = "$name" ] && [ "$cmd" != "server" ] && [ -n "$cmd" ] || continue
+		if [ "$st" = "running" ] && _is_job_alive "$id"; then
+			extra_jobs="${extra_jobs:+$extra_jobs, }$cmd ($id)"
 		fi
-	done
+	done <<<"${_SERVERS_JOBS_INDEX:-}"
 	[ -n "$extra_jobs" ] && printf "  jobs:   %s\n" "$extra_jobs"
 	return 0
 }
@@ -598,7 +634,7 @@ cmd_servers() {
 			port=$(get_metadata "$name" "port")
 			branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "")
 			listening=false
-			[ -n "$port" ] && _gateway_port_listening "$port" && listening=true
+			_port_listening_snapshot "$port" && listening=true
 			job=$(_servers_job_status_for "$name")
 			marker=""
 			[ "$name" = "$gateway_target" ] && marker="${marker}gateway "
@@ -653,7 +689,7 @@ cmd_servers() {
 		[ "$name" = "$gateway_target" ] && markers="${markers}gateway "
 		[ "$name" = "$current" ] && markers="${markers}current "
 		listening=false
-		[ -n "$port" ] && _gateway_port_listening "$port" && listening=true
+		_port_listening_snapshot "$port" && listening=true
 		job=$(_servers_job_status_for "$name")
 
 		if [ "$show_all" = true ] || [ "$listening" = true ] || [ -n "$job" ] || [ -n "$markers" ]; then

@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `pwt tree` (default variant) joins the list cache contract: served
+  instantly even when stale, recomputed in a detached background run,
+  `tree --refresh` recomputes synchronously, and flagged variants
+  (`--all/--dirty/--ports/--short`) always render live. Rows compute in
+  the same parallel pool as `pwt list`. Measured: 12.9s → 0.05s warm.
+- `pwt servers` takes one listening-ports snapshot (single lsof/ss call)
+  and one pass over the job files instead of one lsof probe plus a full
+  job-directory scan per worktree. Measured: 11.7s → 1.9s.
+- `pwt state --json` emits values through fork-free escape helpers; the
+  per-key command substitutions cost ~3 forks a line across every record.
+  Measured: 2.4s → 0.5s.
+- Cache writes are atomic (temp file + rename), and `list --refresh` no
+  longer deletes the cache before regenerating: concurrent readers used
+  to have a window where the cache file simply did not exist. Caught by
+  the new stale-serving test suite.
 - `pwt list` reads never block on recomputation: a stale cache is served
   instantly (milliseconds) and the recompute runs in a detached
   background pwt that rewrites the cache for the next read, with a

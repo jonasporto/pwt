@@ -882,12 +882,17 @@ _state_escape() {
 }
 
 # Reverse of _state_escape. Unknown escapes keep their backslash.
-_state_unescape() {
-    local s="$1" out="" chunk
+# Fork-free variant: writes the unescaped value into the named variable.
+# Hot readers (state --json walks every key of every record) must not pay a
+# command-substitution fork per value.
+# Usage: _state_unescape_var <varname> <string>
+_state_unescape_var() {
+    local __unesc_dst="$1"
+    local s="$2" out="" chunk
     case "$s" in
         *\\*) ;;
         *)
-            printf '%s' "$s"
+            printf -v "$__unesc_dst" '%s' "$s"
             return 0
             ;;
     esac
@@ -922,7 +927,13 @@ _state_unescape() {
             *) out+='\' ;;
         esac
     done
-    printf '%s' "$out"
+    printf -v "$__unesc_dst" '%s' "$out"
+}
+
+_state_unescape() {
+    local _state_unescape_result
+    _state_unescape_var _state_unescape_result "$1"
+    printf '%s' "$_state_unescape_result"
 }
 
 # Read one key from a key=value file (first match wins; empty if absent)
@@ -1226,11 +1237,12 @@ is_list_cache_valid() {
     [ "$age" -lt "$LIST_CACHE_TTL" ]
 }
 
-# Clear list cache for current project (table and porcelain variants)
+# Clear list cache for current project (table, porcelain and tree variants)
 clear_list_cache() {
     local cache_file=$(get_list_cache_file)
     [ -f "$cache_file" ] && rm -f "$cache_file" || true
     [ -f "$cache_file.porcelain" ] && rm -f "$cache_file.porcelain" || true
+    [ -f "$cache_file.tree" ] && rm -f "$cache_file.tree" || true
 }
 
 # Read cached list with dirty-only filter
@@ -6619,6 +6631,7 @@ cmd_self() {
 # Usage: _state_kv_json_object <file> <indent>
 _state_kv_json_object() {
     local file="$1" indent="${2:-}" line key value first=true
+    local _kv_key_json _kv_value_json
     printf '{'
     if [ -f "$file" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
@@ -6627,14 +6640,19 @@ _state_kv_json_object() {
                 *) continue ;;
             esac
             key="${line%%=*}"
-            value=$(_state_unescape "${line#*=}")
+            # Fork-free helpers: this loop runs per key of per record, and
+            # the $( ) versions cost 3 forks a line (~2.4s of `state --json`
+            # on a real state dir with 116 worktrees)
+            _state_unescape_var value "${line#*=}"
             [ "$first" = true ] || printf ','
             first=false
-            printf '\n%s  "%s": ' "$indent" "$(json_escape "$key")"
+            json_escape_var _kv_key_json "$key"
+            printf '\n%s  "%s": ' "$indent" "$_kv_key_json"
             if _state_key_is_numeric "$key" && [[ "$value" =~ ^[0-9]+$ ]]; then
                 printf '%s' "$value"
             else
-                printf '"%s"' "$(json_escape "$value")"
+                json_escape_var _kv_value_json "$value"
+                printf '"%s"' "$_kv_value_json"
             fi
         done <"$file"
     fi
@@ -6694,7 +6712,7 @@ cmd_state() {
         return 0
     fi
 
-    local first f name project dir
+    local first f name project dir _state_name_json
 
     echo "{"
     echo "  \"schema_version\": ${PWT_STATE_VERSION},"
@@ -6708,7 +6726,8 @@ cmd_state() {
         name=$(basename "$(dirname "$f")")
         [ "$first" = true ] || printf ','
         first=false
-        printf '\n    "%s": ' "$(json_escape "$name")"
+        json_escape_var _state_name_json "$name"
+        printf '\n    "%s": ' "$_state_name_json"
         _state_kv_json_object "$f" "    "
     done
     if [ "$first" = true ]; then printf '},\n'; else printf '\n  },\n'; fi
@@ -6727,7 +6746,8 @@ cmd_state() {
             [ "$has_meta" = true ] || continue
             [ "$first" = true ] || printf ','
             first=false
-            printf '\n    "%s": {' "$(json_escape "$project")"
+            json_escape_var _state_name_json "$project"
+            printf '\n    "%s": {' "$_state_name_json"
             local wt_first=true
             for f in "$dir"*.meta; do
                 [ -f "$f" ] || continue
@@ -6735,7 +6755,8 @@ cmd_state() {
                 name="${name%.meta}"
                 [ "$wt_first" = true ] || printf ','
                 wt_first=false
-                printf '\n      "%s": ' "$(json_escape "$name")"
+                json_escape_var _state_name_json "$name"
+                printf '\n      "%s": ' "$_state_name_json"
                 _state_kv_json_object "$f" "      "
             done
             printf '\n    }'

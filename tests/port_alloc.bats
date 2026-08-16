@@ -12,7 +12,7 @@ teardown() {
 }
 
 @test "next_available_port skips busy fallback port" {
-    source_pwt_functions next_available_port meta_ports _meta_read_key_var _state_unescape
+    source_pwt_functions next_available_port meta_ports _meta_read_key_var _state_unescape _state_unescape_var
 
     # Override port availability to force fallback skip
     is_port_pair_free() {

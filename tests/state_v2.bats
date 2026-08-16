@@ -5,7 +5,8 @@ load test_helper
 
 setup() {
     setup_test_env
-    source_pwt_functions _state_escape _state_unescape state_get state_set \
+    source_pwt_functions _state_escape _state_unescape _state_unescape_var \
+        state_get state_set \
         state_del state_list_prefix _json_escape_c0 json_escape events_append \
         events_maybe_truncate state_version_read state_version_write pwt_error
     PWT_STATE_VERSION=2

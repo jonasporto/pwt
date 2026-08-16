@@ -7,6 +7,8 @@ agent_hint_extra: >-
   `pwtfile_git_exclude` is part of that guide: ask for "ignore this file
   without committing anything" and the agent lands on the right layer
   instead of the mythical per-worktree file above.
+agent_hint_doc: /docs/pwtfile/
+agent_hint_doc_label: "Pwtfile helpers"
 ---
 
 You want a file ignored in one worktree only: not committed to

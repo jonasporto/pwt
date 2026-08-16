@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# Generate the site's documentation pages from pwt itself.
+#
+# The binary is the single source of truth: every page here is the output
+# of `pwt help <topic>` or `pwt <command> --help`, so the CLAUDE.md rule
+# that already forces help text to be updated with any CLI change keeps
+# the website correct for free.
+#
+# Usage:
+#   scripts/gen-docs           # write site/docs/
+#   scripts/gen-docs --check   # fail if the committed docs are stale
+#
+# Safety: every pwt invocation runs against a throwaway PWT_DIR, so a
+# command that does not understand --help cannot touch real state.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PWT_BIN="$ROOT/bin/pwt"
+CHECK_MODE=false
+[ "${1:-}" = "--check" ] && CHECK_MODE=true
+
+OUT_DIR="$ROOT/site/docs"
+if [ "$CHECK_MODE" = true ]; then
+    OUT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pwt-docs.XXXXXX")
+    trap 'rm -rf "$OUT_DIR"' EXIT
+fi
+mkdir -p "$OUT_DIR"
+
+SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/pwt-docs-state.XXXXXX")
+trap 'rm -rf "$SANDBOX"' EXIT
+export PWT_DIR="$SANDBOX/pwt"
+mkdir -p "$PWT_DIR/projects/docs-sandbox" "$SANDBOX/worktrees"
+echo 2 >"$PWT_DIR/state-version"
+
+# Most commands resolve a project before they reach their own --help, so
+# the sandbox has to look like a configured project. It stays a throwaway:
+# an empty repo with no worktrees, in a temp dir that dies with this run.
+git init -q -b main "$SANDBOX/repo"
+git -C "$SANDBOX/repo" -c user.email=docs@example.com -c user.name=docs \
+    commit -q --allow-empty -m "docs sandbox"
+cat >"$PWT_DIR/projects/docs-sandbox/config" <<EOF
+path=$SANDBOX/repo
+worktrees_dir=$SANDBOX/worktrees
+EOF
+
+# Run pwt and strip ANSI escapes and trailing whitespace. Output must be
+# byte-stable across runs or --check would report drift for no reason.
+#
+# A command that does not parse --help EXECUTES instead of printing usage,
+# so every invocation is neutralised: --no-input closes stdin, the editor
+# variables point at a no-op, and a timeout bounds anything that waits.
+pwt_out() {
+    local runner=()
+    command -v timeout >/dev/null 2>&1 && runner=(timeout 20)
+    (
+        cd "$SANDBOX/repo" &&
+            EDITOR=true VISUAL=true GIT_EDITOR=true PAGER=cat \
+                "${runner[@]}" "$PWT_BIN" --no-input "$@" 2>&1
+    ) | sed -e 's/\x1b\[[0-9;]*m//g' -e 's/[[:space:]]*$//'
+}
+
+front_matter() {
+    local title="$1" desc="$2" permalink="$3" order="$4"
+    cat <<EOF
+---
+layout: default
+title: "$title"
+description: "$desc"
+permalink: $permalink
+nav_order: $order
+---
+
+<p class="post-meta">Generated from <code>pwt</code> itself by
+<code>scripts/gen-docs</code>. Do not edit by hand.</p>
+
+EOF
+}
+
+topic_page() {
+    local topic="$1" file="$2" title="$3" desc="$4" permalink="$5" order="$6"
+    {
+        front_matter "$title" "$desc" "$permalink" "$order"
+        echo "# $title"
+        echo
+        echo '```'
+        pwt_out help "$topic"
+        echo '```'
+    } >"$OUT_DIR/$file"
+}
+
+# ---------------------------------------------------------------- commands
+# The canonical command list lives in the bash completion (a test asserts
+# it stays in sync with the dispatcher). Only commands whose --help
+# actually prints a usage block are documented: anything else would be
+# undocumented behaviour dressed up as documentation.
+commands_page() {
+    local commands
+    commands=$(sed -n 's/^_pwt_commands="\(.*\)"$/\1/p' "$ROOT/completions/pwt.bash")
+    [ -n "$commands" ] || {
+        echo "gen-docs: could not read _pwt_commands from completions/pwt.bash" >&2
+        exit 1
+    }
+
+    local skipped=""
+    {
+        front_matter "Command reference" \
+            "Every pwt command, straight from its own --help output." \
+            /docs/commands/ 2
+        echo "# Command reference"
+        echo
+        echo "Run any of these with \`--help\` in your terminal for the same text."
+        echo
+
+        local cmd out
+        for cmd in $commands; do
+            out=$(pwt_out "$cmd" --help || true)
+            case "$out" in
+                Usage:*) ;;
+                *)
+                    skipped="$skipped $cmd"
+                    continue
+                    ;;
+            esac
+            echo "## pwt $cmd"
+            echo
+            echo '```'
+            printf '%s\n' "$out"
+            echo '```'
+            echo
+        done
+    } >"$OUT_DIR/commands.md"
+
+    # Not fatal, but never silent: a command missing from the reference is
+    # a command whose --help does not answer, which is a doc bug either way
+    if [ -n "$skipped" ]; then
+        echo "gen-docs: no usage block from --help, undocumented:$skipped" >&2
+    fi
+    return 0
+}
+
+# ------------------------------------------------------------------ pages
+{
+    front_matter "Documentation" \
+        "pwt documentation: concepts, commands, navigation, Pwtfile hooks, and the agent guide." \
+        /docs/ 1
+    cat <<'EOF'
+# Documentation
+
+pwt manages Git worktrees across projects: per-worktree ports, setup
+hooks, background jobs, and navigation.
+
+```bash
+brew install jonasporto/pwt/pwt     # or: npm i -g @jonasporto/pwt
+cd ~/projects/myapp && pwt init
+```
+
+- [Concepts](concepts/) - what a worktree is here, and when pwt beats raw `git worktree`
+- [Command reference](commands/) - every command's own `--help`
+- [Navigation](navigation/) - `cd`, aliases, partial names, multi-project
+- [Pwtfile](pwtfile/) - hooks, helpers and the `PWT_*` variables
+- [For agents](agents/) - the guide `pwt skill` prints
+
+Every page here is generated from the installed binary, so it always
+matches the version you are running. Longer form writing, with
+measurements, lives on the [blog](../blog/).
+EOF
+} >"$OUT_DIR/index.md"
+
+topic_page concepts concepts.md "Concepts" \
+    "What pwt means by worktree, project and Pwtfile." /docs/concepts/ 3
+topic_page navigation navigation.md "Navigation" \
+    "Moving between worktrees and projects: cd, aliases, partial names." /docs/navigation/ 4
+topic_page pwtfile pwtfile.md "Pwtfile" \
+    "Project hooks: setup, server, custom commands, helpers and PWT_* variables." /docs/pwtfile/ 5
+commands_page
+
+{
+    front_matter "For agents" \
+        "The agent-facing CLI guide that pwt skill prints." /docs/agents/ 6
+    echo "# For agents"
+    echo
+    echo 'This is what `pwt skill` prints. Point your agent at it:'
+    echo
+    echo '```bash'
+    echo 'pwt skill              # print the guide'
+    echo 'pwt skill --install    # copy it into your agent'"'"'s skills directory'
+    echo '```'
+    echo
+    # Skip the skill's own YAML front matter: it addresses the agent
+    # runtime, not a reader, and a second --- block confuses the renderer
+    sed -e 's/[[:space:]]*$//' "$ROOT/skills/pwt-cli/SKILL.md" |
+        awk 'NR==1 && $0=="---" { in_fm=1; next } in_fm && $0=="---" { in_fm=0; next } !in_fm'
+} >"$OUT_DIR/agents.md"
+
+# ------------------------------------------------------------------ check
+if [ "$CHECK_MODE" = true ]; then
+    if diff -ru "$ROOT/site/docs" "$OUT_DIR" >/dev/null 2>&1; then
+        echo "docs up to date"
+        exit 0
+    fi
+    echo "site/docs is stale; run scripts/gen-docs and commit the result" >&2
+    diff -ru "$ROOT/site/docs" "$OUT_DIR" | head -40 >&2
+    exit 1
+fi
+
+echo "wrote $(ls "$OUT_DIR"/*.md | wc -l | tr -d ' ') pages to site/docs/"

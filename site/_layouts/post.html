@@ -17,7 +17,16 @@ layout: default
     the agent-facing guide to pwt; tell your agent the outcome you want and
     point it there, and it works out the mechanism and verifies it in a
     throwaway worktree.</p>
-    {% if page.agent_hint_extra %}{{ page.agent_hint_extra | markdownify }}{% endif %}
+    {% comment %}
+    Per-article extension. Keep it plain markdown: Liquid is not evaluated
+    in front matter, so a `{{ ... | relative_url }}` there renders literally
+    and its pipe turns the paragraph into a kramdown table. Links go through
+    agent_hint_doc instead, resolved here.
+    {% endcomment %}
+    {% if page.agent_hint_extra %}
+    <p>{{ page.agent_hint_extra | markdownify | remove: '<p>' | remove: '</p>' }}{% if page.agent_hint_doc %}
+      Reference: <a href="{{ page.agent_hint_doc | relative_url }}">{{ page.agent_hint_doc_label | default: 'documentation' }}</a>.{% endif %}</p>
+    {% endif %}
   </blockquote>
   {% endunless %}
 </article>

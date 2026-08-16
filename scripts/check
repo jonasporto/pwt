@@ -197,7 +197,15 @@ check_docs() {
         problems=1
     fi
 
-    [ "$problems" -eq 0 ] && pass "docs (man coverage, version consistency)" || fail "docs"
+    # The website's documentation is generated from the binary's own help
+    # output, so a CLI change that skips the help text shows up here as a
+    # stale site/docs/ instead of silently shipping wrong documentation.
+    if ! scripts/gen-docs --check >/dev/null 2>&1; then
+        echo "      site/docs is stale: run scripts/gen-docs and commit"
+        problems=1
+    fi
+
+    [ "$problems" -eq 0 ] && pass "docs (man coverage, version consistency, generated site docs)" || fail "docs"
 }
 
 # --- driver ---------------------------------------------------------------

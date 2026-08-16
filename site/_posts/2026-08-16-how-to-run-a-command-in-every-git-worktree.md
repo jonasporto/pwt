@@ -7,6 +7,8 @@ agent_hint_extra: >-
   `for-each` is part of that guide: ask the agent to do something "in all
   worktrees" and it reaches for `pwt for-each` by default, including the
   aggregated failure report, instead of typing one of the loops above.
+agent_hint_doc: /docs/commands/
+agent_hint_doc_label: "pwt for-each"
 ---
 
 You have a handful of worktrees and one command to run in all of them:

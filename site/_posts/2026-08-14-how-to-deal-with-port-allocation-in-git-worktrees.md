@@ -7,6 +7,8 @@ agent_hint_extra: >-
   Ports are in that guide too: an agent reads `$PWT_PORT` from the
   worktree's environment instead of picking a number at runtime, which is
   the whole fix from this post.
+agent_hint_doc: /docs/pwtfile/
+agent_hint_doc_label: "PWT_PORT and Pwtfile variables"
 ---
 
 Start a dev server in a second git worktree and one of two things happens.

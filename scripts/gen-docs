@@ -101,7 +101,36 @@ commands_page() {
 		exit 1
 	}
 
-	local skipped=""
+	# Two passes: the first collects the help text so the second can print
+	# an index before the sections. Anchors are explicit ({#create}) and
+	# short, so /docs/commands/#for-each is a stable address other pages
+	# and posts can link to. Kramdown's implicit ids would work too, but
+	# they are derived from the heading text and would silently move the
+	# moment a heading gains a word.
+	local skipped="" documented="" cmd out
+	local body_file
+	body_file=$(mktemp "${TMPDIR:-/tmp}/pwt-docs-body.XXXXXX")
+
+	for cmd in $commands; do
+		out=$(pwt_out "$cmd" --help || true)
+		case "$out" in
+		Usage:*) ;;
+		*)
+			skipped="$skipped $cmd"
+			continue
+			;;
+		esac
+		documented="$documented $cmd"
+		{
+			echo "## pwt $cmd {#$cmd}"
+			echo
+			echo '```'
+			printf '%s\n' "$out"
+			echo '```'
+			echo
+		} >>"$body_file"
+	done
+
 	{
 		front_matter "Command reference" \
 			"Every pwt command, straight from its own --help output." \
@@ -109,26 +138,19 @@ commands_page() {
 		echo "# Command reference"
 		echo
 		echo "Run any of these with \`--help\` in your terminal for the same text."
+		echo "Each command has a stable anchor, so \`/docs/commands/#create\`"
+		echo "links straight to it."
 		echo
-
-		local cmd out
-		for cmd in $commands; do
-			out=$(pwt_out "$cmd" --help || true)
-			case "$out" in
-			Usage:*) ;;
-			*)
-				skipped="$skipped $cmd"
-				continue
-				;;
-			esac
-			echo "## pwt $cmd"
-			echo
-			echo '```'
-			printf '%s\n' "$out"
-			echo '```'
-			echo
+		local first=true
+		for cmd in $documented; do
+			[ "$first" = true ] && printf '<p class="cmd-index">' && first=false
+			printf '<a href="#%s"><code>%s</code></a>\n' "$cmd" "$cmd"
 		done
+		[ "$first" = false ] && echo '</p>'
+		echo
+		cat "$body_file"
 	} >"$OUT_DIR/commands.md"
+	rm -f "$body_file"
 
 	# Not fatal, but never silent: a command missing from the reference is
 	# a command whose --help does not answer, which is a doc bug either way

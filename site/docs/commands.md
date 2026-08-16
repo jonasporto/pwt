@@ -12,8 +12,55 @@ nav_order: 2
 # Command reference
 
 Run any of these with `--help` in your terminal for the same text.
+Each command has a stable anchor, so `/docs/commands/#create`
+links straight to it.
 
-## pwt create
+<p class="cmd-index"><a href="#create"><code>create</code></a>
+<a href="#add"><code>add</code></a>
+<a href="#track"><code>track</code></a>
+<a href="#adopt"><code>adopt</code></a>
+<a href="#setup"><code>setup</code></a>
+<a href="#list"><code>list</code></a>
+<a href="#ls"><code>ls</code></a>
+<a href="#tree"><code>tree</code></a>
+<a href="#skill"><code>skill</code></a>
+<a href="#cd"><code>cd</code></a>
+<a href="#use"><code>use</code></a>
+<a href="#current"><code>current</code></a>
+<a href="#info"><code>info</code></a>
+<a href="#show"><code>show</code></a>
+<a href="#remove"><code>remove</code></a>
+<a href="#rm"><code>rm</code></a>
+<a href="#server"><code>server</code></a>
+<a href="#s"><code>s</code></a>
+<a href="#gateway"><code>gateway</code></a>
+<a href="#servers"><code>servers</code></a>
+<a href="#run"><code>run</code></a>
+<a href="#for-each"><code>for-each</code></a>
+<a href="#diff"><code>diff</code></a>
+<a href="#repair"><code>repair</code></a>
+<a href="#fix"><code>fix</code></a>
+<a href="#auto-remove"><code>auto-remove</code></a>
+<a href="#cleanup"><code>cleanup</code></a>
+<a href="#restore"><code>restore</code></a>
+<a href="#fix-port"><code>fix-port</code></a>
+<a href="#doctor"><code>doctor</code></a>
+<a href="#state"><code>state</code></a>
+<a href="#meta"><code>meta</code></a>
+<a href="#m"><code>m</code></a>
+<a href="#project"><code>project</code></a>
+<a href="#config"><code>config</code></a>
+<a href="#port"><code>port</code></a>
+<a href="#plugin"><code>plugin</code></a>
+<a href="#step"><code>step</code></a>
+<a href="#alias"><code>alias</code></a>
+<a href="#jobs"><code>jobs</code></a>
+<a href="#logs"><code>logs</code></a>
+<a href="#self"><code>self</code></a>
+<a href="#versions"><code>versions</code></a>
+</p>
+
+## pwt create {#create}
 
 ```
 Usage: pwt create|add <branch> [base] ["description"]
@@ -44,7 +91,7 @@ Examples:
   pwt create TICKET-1234 --branch team/TICKET-1234 --from origin/team/TICKET-1234
 ```
 
-## pwt add
+## pwt add {#add}
 
 ```
 Usage: pwt create|add <branch> [base] ["description"]
@@ -75,7 +122,7 @@ Examples:
   pwt create TICKET-1234 --branch team/TICKET-1234 --from origin/team/TICKET-1234
 ```
 
-## pwt track
+## pwt track {#track}
 
 ```
 Usage: pwt track <remote-branch> [--name <worktree>] [options]
@@ -98,7 +145,7 @@ Examples:
   pwt track origin/team/fix-login-flow --name login-flow
 ```
 
-## pwt adopt
+## pwt adopt {#adopt}
 
 ```
 Usage: pwt adopt [path]
@@ -115,7 +162,7 @@ This allocates/records metadata, exports PWT_* context, runs Pwtfile setup,
 runs the post-create hook, and sets the worktree as current.
 ```
 
-## pwt setup
+## pwt setup {#setup}
 
 ```
 Usage: pwt adopt [path]
@@ -132,7 +179,7 @@ This allocates/records metadata, exports PWT_* context, runs Pwtfile setup,
 runs the post-create hook, and sets the worktree as current.
 ```
 
-## pwt list
+## pwt list {#list}
 
 ```
 Usage: pwt list|ls [options]
@@ -155,7 +202,7 @@ Examples:
   pwt list --names      # Just names (for shell completion)
 ```
 
-## pwt ls
+## pwt ls {#ls}
 
 ```
 Usage: pwt list|ls [options]
@@ -178,7 +225,7 @@ Examples:
   pwt list --names      # Just names (for shell completion)
 ```
 
-## pwt tree
+## pwt tree {#tree}
 
 ```
 Usage: pwt tree [--all] [--dirty] [--ports] [--short] [--refresh]
@@ -199,7 +246,7 @@ Examples:
   pwt tree --ports      # show ports
 ```
 
-## pwt skill
+## pwt skill {#skill}
 
 ```
 Usage: pwt skill [--path] [--install [dir]]
@@ -216,7 +263,7 @@ Options:
 For humans, see 'pwt help' and 'pwt help pwtfile'.
 ```
 
-## pwt cd
+## pwt cd {#cd}
 
 ```
 Usage: pwt cd [worktree|@|-]
@@ -243,7 +290,7 @@ Search behavior:
 Tip: Run 'pwt shell-init' for real cd integration.
 ```
 
-## pwt use
+## pwt use {#use}
 
 ```
 Usage: pwt use <worktree> [options]
@@ -264,7 +311,7 @@ Examples:
   pwt use --select       # interactive picker
 ```
 
-## pwt current
+## pwt current {#current}
 
 ```
 Usage: pwt current [options]
@@ -289,7 +336,7 @@ Examples:
   pwt current --json       # full context as JSON
 ```
 
-## pwt info
+## pwt info {#info}
 
 ```
 Usage: pwt info [worktree] [--porcelain]
@@ -315,7 +362,7 @@ Examples:
   pwt info @            # info for main app
 ```
 
-## pwt show
+## pwt show {#show}
 
 ```
 Usage: pwt info [worktree] [--porcelain]
@@ -341,7 +388,7 @@ Examples:
   pwt info @            # info for main app
 ```
 
-## pwt remove
+## pwt remove {#remove}
 
 ```
 Usage: pwt remove|rm [worktree] [options]
@@ -362,7 +409,7 @@ Options:
 Safety: Dirty worktrees are backed up to ~/.pwt/trash/
 ```
 
-## pwt rm
+## pwt rm {#rm}
 
 ```
 Usage: pwt remove|rm [worktree] [options]
@@ -383,7 +430,7 @@ Options:
 Safety: Dirty worktrees are backed up to ~/.pwt/trash/
 ```
 
-## pwt server
+## pwt server {#server}
 
 ```
 Usage: pwt server|s [worktree] [--bg] [--no-input] [pwtfile-flags...]
@@ -409,7 +456,7 @@ Detection order:
 Server runs on port from worktree metadata (usually 50XX).
 ```
 
-## pwt s
+## pwt s {#s}
 
 ```
 Usage: pwt server|s [worktree] [--bg] [--no-input] [pwtfile-flags...]
@@ -435,7 +482,7 @@ Detection order:
 Server runs on port from worktree metadata (usually 50XX).
 ```
 
-## pwt gateway
+## pwt gateway {#gateway}
 
 ```
 Usage: pwt gateway <command> [args]
@@ -457,7 +504,7 @@ Commands:
   logs [-f]                 Show gateway logs
 ```
 
-## pwt servers
+## pwt servers {#servers}
 
 ```
 Usage: pwt servers [--all] [--json]
@@ -470,7 +517,7 @@ Options:
   -h, --help  Show this help
 ```
 
-## pwt run
+## pwt run {#run}
 
 ```
 Usage: pwt run [worktree] <command...>
@@ -489,7 +536,7 @@ Examples:
   pwt run ./scripts/test         # in current/main
 ```
 
-## pwt for-each
+## pwt for-each {#for-each}
 
 ```
 Usage: pwt for-each <command...>
@@ -510,7 +557,7 @@ Examples:
   pwt for-each migrate      # Runs Pwtfile migrate()
 ```
 
-## pwt diff
+## pwt diff {#diff}
 
 ```
 Usage: pwt diff <worktree1> [worktree2]
@@ -527,7 +574,7 @@ Examples:
   pwt diff TICKET-123 TICKET-456  # Compare two worktrees
 ```
 
-## pwt repair
+## pwt repair {#repair}
 
 ```
 Usage: pwt repair|fix [worktree]
@@ -546,7 +593,7 @@ Examples:
   pwt repair TICKET-123    # repair specific worktree
 ```
 
-## pwt fix
+## pwt fix {#fix}
 
 ```
 Usage: pwt repair|fix [worktree]
@@ -565,7 +612,7 @@ Examples:
   pwt repair TICKET-123    # repair specific worktree
 ```
 
-## pwt auto-remove
+## pwt auto-remove {#auto-remove}
 
 ```
 Usage: pwt auto-remove|cleanup [target] [options]
@@ -586,7 +633,7 @@ Safety:
   - Requires --execute for non-interactive use
 ```
 
-## pwt cleanup
+## pwt cleanup {#cleanup}
 
 ```
 Usage: pwt auto-remove|cleanup [target] [options]
@@ -607,7 +654,7 @@ Safety:
   - Requires --execute for non-interactive use
 ```
 
-## pwt restore
+## pwt restore {#restore}
 
 ```
 Usage: pwt [project] restore [backup] [worktree]
@@ -621,7 +668,7 @@ Backups are created automatically when removing dirty worktrees.
 Location: ~/.pwt/trash/
 ```
 
-## pwt fix-port
+## pwt fix-port {#fix-port}
 
 ```
 Usage: pwt fix-port [worktree]
@@ -640,7 +687,7 @@ Examples:
   pwt fix-port TICKET-123   # fix port for specific worktree
 ```
 
-## pwt doctor
+## pwt doctor {#doctor}
 
 ```
 Usage: pwt doctor
@@ -656,7 +703,7 @@ Checks performed:
   - Worktree integrity
 ```
 
-## pwt state
+## pwt state {#state}
 
 ```
 Usage: pwt state [--json]
@@ -674,7 +721,7 @@ $PWT_DIR (state-version, events.log, projects/, state/, jobs/)
 as described in docs/state-v2-contract.md.
 ```
 
-## pwt meta
+## pwt meta {#meta}
 
 ```
 Usage: pwt meta [command] [args]
@@ -818,7 +865,7 @@ WORKFLOW TIPS
      $ pwt select               # fzf picker shows description
 ```
 
-## pwt m
+## pwt m {#m}
 
 ```
 Usage: pwt meta [command] [args]
@@ -962,7 +1009,7 @@ WORKFLOW TIPS
      $ pwt select               # fzf picker shows description
 ```
 
-## pwt project
+## pwt project {#project}
 
 ```
 Usage: pwt project [command] [args]
@@ -985,7 +1032,7 @@ Config location: ~/.pwt/projects/<project>/config
 Hooks location: ~/.pwt/projects/<project>/hooks/
 ```
 
-## pwt config
+## pwt config {#config}
 
 ```
 Usage: pwt config [key] [value]
@@ -1012,7 +1059,7 @@ Options:
 Config location: ~/.pwt/projects/<project>/config
 ```
 
-## pwt port
+## pwt port {#port}
 
 ```
 Usage: pwt port [worktree]
@@ -1030,7 +1077,7 @@ Examples:
   pwt port TICKET-123    # port for specific worktree
 ```
 
-## pwt plugin
+## pwt plugin {#plugin}
 
 ```
 Usage: pwt plugin <action>
@@ -1070,7 +1117,7 @@ Examples:
   pwt plugin remove github
 ```
 
-## pwt step
+## pwt step {#step}
 
 ```
 Usage: pwt step <name> [args...]
@@ -1094,7 +1141,7 @@ Examples:
   pwt steps                 # list available steps
 ```
 
-## pwt alias
+## pwt alias {#alias}
 
 ```
 Usage: pwt alias [<name>|--clear]
@@ -1116,7 +1163,7 @@ Once aliased, use it anywhere:
   pwt api cd TICKET    # same as pwt my-long-project cd TICKET
 ```
 
-## pwt jobs
+## pwt jobs {#jobs}
 
 ```
 Usage: pwt jobs [subcommand]
@@ -1146,7 +1193,7 @@ Examples:
   pwt jobs stop --all          # stop all jobs
 ```
 
-## pwt logs
+## pwt logs {#logs}
 
 ```
 Usage: pwt logs [worktree] [-f]
@@ -1158,7 +1205,7 @@ are in (or the current symlink).
 For a specific job: pwt jobs logs <job-id> [-f]
 ```
 
-## pwt self
+## pwt self {#self}
 
 ```
 Usage: pwt self [use <target>]
@@ -1177,7 +1224,7 @@ After switching, regenerate the shell wrapper (it hardcodes the path):
   exec $SHELL    # or: eval "$(pwt shell-init)"
 ```
 
-## pwt versions
+## pwt versions {#versions}
 
 ```
 Usage: pwt self [use <target>]

@@ -7,7 +7,7 @@ agent_hint_extra: >-
   `for-each` is part of that guide: ask the agent to do something "in all
   worktrees" and it reaches for `pwt for-each` by default, including the
   aggregated failure report, instead of typing one of the loops above.
-agent_hint_doc: /docs/commands/
+agent_hint_doc: /docs/commands/#for-each
 agent_hint_doc_label: "pwt for-each"
 ---
 
@@ -130,5 +130,6 @@ failures, exit non-zero) shipped with tests that were first run against
 the old binary to prove they caught it.
 
 `brew install jonasporto/pwt/pwt`, and `pwt for-each` is there after a
-`pwt init`. The loop at the top of this post remains correct if you
-would rather own it yourself.
+`pwt init` ([reference]({{ '/docs/commands/#for-each' | relative_url }})).
+The loop at the top of this post remains correct if you would rather own
+it yourself.

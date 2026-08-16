@@ -3,6 +3,10 @@ title: "How to run a command in every git worktree"
 description: "Git has submodule foreach but no worktree foreach, so everyone writes the loop by hand. I tested the four versions the internet suggests: two hide failures, one aborts halfway, one breaks on a space."
 featured: true
 tags: [worktrees, cli, bash]
+agent_hint_extra: >-
+  `for-each` is part of that guide: ask the agent to do something "in all
+  worktrees" and it reaches for `pwt for-each` by default, including the
+  aggregated failure report, instead of typing one of the loops above.
 ---
 
 You have a handful of worktrees and one command to run in all of them:

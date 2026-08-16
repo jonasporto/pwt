@@ -3,6 +3,10 @@ title: "How to gitignore per worktree"
 description: "The .git/worktrees/<name>/info/exclude file every answer cites is never read by git. Here is the measurement, the method that actually works, and the two gotchas inside it."
 featured: true
 tags: [worktrees, env-config, cli]
+agent_hint_extra: >-
+  `pwtfile_git_exclude` is part of that guide: ask for "ignore this file
+  without committing anything" and the agent lands on the right layer
+  instead of the mythical per-worktree file above.
 ---
 
 You want a file ignored in one worktree only: not committed to

@@ -17,6 +17,7 @@ layout: default
     the agent-facing guide to pwt; tell your agent the outcome you want and
     point it there, and it works out the mechanism and verifies it in a
     throwaway worktree.</p>
+    {% if page.agent_hint_extra %}{{ page.agent_hint_extra | markdownify }}{% endif %}
   </blockquote>
   {% endunless %}
 </article>

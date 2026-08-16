@@ -130,6 +130,7 @@ blockquote.hint, blockquote.hint-agent {
   border-left: 4px solid var(--accent); color: var(--fg);
 }
 blockquote.hint p, blockquote.hint-agent p { margin: 0; }
+blockquote.hint-agent p + p { margin-top: 0.5rem; }
 blockquote.hint-agent::before {
   content: "FOR AGENTS"; display: block; font-size: 0.7rem; font-weight: 700;
   letter-spacing: 0.09em; color: var(--accent); margin-bottom: 0.3rem;

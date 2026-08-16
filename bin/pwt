@@ -140,6 +140,93 @@ _pwt_version_lt() {
     [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s' "$1" "$2" | sort -V | head -1)" == "$1" ]]
 }
 
+# Update notice, from the cache only (never the network).
+# Prints the notice text if a newer version is already known, nothing
+# otherwise. Split from the printing guards below so it stays testable
+# without a tty.
+# Usage: _pwt_update_notice_text
+_pwt_update_notice_text() {
+    local cache_file="$PWT_VERSION_CACHE" cached=""
+    [ -f "$cache_file" ] || return 0
+    cached=$(tail -1 "$cache_file" 2>/dev/null)
+    [ -n "$cached" ] || return 0
+    _pwt_version_lt "$PWT_VERSION" "$cached" || return 0
+    printf 'pwt %s is available (you have %s). Run: %s\n' \
+        "$cached" "$PWT_VERSION" "$(_pwt_upgrade_command)"
+}
+
+# Refresh the version cache in a detached background process, at most once
+# per TTL. Without this the cache is only ever written by `version` and
+# `doctor`, which nobody runs, so the notice below would never fire on a
+# machine that never asked for it.
+# The perl double-fork closes every inherited descriptor: a plain `&`
+# child keeps the caller's pipes open and blocks whoever captured pwt's
+# output (the same leak that once hung CI for six hours).
+_pwt_spawn_version_refresh() {
+    command -v curl >/dev/null 2>&1 || return 0
+    command -v perl >/dev/null 2>&1 || return 0
+
+    local attempt="$PWT_DIR/version-check-attempt" now last=0
+    now=$(date +%s)
+    [ -f "$attempt" ] && last=$(cat "$attempt" 2>/dev/null || echo 0)
+    case "$last" in *[!0-9]* | "") last=0 ;; esac
+    [ $((now - last)) -lt "$PWT_VERSION_CACHE_TTL" ] && return 0
+
+    mkdir -p "$PWT_DIR" 2>/dev/null || true
+    echo "$now" >"$attempt" 2>/dev/null || true
+
+    perl -e '
+        use POSIX qw(setsid);
+        my $pid = fork();
+        exit 0 if $pid;
+        setsid();
+        open(STDIN, "<", "/dev/null");
+        open(STDOUT, ">", "/dev/null");
+        open(STDERR, ">&STDOUT");
+        my $max = POSIX::sysconf(&POSIX::_SC_OPEN_MAX) || 256;
+        $max = 4096 if $max > 4096 || $max < 0;
+        for my $fd (3 .. $max) { POSIX::close($fd); }
+        exec(@ARGV) or die "exec failed: $!";
+    ' "$0" _refresh-version-cache 2>/dev/null || true
+}
+
+# Print the update notice at most once a day, to stderr, and only for a
+# human at a terminal: machine-readable output and agent runs must never
+# grow a line they did not ask for, and neither should trigger a network
+# call. Opt out entirely with PWT_NO_UPDATE_CHECK=1.
+# Reading costs one file; refreshing happens detached, never inline.
+_pwt_maybe_notify_update() {
+    [ "${PWT_NO_UPDATE_CHECK:-0}" = "1" ] && return 0
+    [ "${PWT_NO_INPUT:-false}" = true ] && return 0
+    [ "${PWT_AGENT:-0}" = "1" ] && return 0
+    [ -t 2 ] || return 0
+
+    # A missing or expired cache answers nothing today; refresh it in the
+    # background so the next command can
+    local cache_age_ok=false
+    if [ -f "$PWT_VERSION_CACHE" ]; then
+        local cached_at
+        cached_at=$(head -1 "$PWT_VERSION_CACHE" 2>/dev/null || echo 0)
+        case "$cached_at" in *[!0-9]* | "") cached_at=0 ;; esac
+        [ $(($(date +%s) - cached_at)) -lt "$PWT_VERSION_CACHE_TTL" ] && cache_age_ok=true
+    fi
+    [ "$cache_age_ok" = true ] || _pwt_spawn_version_refresh
+
+    local notice
+    notice=$(_pwt_update_notice_text)
+    [ -n "$notice" ] || return 0
+
+    local stamp="$PWT_DIR/version-notified" now last=0
+    now=$(date +%s)
+    [ -f "$stamp" ] && last=$(cat "$stamp" 2>/dev/null || echo 0)
+    case "$last" in *[!0-9]* | "") last=0 ;; esac
+    [ $((now - last)) -lt 86400 ] && return 0
+
+    mkdir -p "$PWT_DIR" 2>/dev/null || true
+    echo "$now" >"$stamp" 2>/dev/null || true
+    echo -e "${DIM}$notice${NC}" >&2
+}
+
 # Show version with update check
 _pwt_show_version() {
     echo "pwt version $PWT_VERSION"
@@ -6901,6 +6988,18 @@ cmd_doctor() {
 
     local errors=0
 
+    # pwt itself. doctor is the one command whose job is "tell me what is
+    # wrong with my setup", so it pays the network check (2s timeout) and
+    # refreshes the cache every other command reads.
+    local latest
+    latest=$(_pwt_check_update)
+    if [ -n "$latest" ] && _pwt_version_lt "$PWT_VERSION" "$latest"; then
+        echo -e "${YELLOW}⚠${NC}  pwt: $PWT_VERSION (update available: $latest)"
+        echo -e "   ${DIM}$(_pwt_upgrade_command)${NC}"
+    else
+        echo -e "${GREEN}✓${NC} pwt: $PWT_VERSION"
+    fi
+
     # Check git
     if command -v git &>/dev/null; then
         local git_version=$(git --version | cut -d' ' -f3)
@@ -8960,6 +9059,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             # Internal: output path for cd (used by shell function)
             require_project --info-only
             cmd_cd "${2:-}"
+            ;;
+        _refresh-version-cache)
+            # Internal: what the detached update check runs. No project, no
+            # output, no side effects beyond the version cache file.
+            _pwt_check_update >/dev/null 2>&1 || true
+            exit 0
             ;;
         _implicit-cd)
             shift

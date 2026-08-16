@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Update notice where you would actually see it. `pwt doctor` now reports
+  the running version and whether a newer release exists (it pays the
+  network check and refreshes the shared cache), and `pwt create` prints a
+  one-line notice on stderr when the cached version is newer. The notice
+  is rate limited to once a day, never appears under `--no-input`, for
+  agents, or when output is not a terminal, and the cache refresh happens
+  in a detached background process so no command waits on the network.
+  `PWT_NO_UPDATE_CHECK=1` disables notice and refresh entirely.
+  Previously the check existed but only ran in `pwt version`, which meant
+  a machine that never typed `pwt version` never learned about a release.
+
 ### Fixed
 - `pwt for-each` aggregates per-worktree exit codes: it now ends with
   `✗ Command failed in N of M worktrees: <names>` and a non-zero exit

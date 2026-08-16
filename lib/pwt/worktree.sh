@@ -507,6 +507,11 @@ cmd_create() {
 		cmd_editor "$worktree_name"
 	fi
 
+	# Cache-only, once a day, stderr, humans at a terminal only: creating a
+	# worktree is the moment you are most likely to act on an upgrade, and
+	# it must not pay a network round-trip to say so
+	_pwt_maybe_notify_update
+
 	return 0
 }
 

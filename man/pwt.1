@@ -467,6 +467,11 @@ This enables \fBpwt cd\fR integration for actual directory change.
 .B PWT_DEBUG
 Enable debug output when set to 1
 .TP
+.B PWT_NO_UPDATE_CHECK
+Set to 1 to disable the update notice and the background version check
+entirely. The notice is shown at most once a day, on stderr, only for an
+interactive terminal, and never under \fB--no-input\fR or for agents.
+.TP
 .B EDITOR
 Editor for \fBpwt editor\fR command
 
@@ -483,6 +488,9 @@ Custom plugins
 .TP
 .I ~/.pwt/trash/
 Backup of removed worktrees
+.TP
+.I ~/.pwt/version-check
+Cached latest released version (refreshed in the background)
 .TP
 .I Pwtfile
 Project-level command definitions

@@ -235,7 +235,11 @@ _porcelain_cache_file() {
         sleep 0.2
     done
     ! grep -q "$old_gen" "$pcache"
-    python3 -c "import json,sys; json.load(open('$pcache'))"
+    # test-minimal's container has no python3; the grep assertions above
+    # still guarantee the regen landed
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "import json,sys; json.load(open('$pcache'))"
+    fi
 }
 
 @test "quick mode serves stale cache without spawning a regen" {

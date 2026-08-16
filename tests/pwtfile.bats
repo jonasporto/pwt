@@ -1051,7 +1051,8 @@ PWTFILE
 
 @test "pwtfile_git_exclude preserves existing exclude entries" {
     mkdir -p "$TEST_REPO/.git/info"
-    echo "preexisting.txt" >"$TEST_REPO/.git/info/exclude"
+    # >| beats the CI nounset job's noclobber: newer git pre-creates this file
+    echo "preexisting.txt" >|"$TEST_REPO/.git/info/exclude"
     cat >"$TEST_REPO/Pwtfile" <<'PWTFILE'
 setup() {
     pwtfile_git_exclude "added.txt"

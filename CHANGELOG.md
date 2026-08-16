@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `pwt doctor` made a network call even when nobody was watching. The
+  version check now runs only for an interactive terminal; unattended
+  runs (CI, scripts, agents, test harnesses) read the cached value and
+  make no request. Besides the wasted round-trip, the curl child
+  inherited the caller's pipes, which is how a harness ends up waiting
+  on pwt: the full suite under the CI nounset job stopped finishing.
+
 ## [0.2.6] - 2026-08-16
 
 ### Added

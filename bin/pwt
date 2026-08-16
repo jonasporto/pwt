@@ -6989,10 +6989,19 @@ cmd_doctor() {
     local errors=0
 
     # pwt itself. doctor is the one command whose job is "tell me what is
-    # wrong with my setup", so it pays the network check (2s timeout) and
-    # refreshes the cache every other command reads.
-    local latest
-    latest=$(_pwt_check_update)
+    # wrong with my setup", so for a human at a terminal it pays the
+    # network check (2s timeout) and refreshes the cache every other
+    # command reads. Without a terminal (CI, scripts, agents, the test
+    # suite) it reads the cache only: an unattended run must not make a
+    # network call, and a curl child inheriting the caller's pipes is how
+    # a harness ends up waiting on pwt.
+    local latest=""
+    if [ -t 1 ] && [ "${PWT_NO_UPDATE_CHECK:-0}" != "1" ] &&
+        [ "${PWT_NO_INPUT:-false}" != true ] && [ "${PWT_AGENT:-0}" != "1" ]; then
+        latest=$(_pwt_check_update)
+    elif [ -f "$PWT_VERSION_CACHE" ]; then
+        latest=$(tail -1 "$PWT_VERSION_CACHE" 2>/dev/null || true)
+    fi
     if [ -n "$latest" ] && _pwt_version_lt "$PWT_VERSION" "$latest"; then
         echo -e "${YELLOW}⚠${NC}  pwt: $PWT_VERSION (update available: $latest)"
         echo -e "   ${DIM}$(_pwt_upgrade_command)${NC}"

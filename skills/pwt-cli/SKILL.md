@@ -170,7 +170,8 @@ you have already verified the shell is inside the target worktree:
 ```bash
 pwt run TICKET-123 <command>       # runs in that worktree
 pwt TICKET-123 -- <command>        # same, worktree-first form
-pwt for-each <command>             # every worktree in the project
+pwt for-each <command>             # main checkout + every worktree; exits
+                                   # non-zero listing worktrees that failed
 ```
 
 This applies to runtime probes (`ruby -v`, `node -v`), test runners, linters,

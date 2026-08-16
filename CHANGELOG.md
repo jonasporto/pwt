@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `pwt for-each` aggregates per-worktree exit codes: it now ends with
+  `✗ Command failed in N of M worktrees: <names>` and a non-zero exit
+  instead of an unconditional checkmark that hid every failure. Its help
+  also claimed the main checkout was skipped; it runs there first and
+  the help now says so.
+
 ## [0.2.5] - 2026-08-16
 
 ### Changed

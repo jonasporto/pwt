@@ -7235,7 +7235,8 @@ cmd_for_each() {
         echo ""
         echo "Notes:"
         echo "  - If command is a Pwtfile function, runs it via Pwtfile"
-        echo "  - Skips main app, only runs in worktrees"
+        echo "  - Runs in the main checkout (@) first, then in every worktree"
+        echo "  - Exits non-zero and lists the worktrees where the command failed"
         echo ""
         echo "Examples:"
         echo "  pwt for-each git status"
@@ -7290,9 +7291,17 @@ cmd_for_each() {
         fi
     }
 
+    # Per-worktree exit codes are collected, not swallowed: the whole point
+    # of a batch runner over a hand-written loop is that one failing
+    # worktree cannot hide behind a final checkmark
+    local failed="" fail_count=0
+
     # Run in main app
     echo -e "${BLUE}=== @ (main) ===${NC}"
-    _run_in_worktree "@" "$MAIN_APP" "$@"
+    if ! _run_in_worktree "@" "$MAIN_APP" "$@"; then
+        failed="${failed:+$failed }@"
+        fail_count=$((fail_count + 1))
+    fi
     echo ""
 
     # Run in worktrees
@@ -7303,11 +7312,18 @@ cmd_for_each() {
             count=$((count + 1))
 
             echo -e "${BLUE}=== $name ===${NC}"
-            _run_in_worktree "$name" "$dir" "$@"
+            if ! _run_in_worktree "$name" "$dir" "$@"; then
+                failed="${failed:+$failed }$name"
+                fail_count=$((fail_count + 1))
+            fi
             echo ""
         done
     fi
 
+    if [ -n "$failed" ]; then
+        pwt_error "✗ Command failed in $fail_count of $((count + 1)) worktrees: $failed"
+        exit $EXIT_ERROR
+    fi
     echo -e "${GREEN}✓ Ran in $((count + 1)) worktrees${NC}"
 }
 

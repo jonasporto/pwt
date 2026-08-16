@@ -181,3 +181,39 @@ teardown() {
     [[ "$output" == *"only main"* ]]
     [[ "$output" == *"1"* ]] # Only 1 (main)
 }
+
+# ============================================
+# Failure aggregation (regression: failures used to be swallowed and
+# for-each ended with a checkmark and exit 0)
+# ============================================
+
+@test "for-each reports failing worktrees and exits non-zero" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-OK HEAD >/dev/null
+    "$PWT_BIN" create WT-BAD HEAD >/dev/null
+    rm "$TEST_WORKTREES/WT-BAD/file.txt"
+
+    # Fails only where file.txt is missing
+    run "$PWT_BIN" for-each test -f file.txt
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"WT-BAD"* ]]
+    [[ "$output" == *"failed"* ]]
+    [[ "$output" != *"✓ Ran in"* ]]
+}
+
+@test "for-each exits zero and reports success when every worktree passes" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WT-ALL1 HEAD >/dev/null
+    "$PWT_BIN" create WT-ALL2 HEAD >/dev/null
+
+    run "$PWT_BIN" for-each test -f file.txt
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"✓"* ]]
+}
+
+@test "for-each help does not claim to skip the main app" {
+    run "$PWT_BIN" for-each --help
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Skips main app"* ]]
+    [[ "$output" == *"main"* ]]
+}

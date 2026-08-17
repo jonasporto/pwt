@@ -109,21 +109,39 @@ registered are skipped rather than redone.
 
 ## If you do want the hook
 
-The `WorktreeCreate` contract wants a script that creates the worktree
-and prints its path. That is two lines when something else owns the
-creation:
+The hook receives a JSON object on **stdin** (`base_path`,
+`worktree_path`, `worktree_name`) and owns the creation: exit 0 and git
+is never called, exit non-zero and the whole thing rolls back. So the
+script creates the checkout where the agent asked for it, and hands the
+rest to `adopt`:
 
 ```bash
 #!/usr/bin/env bash
-# WorktreeCreate hook: pwt creates it (branch, port, setup), we print the path
-name="${1:-agent-$(date +%s)}"
-pwt --no-input create "$name" >/dev/null
-pwt info "$name" --porcelain | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])'
+# .claude/hooks/worktree-create.sh
+input=$(cat)
+base=$(jq -r .base_path     <<<"$input")
+wt=$(jq   -r .worktree_path <<<"$input")
+
+git -C "$base" worktree add "$wt" -b "$(basename "$wt")" >&2 || exit 1
+pwt --no-input adopt "$wt" >&2 || exit 1     # port, metadata, setup()
+exit 0
 ```
 
-`--no-input` matters: it closes stdin and sets `PWT_AGENT=1`, so a setup
-hook that would have asked something fails instead of hanging a session
+```json
+{ "hooks": { "WorktreeCreate": [ { "matcher": "*", "hooks": [
+  { "type": "command", "command": ".claude/hooks/worktree-create.sh" } ] } ] } }
+```
+
+Two details that are easy to get wrong. Everything the script prints on
+stdout is parsed as structured output, so send progress to stderr.
+And `--no-input` closes stdin and sets `PWT_AGENT=1`, so a setup step
+that would have asked a question fails instead of hanging a session
 nobody is watching.
+
+Note where the worktree lives: the agent picks the path, often inside
+`.claude/worktrees/`, and `adopt` records that real path rather than
+insisting on the project's own directory. Verified: adopting a checkout
+outside `worktrees_dir` allocates the port and runs `setup()` normally.
 
 Worth being honest about the split: the hook covers the worktrees *that
 agent* creates. `adopt` covers all the others, and there are always

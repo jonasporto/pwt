@@ -28,6 +28,21 @@ image:
   <li><strong>Agent-ready</strong><span>Porcelain output, stable exit codes, and <code>pwt skill</code> for AI-driven workflows.</span></li>
 </ul>
 
+<h2>One setup, every agent</h2>
+<p>Claude Code, Codex, Cursor and the rest each create worktrees their own
+way, and each has its own answer for the setup problem: a copy file here, a
+hook there, nothing at all in most. Define it once in a Pwtfile and every
+tool lands on the same ready checkout, with its own port, its own database
+and its own generated config.</p>
+<ul class="cards">
+  <li><strong>You own the definition</strong><span>What "a ready worktree" means lives in your repository, versioned, not in four tool-specific config formats that drift apart.</span></li>
+  <li><strong>Ports across projects</strong><span>Allocation is machine-wide, so two agents in two different repositories never get handed the same port.</span></li>
+  <li><strong>One inventory</strong><span><code>pwt list</code>, <code>pwt ports</code> and <code>pwt jobs</code> show everything in flight, whoever created it.</span></li>
+  <li><strong>Nothing to intercept</strong><span>When a tool creates a worktree on its own, <code>pwt adopt</code> registers it after the fact: port, metadata and setup, no rework.</span></li>
+</ul>
+<p class="post-meta">Wiring it so an agent uses pwt by default:
+<a href="{{ '/blog/how-to-make-every-coding-agent-use-pwt/' | relative_url }}">the how-to</a>.</p>
+
 <h2>Quick start</h2>
 <div class="term">
   <div class="term-bar"><i></i><i></i><i></i></div>

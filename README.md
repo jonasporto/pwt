@@ -53,6 +53,37 @@ add` is fine — pwt earns its keep when the lifecycle around the worktree
 
 ---
 
+## One setup, every agent
+
+Claude Code, Codex, Cursor and the rest each create worktrees their own way,
+and each has its own answer for the setup problem: `.worktreeinclude` here, a
+`WorktreeCreate` hook there, nothing at all in most. Define it once in a
+Pwtfile and every tool lands on the same ready checkout, with its own port,
+its own database and its own generated config.
+
+| Without pwt | With pwt |
+|---|---|
+| Setup defined per tool, in four formats that drift | One `Pwtfile`, versioned in the repository |
+| Each tool's port logic (or none), colliding across projects | Machine-wide allocation; `pwt ports` shows who owns what |
+| No inventory of what agents created | `pwt list`, `pwt ports`, `pwt jobs`, whoever created it |
+| A tool that creates worktrees its own way is a dead end | `pwt adopt` registers it afterwards: port, metadata, setup |
+
+Three ways to make an agent use it, strongest last:
+
+```bash
+# 1. Instruct: in CLAUDE.md / AGENTS.md of the project
+#    "worktrees are created with `pwt create`, never `git worktree add`"
+
+# 2. Enforce (Claude Code): .claude/settings.json
+#    { "permissions": { "deny": ["Bash(git worktree add *)"] } }
+
+# 3. Adopt whatever arrives by any other path
+pwt adopt          # inside the worktree someone else created
+pwt adopt --all    # every unregistered worktree in the directory
+```
+
+---
+
 ## Install
 
 ### Homebrew

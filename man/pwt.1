@@ -155,8 +155,9 @@ Start development server for worktree (runs Pwtfile server command)
 .B server wait \fR[\fINAME\fR] [\fB\-\-log\-contains\fR \fISTR\fR] [\fB\-\-timeout\fR \fISECONDS\fR]
 Block until the worktree's server is ready: by default until its allocated
 port accepts TCP connections, or until \fISTR\fR appears in the server job's
-log. Exits 0 when ready, 3 when there is no port or job, 5 on timeout.
-Default timeout is 600 seconds.
+log. Exits 0 when ready, 1 when the port is held by a system daemon and so
+can never belong to this worktree, 3 when there is no port or job, 5 on
+timeout. Default timeout is 600 seconds.
 .TP
 .B jobs \fR[\fBlist\fR [\fB\-\-porcelain\fR]|\fBlogs\fR \fIID\fR|\fBwait\fR \fIID\fR|\fBstop\fR \fIID\fR|\fBclean\fR]
 Manage background jobs started with \fB\-\-bg\fR. \fBlist \-\-porcelain\fR
@@ -217,7 +218,10 @@ Get allocated port for worktree
 Machine-wide port registry: every port pwt has allocated, in every project,
 with the owning worktree, whether something is listening, and whether two
 records claim the same port. Ports are allocated machine-wide, so a new
-worktree never takes a port another project already owns.
+worktree never takes a port another project already owns. A port held by a
+system daemon rather than a dev server is reported as \fBsystem\fR, not as
+\fBlistening\fR: macOS AirPlay Receiver binds 5000 and 7000, which is where
+most frameworks start.
 .TP
 .B diff \fIWORKTREE1\fR \fIWORKTREE2\fR
 Show git diff between two worktrees

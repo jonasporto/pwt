@@ -72,6 +72,11 @@ source_pwt_function() {
             mkdir -p "$cache_root/pwt-func-cache"
             {
                 grep -E '^(RED|GREEN|YELLOW|BLUE|NC)=' "$PWT_BIN" | head -5
+                # Shared pattern constants, so an extracted function matches
+                # against the same list the real script uses (an undefined
+                # regex in [[ =~ ]] matches everything, which would make a
+                # test pass for the wrong reason)
+                grep -E '^PWT_[A-Z_]+_RE=' "$PWT_BIN"
                 sed -n "/^$func_name()/,/^}/p" "$PWT_BIN"
             } >"$snip"
         fi
@@ -81,6 +86,7 @@ source_pwt_function() {
     fi
     # Extract colors and the function definition from pwt
     eval "$(grep -E '^(RED|GREEN|YELLOW|BLUE|NC)=' "$PWT_BIN" | head -5)"
+    eval "$(grep -E '^PWT_[A-Z_]+_RE=' "$PWT_BIN")"
     eval "$(sed -n "/^$func_name()/,/^}/p" "$PWT_BIN")"
 }
 

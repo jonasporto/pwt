@@ -70,7 +70,10 @@ pwt help pwtfile          # the hook contract and PWT_* variables
 ```
 
 `pwt ports` shows every port allocated on the machine (all projects,
-conflicts flagged, `--json` available).
+conflicts flagged, `--json` available). A port whose only listener is a
+system daemon reports `system` (`"system": true`) instead of `listening`:
+macOS AirPlay Receiver holds 5000 and 7000, so never read that as "the
+dev server is already running".
 
 `pwt state --json` gives all of it in one versioned document (projects,
 worktrees with metadata, jobs) — useful when you want a single snapshot

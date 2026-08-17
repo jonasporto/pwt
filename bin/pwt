@@ -670,6 +670,50 @@ get_pids_on_port() {
     # occupancy, which still works via /dev/tcp.
 }
 
+# Processes that bind ports without being anybody's dev server. macOS AirPlay
+# Receiver (ControlCenter) takes 5000 and 7000 by default, which is exactly
+# where Flask, Rails and most "base port" conventions start, so an unfiltered
+# occupancy check reports "your server is already running" on a fresh machine.
+# Kept as regexes because two consumers need the same list: the shell checks
+# below, and the awk pass that classifies a whole lsof snapshot at once.
+PWT_SYSTEM_PROC_RE='^(ControlCenter|controlcenter|rapportd|AirPlayXPCHelper|sharingd)$'
+PWT_SYSTEM_PATH_RE='^(/System/|/usr/libexec/)'
+
+# Is <pid> a system daemon rather than a dev server?
+# Usage: port_pid_is_system <pid>
+port_pid_is_system() {
+    local pid="$1" cmd base
+    [ -n "$pid" ] || return 1
+
+    cmd=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
+    [ -n "$cmd" ] || return 1
+
+    # ps prints the full command line; the executable is its first field
+    base="${cmd%% *}"
+    [[ "$base" =~ $PWT_SYSTEM_PATH_RE ]] && return 0
+    base="${base##*/}"
+    [[ "$base" =~ $PWT_SYSTEM_PROC_RE ]] && return 0
+    return 1
+}
+
+# Is every process listening on <port> a system daemon?
+# A dev server sharing the port means the port is genuinely taken, so this
+# only says yes when nothing on it belongs to the user.
+# Usage: port_is_system <port>
+port_is_system() {
+    local port="$1" pids pid found=false
+    pids=$(get_pids_on_port "$port")
+    [ -n "$pids" ] || return 1
+
+    while IFS= read -r pid; do
+        [ -n "$pid" ] || continue
+        found=true
+        port_pid_is_system "$pid" || return 1
+    done <<<"$pids"
+
+    [ "$found" = true ]
+}
+
 # Check if a port is occupied (returns 1 if occupied, 0 if free)
 # Usage: is_port_free <port>
 # Without lsof, probes the port directly with bash's /dev/tcp - no external
@@ -3643,7 +3687,7 @@ check_server_status() {
     # If port provided, check if it's in use
     if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
         local pids=$(get_pids_on_port "$port")
-        if [ -n "$pids" ]; then
+        if [ -n "$pids" ] && ! port_is_system "$port"; then
             echo -e "${GREEN}[running]${NC} port $port"
             return
         fi
@@ -3705,7 +3749,8 @@ cmd_server_wait() {
                 echo ""
                 echo "Worktree defaults to the current one (same detection as 'pwt server')."
                 echo ""
-                echo "Exit codes: 0 ready, $EXIT_NOT_FOUND not found (worktree/port/job), $EXIT_TIMEOUT timeout"
+                echo "Exit codes: 0 ready, $EXIT_ERROR port held by a system daemon,"
+                echo "            $EXIT_NOT_FOUND not found (worktree/port/job), $EXIT_TIMEOUT timeout"
                 echo ""
                 echo "Examples:"
                 echo "  pwt server TICKET-123 --bg && pwt server wait TICKET-123 --timeout 120"
@@ -3827,6 +3872,18 @@ cmd_server_wait() {
             echo "Check 'pwt info $worktree_name' or run 'pwt fix-port $worktree_name'" >&2
             echo "For log-based readiness: pwt server wait $worktree_name --log-contains <str>" >&2
             return $EXIT_NOT_FOUND
+        fi
+        # A system daemon accepts connections forever, so the readiness
+        # probe would report ready with no server anywhere. The port can
+        # never become this worktree's, so say so now instead of waiting
+        # out the timeout.
+        if port_is_system "$port"; then
+            pwt_error "Port $port is held by a system daemon, not by your server"
+            echo "macOS AirPlay Receiver takes 5000 and 7000: turn it off in System" >&2
+            echo "Settings > General > AirDrop & Handoff, or move the port with:" >&2
+            echo "  pwt fix-port $worktree_name" >&2
+            echo "For log-based readiness: pwt server wait $worktree_name --log-contains <str>" >&2
+            return $EXIT_ERROR
         fi
     fi
 
@@ -4854,7 +4911,9 @@ cmd_info() {
     local server_status="${YELLOW}stopped${NC}"
     if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
         local pids=$(get_pids_on_port "$port")
-        if [ -n "$pids" ]; then
+        if [ -n "$pids" ] && port_is_system "$port"; then
+            server_status="${YELLOW}stopped${NC} (port $port held by a system daemon)"
+        elif [ -n "$pids" ]; then
             local first_pid=$(echo "$pids" | head -1)
             server_state="running"
             server_pid="$first_pid"

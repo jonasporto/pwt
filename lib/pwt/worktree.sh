@@ -1184,6 +1184,11 @@ cmd_remove() {
 	if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && has_lsof; then
 		local pids_on_port=$(get_pids_on_port "$port")
 		for pid in $pids_on_port; do
+			# A system daemon must never block a removal, and must never
+			# be offered up to --kill-port: macOS AirPlay Receiver holds
+			# 5000 and 7000, and kill -9 on it is not what removing a
+			# worktree meant
+			port_pid_is_system "$pid" && continue
 			local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
 			local proc_cmd=$(ps -p "$pid" -o args= 2>/dev/null || echo "unknown")
 			port_pids="${port_pids}${port_pids:+ }$pid"

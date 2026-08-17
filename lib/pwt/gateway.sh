@@ -355,7 +355,7 @@ _gateway_port_listening() {
 	local port="$1"
 	[ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] || return 1
 	if has_lsof; then
-		[ -n "$(get_pids_on_port "$port")" ]
+		[ -n "$(get_pids_on_port "$port")" ] && ! port_is_system "$port"
 		return $?
 	fi
 	(echo >"/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
@@ -491,35 +491,91 @@ _gateway_status() {
 	fi
 }
 
-# Snapshot of listening TCP ports, one per line. One lsof/ss call replaces
-# one probe per worktree (66 lsof calls cost ~10s of `pwt servers`); empty
-# output means no snapshot tool, and callers fall back to live probes.
-_ports_snapshot() {
+# Snapshot of listening TCP ports with their owning pid, "port<TAB>pid" per
+# line. One lsof/ss call replaces one probe per worktree (66 lsof calls cost
+# ~10s of `pwt servers`); empty output means no snapshot tool, and callers
+# fall back to live probes. The pid is what lets a system daemon be told
+# apart from a dev server without a second pass over the ports.
+_ports_pid_snapshot() {
 	if has_lsof; then
 		lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null |
-			awk 'NR>1 { n=split($9, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] }' | sort -u
+			awk 'NR>1 { n=split($9, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] "\t" $2 }' | sort -u
 	elif command -v ss >/dev/null 2>&1; then
-		ss -lntH 2>/dev/null |
-			awk '{ n=split($4, a, ":"); if (a[n] ~ /^[0-9]+$/) print a[n] }' | sort -u
+		# -p needs privileges for other users' sockets; an unknown owner
+		# stays blank and is treated as a real server, which is the safe
+		# direction (reporting it as listening, not as noise to ignore).
+		ss -lntpH 2>/dev/null |
+			awk '{ n = split($4, a, ":"); if (a[n] !~ /^[0-9]+$/) next
+			       pid = ""
+			       if (match($0, /pid=[0-9]+/)) pid = substr($0, RSTART + 4, RLENGTH - 4)
+			       print a[n] "\t" pid }' | sort -u
 	fi
+}
+
+# Ports only, one per line (kept for callers that do not care who owns them).
+_ports_snapshot() {
+	_ports_pid_snapshot | cut -f1 | sort -u
 }
 
 _ensure_ports_snapshot() {
 	[ -n "${_SERVERS_PORTS_SNAPSHOT_SET:-}" ] && return 0
-	_SERVERS_PORTS_SNAPSHOT=$(_ports_snapshot)
+
+	local pairs pids sys_pids
+	pairs=$(_ports_pid_snapshot)
+	_SERVERS_PORTS_SNAPSHOT=$(printf '%s\n' "$pairs" | cut -f1 | grep -E '^[0-9]+$' | sort -u)
+	_SERVERS_SYSTEM_PORTS=""
+
+	# One ps pass classifies every listener on the machine. Doing it per
+	# port would cost a fork per worktree, which is what the snapshot
+	# exists to avoid.
+	pids=$(printf '%s\n' "$pairs" | cut -f2 | grep -E '^[0-9]+$' | sort -u | tr '\n' ',')
+	if [ -n "${pids%,}" ]; then
+		sys_pids=$(ps -p "${pids%,}" -o pid=,command= 2>/dev/null |
+			awk -v proc_re="$PWT_SYSTEM_PROC_RE" -v path_re="$PWT_SYSTEM_PATH_RE" '
+				{ pid = $1; exe = $2
+				  if (exe ~ path_re) { print pid; next }
+				  n = split(exe, a, "/")
+				  if (a[n] ~ proc_re) print pid }' | tr '\n' ',')
+		# A port counts as system only when every listener on it is one:
+		# a dev server sharing it means the port is genuinely taken.
+		_SERVERS_SYSTEM_PORTS=$(printf '%s\n' "$pairs" |
+			awk -F'\t' -v sys="$sys_pids" '
+				# comma separated: awk -v rejects a literal newline
+				BEGIN { n = split(sys, s, ",")
+				        for (i = 1; i <= n; i++) if (s[i] != "") issys[s[i]] = 1 }
+				$1 ~ /^[0-9]+$/ { total[$1]++; if ($2 in issys) syscount[$1]++ }
+				END { for (p in total) if (syscount[p] == total[p]) print p }' | sort -u)
+	fi
+
 	_SERVERS_PORTS_SNAPSHOT_SET=1
 }
 
+# Is <port> held only by system daemons (macOS AirPlay on 5000/7000)?
+_port_is_system_snapshot() {
+	local port="$1"
+	[ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] || return 1
+	_ensure_ports_snapshot
+	if [ -n "$_SERVERS_PORTS_SNAPSHOT" ]; then
+		case $'\n'"${_SERVERS_SYSTEM_PORTS:-}"$'\n' in
+		*$'\n'"$port"$'\n'*) return 0 ;;
+		*) return 1 ;;
+		esac
+	fi
+	port_is_system "$port"
+}
+
 # Is <port> listening, according to the snapshot (live probe fallback)?
+# A system daemon holding the port is not a server of yours, so it answers no.
 _port_listening_snapshot() {
 	local port="$1"
 	[ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] || return 1
 	_ensure_ports_snapshot
 	if [ -n "$_SERVERS_PORTS_SNAPSHOT" ]; then
 		case $'\n'"$_SERVERS_PORTS_SNAPSHOT"$'\n' in
-		*$'\n'"$port"$'\n'*) return 0 ;;
+		*$'\n'"$port"$'\n'*) ! _port_is_system_snapshot "$port" ;;
 		*) return 1 ;;
 		esac
+		return $?
 	fi
 	_gateway_port_listening "$port"
 }

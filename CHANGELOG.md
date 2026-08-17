@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A port held by a macOS system daemon no longer reads as a running dev
+  server. AirPlay Receiver (ControlCenter) binds 5000 and 7000 by
+  default, which is where Flask, Rails and most base-port conventions
+  start, so `pwt ports` and `pwt servers` reported "listening" on a
+  machine with nothing running. The filter existed in one place only
+  (`pwt list -v`); it is now a single classifier used by every occupancy
+  check, including the gateway probe.
+- `pwt remove` refused to remove a worktree because a system daemon held
+  its port, and `--kill-port` would `kill -9` that daemon. On macOS the
+  target was ControlCenter. System processes are now skipped entirely:
+  never a blocker, never a kill target.
+- `pwt info` reported the worktree's server as running, with the system
+  daemon's pid.
+- `pwt server wait` returned "Ready" instantly when a system daemon held
+  the worktree's port, since the daemon answers the TCP probe. It now
+  exits 1 with the reason and a way out, rather than telling an agent a
+  server exists when none does.
+- `pwt list -v` checked the main checkout on a hardcoded port 5000
+  instead of the project's own `base_port`, so any project not using the
+  default was reported against somebody else's port.
+
+### Added
+- `pwt ports` reports `system` as a distinct status, with `"system"` in
+  `--json`, and explains how to free the port.
+
 ## [0.2.8] - 2026-08-17
 
 ### Added

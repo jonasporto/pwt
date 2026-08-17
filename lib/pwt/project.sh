@@ -398,8 +398,10 @@ cmd_ports() {
 			echo "  -h, --help  Show this help"
 			echo ""
 			echo "Columns: port, project, worktree, status."
-			echo "Status is 'listening' when something is bound to the port,"
-			echo "and 'conflict' when two records claim the same port."
+			echo "Status is 'listening' when a server is bound to the port,"
+			echo "'system' when a macOS daemon holds it (AirPlay Receiver"
+			echo "takes 5000 and 7000), and 'conflict' when two records"
+			echo "claim the same port."
 			return 0
 			;;
 		*)
@@ -432,23 +434,31 @@ cmd_ports() {
 	local dupes
 	dupes=$(printf '%s\n' "$records" | awk -F'\t' '{ print $1 }' | sort -n | uniq -d)
 
-	local port project worktree status listening=false conflict=false
-	local rows="" any=false
+	local port project worktree status listening=false conflict=false system=false
+	local rows="" any=false has_system=false
 	while IFS=$'\t' read -r port project worktree; do
 		[ -n "$port" ] || continue
 		any=true
 		listening=false
 		_port_listening_snapshot "$port" && listening=true
+		# Occupied, but by a daemon that is not yours: reported apart from
+		# "listening" so it never reads as "the server is already up"
+		system=false
+		if [ "$listening" != true ] && _port_is_system_snapshot "$port"; then
+			system=true
+			has_system=true
+		fi
 		conflict=false
 		case $'\n'"$dupes"$'\n' in
 		*$'\n'"$port"$'\n'*) conflict=true ;;
 		esac
 		if [ "$json" = true ]; then
-			rows="${rows:+$rows,}$(printf '{"port":%s,"project":%s,"worktree":%s,"listening":%s,"conflict":%s}' \
-				"$port" "$(json_str "$project")" "$(json_str "$worktree")" "$listening" "$conflict")"
+			rows="${rows:+$rows,}$(printf '{"port":%s,"project":%s,"worktree":%s,"listening":%s,"system":%s,"conflict":%s}' \
+				"$port" "$(json_str "$project")" "$(json_str "$worktree")" "$listening" "$system" "$conflict")"
 		else
 			status=""
 			[ "$listening" = true ] && status="listening"
+			[ "$system" = true ] && status="${YELLOW}system${NC}"
 			[ "$conflict" = true ] && status="${status:+$status, }${RED}conflict${NC}"
 			[ -n "$status" ] || status="-"
 			# %b on the status field only: it carries colour escapes,
@@ -470,6 +480,14 @@ cmd_ports() {
 	printf '%-7s %-18s %-24s %s\n' "PORT" "PROJECT" "WORKTREE" "STATUS"
 	printf '%-7s %-18s %-24s %s\n' "----" "-------" "--------" "------"
 	printf '%s' "$rows"
+
+	if [ "$has_system" = true ]; then
+		echo ""
+		echo -e "${YELLOW}system:${NC} held by a macOS daemon, not by a server of yours."
+		echo "  AirPlay Receiver takes 5000 and 7000: turn it off in System"
+		echo "  Settings > General > AirDrop & Handoff, or move the port with"
+		echo "  pwt fix-port <worktree>."
+	fi
 
 	if [ -n "$dupes" ]; then
 		echo ""

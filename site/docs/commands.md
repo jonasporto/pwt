@@ -816,8 +816,10 @@ Options:
   -h, --help  Show this help
 
 Columns: port, project, worktree, status.
-Status is 'listening' when something is bound to the port,
-and 'conflict' when two records claim the same port.
+Status is 'listening' when a server is bound to the port,
+'system' when a macOS daemon holds it (AirPlay Receiver
+takes 5000 and 7000), and 'conflict' when two records
+claim the same port.
 ```
 
 ## pwt plugin {#plugin}

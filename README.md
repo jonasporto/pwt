@@ -165,6 +165,10 @@ pwt port TICKET-123  # just the number, for scripts
 pwt fix-port <wt>    # move a worktree off a port that is taken or claimed twice
 ```
 
+A port held by a system daemon rather than a dev server shows as `system`,
+not `listening`: on macOS, AirPlay Receiver binds 5000 and 7000, which is
+where Flask, Rails and most base-port conventions start.
+
 `$PWT_PORT` carries the number into `Pwtfile` hooks, so servers and generated
 config never hard-code it.
 

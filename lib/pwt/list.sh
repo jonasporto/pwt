@@ -82,20 +82,11 @@ check_port_status() {
 	# Port is in use - get process info
 	local first_pid=$(echo "$pids" | head -1)
 	local proc=$(ps -p "$first_pid" -o comm= 2>/dev/null || echo "?")
-	local proc_path=$(ps -p "$first_pid" -o command= 2>/dev/null || echo "")
+	proc="${proc##*/}"
 
-	# Filter out known system processes (not dev servers)
-	# These commonly bind to ports but aren't related to development
+	# A system daemon on the port is not a dev server (see port_is_system)
 	local is_system_process=false
-	case "$proc" in
-	ControlCenter | controlcenter | rapportd | AirPlayXPCHelper | sharingd)
-		is_system_process=true
-		;;
-	esac
-	# Also check if it's a system path
-	if [[ "$proc_path" == /System/* ]] || [[ "$proc_path" == /usr/libexec/* ]]; then
-		is_system_process=true
-	fi
+	port_is_system "$port" && is_system_process=true
 
 	if [ "$is_system_process" = true ]; then
 		# System process on this port - treat as if port is available for dev
@@ -896,7 +887,7 @@ cmd_list_verbose() {
 	echo -n "    Server: "
 	check_server_status "$MAIN_APP"
 	echo -n "    Port:   "
-	check_port_status 5000 "$MAIN_APP"
+	check_port_status "${BASE_PORT:-5000}" "$MAIN_APP"
 	echo ""
 
 	# Worktrees

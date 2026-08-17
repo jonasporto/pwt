@@ -2243,6 +2243,45 @@ meta_ports() {
     return 0
 }
 
+# Every port this machine has handed out, across all projects.
+# Ports are a machine-wide resource: two projects that both start at 8000
+# used to be allocated the same number, because each only consulted its own
+# records and a not-yet-running server is invisible to the system check.
+# Output: one "port<TAB>project<TAB>worktree" record per line.
+meta_ports_all() {
+    local dir project f port name
+    local state_dir="${PWT_DIR:-$HOME/.pwt}/state"
+    [ -d "$state_dir" ] || return 0
+    for dir in "$state_dir"/*/; do
+        [ -d "$dir" ] || continue
+        project=$(basename "$dir")
+        for f in "$dir"*.meta; do
+            [ -f "$f" ] || continue
+            _meta_read_key_var port "$f" "port"
+            [ -n "$port" ] || continue
+            name=$(basename "$f")
+            printf '%s\t%s\t%s\n' "$port" "$project" "${name%.meta}"
+        done
+    done
+    return 0
+}
+
+# Base ports declared by every project: the main checkout of each project
+# owns its base_port, so no worktree of any project may take it.
+meta_base_ports_all() {
+    local cfg base
+    # Defaulted: this is reached from extracted-function contexts too, where
+    # only PWT_DIR is guaranteed (CLAUDE.md: every PWT_* read needs a default)
+    local projects_dir="${PWT_PROJECTS_DIR:-$PWT_DIR/projects}"
+    [ -d "$projects_dir" ] || return 0
+    for cfg in "$projects_dir"/*/config; do
+        [ -f "$cfg" ] || continue
+        base=$(state_get "$cfg" "base_port")
+        [ -n "$base" ] && printf '%s\n' "$base"
+    done
+    return 0
+}
+
 # Acquire metadata lock (for operations needing read-modify-write atomicity,
 # e.g. port allocation across concurrent creates)
 # Usage: acquire_metadata_lock
@@ -3526,12 +3565,21 @@ next_available_port() {
     # BASE_PORT is reserved for main app (worktrees use BASE_PORT+1, +2, etc.)
     allocated_ports+=("$BASE_PORT")
 
-    # Read ports from metadata for current project (primary source)
+    # Every port already handed out on this machine, in ANY project, plus
+    # every project's base port. A port is a machine-wide resource: two
+    # projects that both start at 8000 were being given the same number,
+    # and the clash only surfaced the day both servers ran at once.
+    while IFS=$'\t' read -r port _ _; do
+        if [[ "$port" =~ ^[0-9]+$ ]]; then
+            allocated_ports+=("$port")
+        fi
+    done < <(meta_ports_all)
+
     while IFS= read -r port; do
         if [[ "$port" =~ ^[0-9]+$ ]]; then
             allocated_ports+=("$port")
         fi
-    done < <(meta_ports "$project")
+    done < <(meta_base_ports_all)
 
     # Also scan directory names (fallback for legacy worktrees without metadata)
     if [ -d "$WORKTREES_DIR" ]; then
@@ -5808,7 +5856,7 @@ cmd_implicit_cd() {
         -?*) return 1 ;;
     esac
     case "$target" in
-        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
+        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | ports | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
             return 1
             ;;
     esac
@@ -7968,7 +8016,8 @@ show_help_brief() {
     echo "  steps                          List available Pwtfile steps"
     echo "  step <name> [args]             Run a single Pwtfile step"
     echo "  repair|fix [worktree]          Run repair hooks"
-    echo "  port [worktree]                Get worktree port number"
+    echo "  port [worktree]                Get worktree port number
+  ports [--json]                 Machine-wide port registry (all projects)"
     echo "  config [key] [value]           View/set project configuration"
     echo "  project [action] [args]        Manage project configs"
     echo "  plugin [action]                Manage plugins (list, install, create)"
@@ -9165,6 +9214,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         port)
             load_module project
             cmd_port "${2:-}"
+            ;;
+        ports)
+            load_module project
+            shift
+            cmd_ports "$@"
             ;;
         version)
             _pwt_show_version

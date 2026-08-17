@@ -69,6 +69,9 @@ pwt steps                 # Pwtfile steps this project defines
 pwt help pwtfile          # the hook contract and PWT_* variables
 ```
 
+`pwt ports` shows every port allocated on the machine (all projects,
+conflicts flagged, `--json` available).
+
 `pwt state --json` gives all of it in one versioned document (projects,
 worktrees with metadata, jobs) — useful when you want a single snapshot
 rather than several calls.

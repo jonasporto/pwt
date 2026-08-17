@@ -51,6 +51,7 @@ links straight to it.
 <a href="#project"><code>project</code></a>
 <a href="#config"><code>config</code></a>
 <a href="#port"><code>port</code></a>
+<a href="#ports"><code>ports</code></a>
 <a href="#plugin"><code>plugin</code></a>
 <a href="#step"><code>step</code></a>
 <a href="#alias"><code>alias</code></a>
@@ -801,6 +802,22 @@ Outputs just the port number, useful in scripts:
 Examples:
   pwt port               # port for current worktree
   pwt port TICKET-123    # port for specific worktree
+```
+
+## pwt ports {#ports}
+
+```
+Usage: pwt ports [--json]
+
+Show every port pwt has allocated, across all projects.
+
+Options:
+  --json      Machine-readable output
+  -h, --help  Show this help
+
+Columns: port, project, worktree, status.
+Status is 'listening' when something is bound to the port,
+and 'conflict' when two records claim the same port.
 ```
 
 ## pwt plugin {#plugin}

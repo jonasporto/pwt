@@ -52,6 +52,7 @@ _pwt_commands() {
         'project:Manage project configs'
         'config:Configure current project'
         'port:Get port for worktree'
+        'ports:Machine-wide port registry'
         'plugin:Manage pwt plugins'
         'setup-shell:Install shell integration'
         'shell-init:Output shell integration code'

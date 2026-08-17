@@ -378,6 +378,105 @@ cmd_project() {
 }
 # Command: port
 # Get port for a worktree
+# Command: ports
+# Machine-wide port registry: every port pwt has handed out, in every
+# project, with conflicts and live status. Ports are a machine resource,
+# so "which project owns 8001" is a question no per-project view answers.
+# Usage: pwt ports [--json]
+cmd_ports() {
+	local json=false arg
+	for arg in "$@"; do
+		case "$arg" in
+		--json) json=true ;;
+		-h | --help)
+			echo "Usage: pwt ports [--json]"
+			echo ""
+			echo "Show every port pwt has allocated, across all projects."
+			echo ""
+			echo "Options:"
+			echo "  --json      Machine-readable output"
+			echo "  -h, --help  Show this help"
+			echo ""
+			echo "Columns: port, project, worktree, status."
+			echo "Status is 'listening' when something is bound to the port,"
+			echo "and 'conflict' when two records claim the same port."
+			return 0
+			;;
+		*)
+			pwt_error "Unknown option: $arg"
+			return "$EXIT_USAGE"
+			;;
+		esac
+	done
+
+	init_metadata
+	load_module gateway # port snapshot helpers
+
+	# One record per line: port, project, worktree
+	local records
+	records=$(
+		meta_ports_all
+		local cfg base project
+		for cfg in "$PWT_PROJECTS_DIR"/*/config; do
+			[ -f "$cfg" ] || continue
+			base=$(state_get "$cfg" "base_port")
+			[ -n "$base" ] || continue
+			project=$(basename "$(dirname "$cfg")")
+			printf '%s\t%s\t%s\n' "$base" "$project" "@"
+		done
+	)
+	records=$(printf '%s\n' "$records" | grep -v '^$' | sort -n -k1,1)
+
+	# Ports claimed more than once: the thing you actually want flagged
+	local dupes
+	dupes=$(printf '%s\n' "$records" | awk -F'\t' '{ print $1 }' | sort -n | uniq -d)
+
+	local port project worktree status listening=false conflict=false
+	local rows="" any=false
+	while IFS=$'\t' read -r port project worktree; do
+		[ -n "$port" ] || continue
+		any=true
+		listening=false
+		_port_listening_snapshot "$port" && listening=true
+		conflict=false
+		case $'\n'"$dupes"$'\n' in
+		*$'\n'"$port"$'\n'*) conflict=true ;;
+		esac
+		if [ "$json" = true ]; then
+			rows="${rows:+$rows,}$(printf '{"port":%s,"project":%s,"worktree":%s,"listening":%s,"conflict":%s}' \
+				"$port" "$(json_str "$project")" "$(json_str "$worktree")" "$listening" "$conflict")"
+		else
+			status=""
+			[ "$listening" = true ] && status="listening"
+			[ "$conflict" = true ] && status="${status:+$status, }${RED}conflict${NC}"
+			[ -n "$status" ] || status="-"
+			# %b on the status field only: it carries colour escapes,
+			# while names must never be escape-interpreted
+			rows="${rows}$(printf '%-7s %-18s %-24s %b' "$port" "$project" "$worktree" "$status")"$'\n'
+		fi
+	done <<<"$records"
+
+	if [ "$json" = true ]; then
+		printf '{"ports":[%s]}\n' "$rows"
+		return 0
+	fi
+
+	if [ "$any" != true ]; then
+		echo "No ports allocated yet."
+		return 0
+	fi
+
+	printf '%-7s %-18s %-24s %s\n' "PORT" "PROJECT" "WORKTREE" "STATUS"
+	printf '%-7s %-18s %-24s %s\n' "----" "-------" "--------" "------"
+	printf '%s' "$rows"
+
+	if [ -n "$dupes" ]; then
+		echo ""
+		echo -e "${YELLOW}Two records share a port. Fix with:${NC} pwt fix-port <worktree>"
+	fi
+	return 0
+}
+
 cmd_port() {
 	local name="$1"
 

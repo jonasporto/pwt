@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwt ports`: machine-wide port registry. Lists every port pwt has
+  allocated across all projects with its owning worktree, whether
+  something is listening, and whether two records claim the same port
+  (`--json` for scripts). Answers "who owns 8001" without visiting each
+  project.
+
+### Fixed
+- Port allocation is machine-wide. It used to consult only the current
+  project's records plus the live system check, so two projects that both
+  started at 8000 were handed the same port, and the clash surfaced only
+  the day both servers ran at once (a not-yet-running server is invisible
+  to `lsof`). Allocation now also avoids every other project's
+  allocations and every project's declared base port. Existing
+  overlapping records are reported by `pwt ports` and fixed with
+  `pwt fix-port`.
+
 ## [0.2.7] - 2026-08-16
 
 ### Fixed

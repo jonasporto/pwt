@@ -4,7 +4,7 @@
 
 [![Tests](https://github.com/jonasporto/pwt/actions/workflows/test.yml/badge.svg)](https://github.com/jonasporto/pwt/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.2.3-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.7-green.svg)](CHANGELOG.md)
 
 ## Demos
 
@@ -231,6 +231,7 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | `gateway` | Stable project URL that routes to a worktree server |
 | `servers` | Show active servers, gateway target, and background jobs |
 | `logs [worktree]` | Show background job logs (`-f` to follow) |
+| `ports` | Machine-wide port registry: every allocation, every project, conflicts flagged |
 | `self` | List installed pwt versions / switch active (`self use <target>`) |
 | `remove <worktree>` | Remove worktree (`--with-branch`) |
 | `state --json` | Versioned JSON snapshot of all pwt state (projects, worktrees, jobs) |

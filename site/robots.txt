@@ -1,4 +1,8 @@
 User-agent: *
 Allow: /
 
+# Content-Signal states intent explicitly instead of leaving it inferred:
+# search indexing, use as live answer context, and model training.
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+
 Sitemap: https://jonasporto.github.io/pwt/sitemap.xml

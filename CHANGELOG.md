@@ -7,14 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-08-17
+
 ### Added
-- `pwt fix-port` also resolves *registry* conflicts, not only a busy
-  port. Two records holding the same port with nothing running used to
-  be answered with "already free, no changes needed", which is exactly
-  the state a machine accumulates: the collision is queued, not live.
-  It now reports the other claimants and reallocates (non-interactive
-  runs reallocate directly), and points at `pwt repair` when the
-  project's hooks generate files from the port.
 - `pwt fix-port` also resolves *registry* conflicts, not only a busy
   port. Two records holding the same port with nothing running used to
   be answered with "already free, no changes needed", which is exactly
@@ -37,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allocations and every project's declared base port. Existing
   overlapping records are reported by `pwt ports` and fixed with
   `pwt fix-port`.
+- The man page announced `pwt 0.1.9` since February and the README badge
+  drifted for the same reason: `scripts/release.sh` edited them but never
+  staged them. Both are updated and committed by a release now, and
+  `scripts/check` compares the man page's version alongside `bin/pwt`,
+  `package.json` and the README badge.
 
 ## [0.2.7] - 2026-08-16
 

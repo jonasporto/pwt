@@ -192,8 +192,10 @@ check_docs() {
     v_bin=$(grep -m1 'PWT_VERSION=' bin/pwt | cut -d'"' -f2)
     v_pkg=$(grep -m1 '"version"' package.json | cut -d'"' -f4)
     v_readme=$(grep -m1 -oE 'version-[0-9.]+-green' README.md | grep -oE '[0-9.]+')
-    if [ "$v_bin" != "$v_pkg" ] || [ "$v_bin" != "$v_readme" ]; then
-        echo "      version mismatch: bin=$v_bin package.json=$v_pkg README=$v_readme"
+    local v_man
+    v_man=$(grep -m1 '^\.TH PWT' man/pwt.1 | sed -E 's/.*"pwt ([0-9.]+)".*/\1/')
+    if [ "$v_bin" != "$v_pkg" ] || [ "$v_bin" != "$v_readme" ] || [ "$v_bin" != "$v_man" ]; then
+        echo "      version mismatch: bin=$v_bin package.json=$v_pkg README=$v_readme man=$v_man"
         problems=1
     fi
 

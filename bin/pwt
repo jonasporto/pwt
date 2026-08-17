@@ -2252,14 +2252,17 @@ meta_ports_all() {
     local dir project f port name
     local state_dir="${PWT_DIR:-$HOME/.pwt}/state"
     [ -d "$state_dir" ] || return 0
+    # Parameter expansion, not basename: this runs once per record and a
+    # fork per file cost ~0.8s on a machine with a hundred worktrees
     for dir in "$state_dir"/*/; do
         [ -d "$dir" ] || continue
-        project=$(basename "$dir")
+        project="${dir%/}"
+        project="${project##*/}"
         for f in "$dir"*.meta; do
             [ -f "$f" ] || continue
             _meta_read_key_var port "$f" "port"
             [ -n "$port" ] || continue
-            name=$(basename "$f")
+            name="${f##*/}"
             printf '%s\t%s\t%s\n' "$port" "$project" "${name%.meta}"
         done
     done
@@ -5001,6 +5004,45 @@ cmd_fix_port() {
 
     # Get current port from metadata, fallback to directory name
     local old_port=$(get_worktree_port "$name")
+
+    # A conflict is not only "something is listening": another record may
+    # already own this port. Nothing is running, so every liveness check
+    # says the port is free, while two worktrees are queued to collide the
+    # first time both start. Ports allocated before the machine-wide
+    # allocator (pwt 0.2.8) are full of these.
+    if [ -n "$old_port" ]; then
+        local owner_line owners=""
+        while IFS=$'\t' read -r c_port c_project c_worktree; do
+            [ "$c_port" = "$old_port" ] || continue
+            [ "$c_project" = "${CURRENT_PROJECT:-}" ] && [ "$c_worktree" = "$name" ] && continue
+            owners="${owners:+$owners, }$c_project/$c_worktree"
+        done < <(meta_ports_all)
+
+        if [ -n "$owners" ]; then
+            echo -e "${YELLOW}Port $old_port is also claimed by:${NC} $owners"
+            local new_port
+            new_port=$(next_available_port)
+            if [ "${PWT_NO_INPUT:-false}" != true ] && [ -t 0 ]; then
+                echo ""
+                read -p "Reallocate $name to port $new_port? (y/N) " -n 1 -r reply
+                echo ""
+                case "$reply" in
+                    [yY]) ;;
+                    *)
+                        echo "Cancelled. The records still overlap."
+                        return 0
+                        ;;
+                esac
+            fi
+            update_metadata "$name" "port" "$new_port"
+            clear_list_cache
+            echo -e "${GREEN}✓ $name moved from port $old_port to $new_port${NC}"
+            if has_pwtfile_command "repair"; then
+                echo -e "${DIM}Generated files may still hold the old port: pwt repair $name${NC}"
+            fi
+            return 0
+        fi
+    fi
 
     if [ -z "$old_port" ] || ! [[ "$old_port" =~ ^[0-9]+$ ]]; then
         pwt_error "Error: Could not find port for worktree: $name"

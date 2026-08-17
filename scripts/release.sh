@@ -25,13 +25,20 @@ jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json pac
 # Update README version badge (scripts/check enforces the match)
 sed -i '' "s/version-[0-9.]*-green/version-$VERSION-green/" README.md
 
+# Update the man page header, which shipped a stale version for months
+# because nothing tied it to a release (scripts/check enforces it now)
+sed -i '' "s/^\.TH PWT 1 \(\"[^\"]*\"\) \"pwt [0-9.]*\"/.TH PWT 1 \1 \"pwt $VERSION\"/" man/pwt.1
+
 # Update Formula (local copy)
 if [ -f Formula/pwt.rb ]; then
     sed -i '' "s|archive/refs/tags/v[^\"]*|archive/refs/tags/v$VERSION|" Formula/pwt.rb
 fi
 
-# Commit
-git add bin/pwt package.json Formula/pwt.rb 2>/dev/null || git add bin/pwt package.json
+# Commit. README and man carry the version too: they were edited above but
+# never staged, which is why the badge and the man header drifted for
+# months while every release looked clean.
+git add bin/pwt package.json README.md man/pwt.1
+git add Formula/pwt.rb 2>/dev/null || true
 git commit -m "chore: release v$VERSION"
 
 # Tag

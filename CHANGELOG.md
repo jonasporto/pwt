@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `pwt fix-port` also resolves *registry* conflicts, not only a busy
+  port. Two records holding the same port with nothing running used to
+  be answered with "already free, no changes needed", which is exactly
+  the state a machine accumulates: the collision is queued, not live.
+  It now reports the other claimants and reallocates (non-interactive
+  runs reallocate directly), and points at `pwt repair` when the
+  project's hooks generate files from the port.
+- `pwt fix-port` also resolves *registry* conflicts, not only a busy
+  port. Two records holding the same port with nothing running used to
+  be answered with "already free, no changes needed", which is exactly
+  the state a machine accumulates: the collision is queued, not live.
+  It now names the other claimants and reallocates (non-interactive runs
+  reallocate directly), and points at `pwt repair` when the project's
+  hooks generate files from the port.
 - `pwt ports`: machine-wide port registry. Lists every port pwt has
   allocated across all projects with its owning worktree, whether
   something is listening, and whether two records claim the same port

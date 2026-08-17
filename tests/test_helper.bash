@@ -24,6 +24,10 @@ setup_test_env() {
     export HOME="$TEST_TEMP_DIR/home"
     # Use PWT_DIR env var for sandbox testing (pwt respects this)
     export PWT_DIR="$TEST_TEMP_DIR/pwt"
+    # The update notice reads a tty to decide whether to speak, and a test
+    # harness may hand pwt one. Tests must never depend on that, and must
+    # never reach the network: disable it explicitly rather than by luck.
+    export PWT_NO_UPDATE_CHECK=1
     mkdir -p "$HOME"
     mkdir -p "$PWT_DIR/projects"
     # State contract v2: declare schema so pwt skips legacy-migration checks

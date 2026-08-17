@@ -45,6 +45,7 @@ More demos in `examples/` (tapes in `examples/tapes`, gifs in `examples/gifs`, h
 | Starting a server hangs the agent's shell | `pwt server --bg` daemonizes; `pwt jobs list --porcelain` tracks it |
 | Parsing human-formatted CLI output | `--porcelain`/`--json` everywhere + a stable exit-code contract |
 | Browser tests need one URL while the target branch changes | `pwt gateway` routes a stable URL to any worktree |
+| Several projects on one machine keep claiming the same port | Ports are allocated machine-wide; `pwt ports` shows every allocation and flags conflicts |
 
 A one-off second checkout with no server and no setup? Raw `git worktree
 add` is fine — pwt earns its keep when the lifecycle around the worktree
@@ -117,6 +118,24 @@ pwt gateway up --port 5999      # Start stable project gateway daemon
 pwt gateway use feat/user-auth  # Route gateway to a worktree server
 pwt servers                     # Show active project servers
 ```
+
+---
+
+## Ports
+
+Every worktree gets a port at creation, recorded in pwt's state. Allocation
+is machine-wide: a new worktree never takes a port another project already
+owns, whether or not that project's server happens to be running.
+
+```bash
+pwt ports            # every allocation, every project, conflicts flagged
+pwt ports --json     # same, machine-readable
+pwt port TICKET-123  # just the number, for scripts
+pwt fix-port <wt>    # move a worktree off a port that is taken or claimed twice
+```
+
+`$PWT_PORT` carries the number into `Pwtfile` hooks, so servers and generated
+config never hard-code it.
 
 ---
 

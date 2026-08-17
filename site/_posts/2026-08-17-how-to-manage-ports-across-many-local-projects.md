@@ -1,6 +1,6 @@
 ---
-title: "35 apps on one machine, and every one wants port 8000"
-description: "Vibecoded projects pile up and every framework defaults to the same port. The ask is a central registry and routing, and those are two different problems: one is bookkeeping, one is a proxy."
+title: "Using pwt ports as a central registry for every app on your machine"
+description: "Scanning finds a port that is free right now, which is why two projects end up with the same number: a sleeping app still owns one. Allocation is bookkeeping, naming is a proxy, and they are different problems."
 featured: true
 tags: [ports, cli, agents]
 agent_hint_extra: >-
@@ -11,22 +11,18 @@ agent_hint_doc: /docs/commands/#ports
 agent_hint_doc_label: "pwt ports"
 ---
 
-Joshua Schachter, [yesterday](https://x.com/joshu):
+Dozens of small projects accumulate on a laptop, generated faster than
+ever, and every framework template ships with the same default: 3000,
+8000, 8888. Nothing coordinates them, so the question "which port does
+this project use" has no answer except trying one.
 
-> there are like 35 various web applications running on my machine on
-> different ports through various vibecoding projects. we really need some
-> sort of central routing and registry for this shit. Every vibecoding
-> project wants :8888 and :8000
+The ask that follows is always some version of "a central registry and
+routing for all this". That sounds like one feature. It is two, at
+different layers, and every tool solves one and leaves the other, which
+is why nothing ever feels finished:
 
-And in the follow-up, the part that names the real difficulty:
-
-> i mean we could also just route the top level of the url path. or use a
-> cname. all of these things are at different application layers, it's
-> irritating
-
-That is the whole problem in two tweets. **"Central routing and registry"
-is not one feature, it is two**, at different layers, and every tool
-picks one and calls it solved.
+- **Allocation** decides which number a project gets. It is bookkeeping.
+- **Naming** decides what you type in the browser. It is a proxy.
 
 ## Layer 1 is bookkeeping, and scanning is not it
 
@@ -37,7 +33,7 @@ see if it is bound, take the next one if it is. `devenv`'s
 version of this, holding ports during evaluation to avoid races.
 
 Scanning has one blind spot, and it is fatal for this scenario: **a
-stopped server still owns its port.** Thirty-five vibecoded projects are
+stopped server still owns its port.** Thirty projects on a laptop are
 not running at once; most are asleep. Every scan looks at a machine where
 almost nothing is bound and concludes almost everything is free, so two
 projects get the same number and the collision is deferred to whichever
@@ -82,10 +78,50 @@ file you write to when you hand out a port, not a scan you run when you
 need one.** Anything that only scans will keep handing out duplicates to
 a machine full of sleeping apps.
 
+Repairing an old overlap has one wrinkle, and it decides whether the fix
+is free. Two patterns exist in the wild:
+
+```bash
+# Read at runtime: the port is whatever the tool says, today
+server() { exec env PORT="$PWT_PORT" mix phx.server; }
+
+# Baked at setup: the number is written into generated files
+# .env       DEFAULT_URL=localhost:5001
+#            WORKTREE_DB_SUFFIX=_wt5001
+# Procfile   rails s -p 5001
+```
+
+Moving a project of the first kind is a metadata edit and nothing else.
+Moving one of the second kind leaves generated files pointing at the old
+number until the setup hook runs again, and when a **database name** is
+derived from the port, as in that second block, reallocating quietly
+points the app at a different database. Check which kind you have before
+repairing a port that something already generated files from.
+
+Repairing an old overlap has one wrinkle worth knowing, and it decides
+whether the fix is free or not. Two patterns exist in the wild:
+
+```bash
+# Read at runtime: the port is whatever the tool says, today
+server() { exec env PORT="$PWT_PORT" mix phx.server; }
+
+# Baked at setup: the number is written into generated files
+# .env         DEFAULT_URL=localhost:5001
+#              WORKTREE_DB_SUFFIX=_wt5001
+# Procfile     rails s -p 5001
+```
+
+Moving a project of the first kind is a metadata edit and nothing else.
+Moving one of the second kind means the generated files still point at
+the old number until the setup hook runs again, and if a **database
+name** is derived from the port, as in that second block, reallocating
+quietly points the app at a different database. Check which kind you
+have before you fix a port that something already generated files from.
+
 ## Layer 2 is naming, and it cannot be solved by allocation
 
-Even with a perfect registry you still have Schachter's other complaint:
-you have to remember that the dashboard is 8003. The fixes for that live
+Even with a perfect registry you still have the other half of the
+complaint: you have to remember that the dashboard is 8003. The fixes for that live
 one layer up, and they are genuinely different tools:
 
 | Approach | Gives you | Costs |
@@ -110,8 +146,8 @@ worth typing.
 
 ## The honest scope
 
-For the machine described in that tweet, 35 unrelated projects, the
-registry half is the half that pays: you need the machine to remember
+For a laptop with dozens of unrelated projects, the registry half is the
+half that pays: you need the machine to remember
 what it handed out, and you need to see the map. That is `pwt ports`, and
 the allocation behind it, in
 [pwt](https://github.com/jonasporto/pwt).

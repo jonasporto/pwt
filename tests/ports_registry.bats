@@ -100,3 +100,29 @@ _port_of() {
     # Base ports still count as allocations; only a stateless dir is empty
     [[ "$output" == *"8000"* || "$output" == *"No ports allocated"* ]]
 }
+
+@test "fix-port reallocates when another record already owns the port" {
+    cd "$TEST_TEMP_DIR/alpha"
+    "$PWT_BIN" create WT-FIX1 main >/dev/null
+    cd "$TEST_TEMP_DIR/beta"
+    "$PWT_BIN" create WT-FIX2 main >/dev/null
+
+    # Recreate the pre-0.2.8 overlap: two records, same port, nothing running
+    local p
+    p=$(_port_of alpha WT-FIX1)
+    "$PWT_BIN" --project beta meta set WT-FIX2 port "$p" >/dev/null
+
+    cd "$TEST_TEMP_DIR/beta"
+    run "$PWT_BIN" --no-input fix-port WT-FIX2
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$p"* ]]
+
+    # The duplicate must be gone: exactly one record still holds that port.
+    # (The two projects also share base_port 8000 by design here, so the
+    # main checkouts keep their own, separate conflict.)
+    [ "$(_port_of beta WT-FIX2)" != "$p" ]
+    run "$PWT_BIN" ports --json
+    local holders
+    holders=$(printf '%s' "$output" | grep -o "\"port\":$p," | wc -l | tr -d ' ')
+    [ "$holders" -eq 1 ]
+}

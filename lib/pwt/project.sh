@@ -421,7 +421,8 @@ cmd_ports() {
 			[ -f "$cfg" ] || continue
 			base=$(state_get "$cfg" "base_port")
 			[ -n "$base" ] || continue
-			project=$(basename "$(dirname "$cfg")")
+			project="${cfg%/config}"
+			project="${project##*/}"
 			printf '%s\t%s\t%s\n' "$base" "$project" "@"
 		done
 	)

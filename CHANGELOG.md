@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-08-17
+
 ### Fixed
 - A port held by a macOS system daemon no longer reads as a running dev
   server. AirPlay Receiver (ControlCenter) binds 5000 and 7000 by

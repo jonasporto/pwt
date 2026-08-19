@@ -175,6 +175,22 @@ teardown() {
     }
 }
 
+@test "the sourced shell function navigates on bare --project" {
+    cd "$TEST_TEMP_DIR"
+    ln -sfn "$PWT_DIR" "$HOME/.pwt"
+    run bash -c "
+        export PWT_DIR='$PWT_DIR' PWT_NO_UPDATE_CHECK=1
+        eval \"\$('$PWT_BIN' shell-init)\"
+        pwt --project ports >/dev/null 2>&1
+        echo \"pwd=\$PWD\"
+    "
+    assert_success
+    [[ "$output" == *"pwd=$TEST_TEMP_DIR/ports-repo"* ]] || {
+        echo "the route the warning advertises must cd in a real shell, got: $output" >&2
+        return 1
+    }
+}
+
 @test "the sourced shell function still cds for a non-colliding project" {
     cd "$TEST_TEMP_DIR"
     run bash -c "

@@ -8749,11 +8749,12 @@ $cmd_name() {
         _is_cd=true
     elif [[ "\${2:-}" == "cd" ]]; then
         _is_cd=true
-    elif [[ -z "\${2:-}" ]] || { type _pwt_is_project >/dev/null 2>&1 && _pwt_is_project "\${1:-}" && [[ -z "\${3:-}" ]]; }; then
+    elif [[ -z "\${2:-}" ]] || [[ "\${1:-}" == "--project" && -n "\${2:-}" && -z "\${3:-}" ]] || { type _pwt_is_project >/dev/null 2>&1 && _pwt_is_project "\${1:-}" && [[ -z "\${3:-}" ]]; }; then
         # No wrapper-side project fast path: only the binary knows the
         # name-vs-command precedence, so the probe decides every cd.
         # (A project fast path here once cd'ed on a name the binary had
-        # already ruled a command.)
+        # already ruled a command.) Bare "--project X" is probed too: it
+        # is the explicit route the collision warning advertises.
         _implicit_cd_target=\$("$pwt_path" _implicit-cd "\$@" 2>/dev/null)
         if [[ \$? -eq 0 && -d "\$_implicit_cd_target" ]]; then
             _is_cd=true

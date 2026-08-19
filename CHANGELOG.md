@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (which calls the binary) passed. The wrapper no longer decides
   anything itself; the `_implicit-cd` probe is the only cd path. Reload
   the wrapper (open a new shell) to pick this up.
+- The wrapper never probed bare `pwt --project <name>`, so the explicit
+  route the collision warning advertises printed the path instead of
+  navigating, in a real shell, even after the 0.2.10 binary fix. Caught
+  only when the wrapper-level test was written; the binary-level test
+  had passed all along.
 - The wrapper helpers (`_pwt_is_project`, `_pwt_detect_project`) read
   `~/.pwt` literally, ignoring `PWT_DIR`. That is also why the test
   sandbox could never catch the bypass.

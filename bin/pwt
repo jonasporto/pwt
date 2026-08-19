@@ -77,6 +77,10 @@ PROJECT_REMOTE=""
 DEFAULT_BRANCH="" # Detected from remote (master or main)
 BASE_PORT=5000
 
+# Where user-facing messages point for docs. One place on purpose: when
+# the site moves to its own domain, this line is the whole migration.
+PWT_DOCS_URL="${PWT_DOCS_URL:-https://jonasporto.github.io/pwt}"
+
 # Version
 PWT_VERSION="0.2.9"
 PWT_VERSION_CHECK_URL="https://api.github.com/repos/jonasporto/pwt/releases/latest"
@@ -5924,13 +5928,65 @@ _implicit_cd_target_candidate() {
     return 1
 }
 
+# Is <word> a builtin command? The single source for name-vs-command
+# precedence: a project or worktree named after a command loses to the
+# command ('ports' happened for real: the project predated 0.2.8 turning
+# the word into a command). tests/implicit_cd_sync.bats keeps this list
+# in sync with the completion's command list.
+# Usage: is_builtin_command <word>
+is_builtin_command() {
+    case "${1:-}" in
+        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | ports | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# A typed word that is both a builtin command and a project resolves to
+# the command; this tells the user how to reach the project instead.
+# stderr only, so --json/--porcelain consumers stay clean.
+# Usage: warn_project_shadowed_by_command <word> <project>
+warn_project_shadowed_by_command() {
+    [ "$PWT_QUIET" = true ] && return 0
+    local word="$1" project="$2" alias_val=""
+    # || true: under pipefail a no-match grep would kill the whole run
+    alias_val=$(grep '^alias=' "$PWT_PROJECTS_DIR/$project/config" 2>/dev/null | head -1 | cut -d= -f2) || true
+    {
+        echo -e "${YELLOW}warning:${NC} '$word' is both a pwt command and one of your projects; running the command."
+        if [ -n "$alias_val" ]; then
+            echo "  The project: pwt $alias_val   (or: pwt --project $project <command>)"
+        else
+            echo "  The project: pwt --project $project <command>; give it a short name: pwt project alias $project <name>"
+        fi
+        echo "  Docs: ${PWT_DOCS_URL}/docs/commands/#${word}"
+    } >&2
+}
+
 # Resolve only the shorthand forms that should behave like "pwt cd".
 # Commands/plugins/Pwtfile functions keep precedence over same-named worktrees.
 cmd_implicit_cd() {
     local first="${1:-}"
     local resolved=""
 
-    if [ -n "$first" ]; then
+    # Bare "--project X" navigates to the project's main: it is the
+    # explicit route the collision warning advertises, so it must reach
+    # everything, including a project named after a command
+    if [ "$first" = "--project" ] && [ $# -eq 2 ]; then
+        resolved=$(resolve_project_alias "$2")
+        if [ -d "$PWT_PROJECTS_DIR/${resolved}" ]; then
+            CURRENT_PROJECT="$resolved"
+            PROJECT_EXPLICIT=true
+            load_project_config "$resolved"
+            cmd_cd "@"
+            return $?
+        fi
+        return 1
+    fi
+
+    # The typed word decides: a project (or alias) named after a builtin
+    # command loses to the command, same rule worktrees follow below
+    if [ -n "$first" ] && ! is_builtin_command "$first"; then
         resolved=$(resolve_project_alias "$first")
         if [ -d "$PWT_PROJECTS_DIR/${resolved}" ]; then
             CURRENT_PROJECT="$resolved"
@@ -5956,11 +6012,9 @@ cmd_implicit_cd() {
     case "$target" in
         -?*) return 1 ;;
     esac
-    case "$target" in
-        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | ports | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
-            return 1
-            ;;
-    esac
+    if is_builtin_command "$target"; then
+        return 1
+    fi
 
     local plugin=""
     plugin=$(_find_plugin "$target") || true
@@ -8979,9 +9033,16 @@ init_pwt
 
 # Check if first argument is a project name or alias (before command dispatch)
 # This allows: pwt myproject list (instead of pwt --project myproject list)
+# A word that is also a builtin command resolves to the command (with a
+# stderr warning naming the project's own routes) — same precedence
+# worktrees follow since 0.2.5.
 if [ -n "${1:-}" ]; then
     _resolved=$(resolve_project_alias "$1")
-    if [ -d "$PWT_PROJECTS_DIR/${_resolved}" ]; then
+    if is_builtin_command "$1" && [ -d "$PWT_PROJECTS_DIR/${_resolved}" ]; then
+        warn_project_shadowed_by_command "$1" "$_resolved"
+        _resolved=""
+    fi
+    if [ -n "$_resolved" ] && [ -d "$PWT_PROJECTS_DIR/${_resolved}" ]; then
         # Existing project
         if [ "${2:-}" = "init" ]; then
             # pwt <existing-project> init → show already configured

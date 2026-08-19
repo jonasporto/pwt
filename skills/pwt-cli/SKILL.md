@@ -78,6 +78,11 @@ resolves `TICKET-1234-fix-login`. An ambiguous fragment exits non-zero and
 prints the candidates; retry with the full name from that list (or from
 `pwt list --porcelain`) instead of guessing.
 
+A project or worktree named after a builtin command loses to the command
+(a stderr warning says so). To address such a project unambiguously, use
+`pwt --project <name> <command>`; never rely on the bare name when it
+matches a command.
+
 Everything a project-specific playbook would hard-code is discoverable this
 way, and discovery cannot go stale.
 

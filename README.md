@@ -191,6 +191,10 @@ pwt backend build
 pwt backend server
 ```
 
+A project named after a builtin command (`ports`, `jobs`, ...) resolves to
+the command, with a stderr warning. Reach the project through its alias or
+`pwt --project <name>`; set an alias with `pwt project alias <name> <short>`.
+
 ---
 
 ## Pwtfile

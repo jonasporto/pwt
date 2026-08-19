@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- A project named after a builtin command now resolves to the command,
+  with a stderr warning naming the project's own routes (its alias, or
+  `--project`). It happened for real: a project called `ports` predated
+  0.2.8 turning the word into a command, and shadowed the registry
+  entirely. Worktrees have followed this precedence since 0.2.5; projects
+  were the one class that did not. Aliases and `--project` are unchanged,
+  and non-colliding names resolve exactly as before. The command list
+  moved into one shared `is_builtin_command()` so the next check cannot
+  grow its own copy.
+
+### Fixed
+- Bare `pwt --project <name>` now navigates to the project's main
+  checkout through the shell wrapper. It used to print the path and
+  leave you where you were, which mattered once it became the explicit
+  route the collision warning advertises.
+
 ## [0.2.9] - 2026-08-17
 
 ### Fixed

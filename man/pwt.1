@@ -18,11 +18,17 @@ pwt \- Power Worktrees: Git worktree manager for multiple projects
 .SH DESCRIPTION
 .B pwt
 (Power Worktrees) is a comprehensive tool for managing Git worktrees across multiple projects. It provides isolated development environments with automatic port allocation, custom commands via Pwtfile, and seamless navigation between worktrees.
+.PP
+When the first argument is both a builtin command and a project name, the
+command wins and a warning on stderr names the project's own routes: its
+alias, or \fB\-\-project\fR \fINAME\fR. Worktrees follow the same
+precedence.
 
 .SH OPTIONS
 .TP
 .BR \-\-project " " \fINAME\fR
-Specify project explicitly (useful when running from outside a project)
+Specify project explicitly (useful when running from outside a project).
+Alone, with no command, navigates to the project's main checkout.
 .TP
 .BR \-h ", " \-\-help
 Show help message

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `pwt server` stops announcing "Starting server on port N" as fact when
+  the Pwtfile's `server()` never reads `$PWT_PORT` (comments do not
+  count). A server command may deliberately bind a fixed port (a browser
+  extension has its URL baked in); pwt only controls the allocation, so
+  it now says so: "allocated port N; this Pwtfile's server() picks its
+  own".
+
 ## [0.2.12] - 2026-08-19
 
 ### Added

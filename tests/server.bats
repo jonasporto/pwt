@@ -467,3 +467,47 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"ARGS=[]"* ]]
 }
+
+# ============================================
+# The announced port must not overclaim
+# ============================================
+# Real case: a Pwtfile whose server() deliberately binds a fixed port
+# (a browser extension has the URL baked in), while pwt announced
+# "Starting server on port 5000..." - the allocated port, stated as if
+# it were where the server will listen. pwt cannot know that; only a
+# server() that consumes $PWT_PORT makes the claim true.
+
+@test "server announces the port as fact only when the Pwtfile uses PWT_PORT" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+server() {
+    echo "SERVER_RAN on $PWT_PORT"
+}
+PWTEOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" server
+    [[ "$output" == *"Starting server on port"* ]] || {
+        echo "a PWT_PORT-honoring Pwtfile keeps the direct message: $output" >&2
+        return 1
+    }
+}
+
+@test "server does not claim a port the Pwtfile never reads" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+# extension talks to a fixed localhost URL; deliberately not $PWT_PORT
+# (this comment is the trap: the string appears, the variable is unused)
+server() {
+    echo "SERVER_RAN on fixed 8787"
+}
+PWTEOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" server
+    [[ "$output" != *"Starting server on port"* ]] || {
+        echo "pwt announced a port the server() never reads: $output" >&2
+        return 1
+    }
+    [[ "$output" == *"allocated"* ]] || {
+        echo "the allocated port should still be stated as allocation: $output" >&2
+        return 1
+    }
+    [[ "$output" == *"SERVER_RAN"* ]]
+}

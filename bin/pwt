@@ -4160,7 +4160,25 @@ cmd_server() {
     export PWT_PROJECT="$CURRENT_PROJECT"
     export MAIN_APP="$MAIN_APP"
 
-    echo -e "${BLUE}Starting server on port $port...${NC}"
+    # "on port N" is a claim about where the server will listen, and pwt
+    # only controls the allocation: server() may deliberately bind a
+    # fixed port (a browser extension with the URL baked in, e.g.). Only
+    # state the port as fact when the Pwtfile actually consumes PWT_PORT.
+    # Comments do not consume anything: a Pwtfile documenting "does NOT
+    # derive from PWT_PORT" must not read as using it
+    local _pwtfile_uses_port=false _pf
+    for _pf in "$(get_project_pwtfile)" "$PWT_DIR/Pwtfile"; do
+        [ -f "$_pf" ] || continue
+        if grep -v '^[[:space:]]*#' "$_pf" | grep -q 'PWT_PORT'; then
+            _pwtfile_uses_port=true
+            break
+        fi
+    done
+    if [ "$_pwtfile_uses_port" = true ]; then
+        echo -e "${BLUE}Starting server on port $port...${NC}"
+    else
+        echo -e "${BLUE}Starting server (allocated port $port; this Pwtfile's server() picks its own)...${NC}"
+    fi
 
     # Pre-check for duplicate background jobs (run_pwtfile uses || true which swallows errors)
     if [ "$PWT_BG" = true ]; then

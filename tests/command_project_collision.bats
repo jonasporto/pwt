@@ -146,6 +146,50 @@ teardown() {
     }
 }
 
+# The shell wrapper must not decide on its own: it grew a project
+# fast-path that cd'ed before ever consulting the binary's precedence,
+# so the binary fix changed nothing in a real terminal. Same class as
+# the port-daemon filter: a rule that lives in one code path is a
+# coincidence, and the wrapper is a second code path.
+@test "the sourced shell function runs the command instead of cd-ing" {
+    cd "$TEST_TEMP_DIR"
+    # The wrapper's project helper reads ~/.pwt, so the sandbox has to BE
+    # ~/.pwt for the fast path to fire at all (which is how this escaped
+    # the suite the first time)
+    ln -sfn "$PWT_DIR" "$HOME/.pwt"
+    run bash -c "
+        export PWT_DIR='$PWT_DIR' PWT_NO_UPDATE_CHECK=1
+        eval \"\$('$PWT_BIN' shell-init)\"
+        pwt ports >\"\$PWT_DIR/wrapper-out\" 2>/dev/null
+        echo \"pwd=\$PWD\"
+        cat \"\$PWT_DIR/wrapper-out\"
+    "
+    assert_success
+    [[ "$output" == *"pwd=$TEST_TEMP_DIR"* ]] || {
+        echo "the wrapper cd'ed away: $output" >&2
+        return 1
+    }
+    [[ "$output" == *"43911"* ]] || {
+        echo "expected the registry through the wrapper, got: $output" >&2
+        return 1
+    }
+}
+
+@test "the sourced shell function still cds for a non-colliding project" {
+    cd "$TEST_TEMP_DIR"
+    run bash -c "
+        export PWT_DIR='$PWT_DIR' PWT_NO_UPDATE_CHECK=1
+        eval \"\$('$PWT_BIN' shell-init)\"
+        pwt app >/dev/null 2>&1
+        echo \"pwd=\$PWD\"
+    "
+    assert_success
+    [[ "$output" == *"pwd=$TEST_TEMP_DIR/app-repo"* ]] || {
+        echo "expected to land in the project main, got: $output" >&2
+        return 1
+    }
+}
+
 @test "a project that collides with nothing keeps resolving as a project" {
     run "$PWT_BIN" _implicit-cd app
     assert_success

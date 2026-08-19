@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The shell wrapper bypassed the 0.2.10 name-vs-command precedence: it
+  kept a project fast path that cd'ed before ever consulting the binary,
+  so `pwt ports` still navigated in a real terminal while every test
+  (which calls the binary) passed. The wrapper no longer decides
+  anything itself; the `_implicit-cd` probe is the only cd path. Reload
+  the wrapper (open a new shell) to pick this up.
+- The wrapper helpers (`_pwt_is_project`, `_pwt_detect_project`) read
+  `~/.pwt` literally, ignoring `PWT_DIR`. That is also why the test
+  sandbox could never catch the bypass.
+- The terminal-title escape sequence leaked into captured stdout when
+  the shell function ran without a terminal (pipes, scripts, tests). It
+  is now emitted only when stdout is a tty.
+
 ## [0.2.10] - 2026-08-19
 
 ### Changed

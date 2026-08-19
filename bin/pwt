@@ -8360,8 +8360,10 @@ cmd_shell_init() {
 function _pwt_is_project
     set -l name $argv[1]
     test -z "$name"; and return 1
-    test -d ~/.pwt/projects/$name; and return 0
-    for config in ~/.pwt/projects/*/config
+    set -l pdir "$PWT_DIR"
+    test -n "$pdir"; or set pdir ~/.pwt
+    test -d $pdir/projects/$name; and return 0
+    for config in $pdir/projects/*/config
         test -f "$config"; or continue
         set -l alias_val (sed -n 's/^alias=//p' "$config" 2>/dev/null)
         if test "$alias_val" = "$name"
@@ -8378,11 +8380,13 @@ end
 # Helper: detect project name from current path
 function _pwt_detect_project
     set -l path (pwd)
+    set -l pdir "$PWT_DIR"
+    test -n "$pdir"; or set pdir ~/.pwt
 
     # Check if in a worktree directory
     if string match -q "*-worktrees/*" -- "$path"
         set -l worktrees_dir (string replace -r '-worktrees/.*' '-worktrees' -- "$path")
-        for config in ~/.pwt/projects/*/config
+        for config in $pdir/projects/*/config
             test -f "$config"; or continue
             set -l wt_dir (sed -n 's/^worktrees_dir=//p' "$config" 2>/dev/null)
             if test "$wt_dir" = "$worktrees_dir"
@@ -8396,7 +8400,7 @@ function _pwt_detect_project
     end
 
     # Check if in a project's main app directory
-    for config in ~/.pwt/projects/*/config
+    for config in $pdir/projects/*/config
         test -f "$config"; or continue
         set -l main_path (sed -n 's/^path=//p' "$config" 2>/dev/null)
         test -z "$main_path"; and set main_path (sed -n 's/^main_app=//p' "$config" 2>/dev/null)
@@ -8415,6 +8419,9 @@ function _pwt_update_title --on-variable PWD
     if test "$PWT_TITLE_ENABLED" = "0"
         return 0
     end
+    # Only a terminal can render a title: without this, the escape
+    # sequence leaks into captured stdout (pipes, scripts, tests)
+    isatty stdout; or return 0
 
     # Get format
     set -l format "$PWT_TITLE_FORMAT"
@@ -8478,16 +8485,9 @@ function __PWT_CMD__
             set is_cd 1
         else if test (count $argv) -ge 2; and test "$argv[2]" = "cd"
             set is_cd 1
-        else if functions -q _pwt_is_project; and _pwt_is_project "$argv[1]"
-            if test (count $argv) -eq 1
-                set is_cd 1
-            else if test "$argv[2]" = "-h"; or test "$argv[2]" = "--help"
-                command __PWT_CMD__ $argv
-                return $status
-            else if string match -qr "^@" -- "$argv[2]"
-                set is_cd 1
-            end
         end
+        # No wrapper-side project fast path: only the binary knows the
+        # name-vs-command precedence, so the probe below decides every cd.
     end
 
     if test $is_cd -eq 0
@@ -8609,7 +8609,7 @@ EOF
 
 # Helper: check if arg is a pwt project
 _pwt_is_project() {
-    [[ -d ~/.pwt/projects/\${1:-} ]] && return 0
+    [[ -d "\${PWT_DIR:-\$HOME/.pwt}/projects/\${1:-}" ]] && return 0
     # Check aliases
     while IFS= read -r config; do
         [ -f "\$config" ] || continue
@@ -8617,7 +8617,7 @@ _pwt_is_project() {
         [[ "\$alias_val" == "\${1:-}" ]] && return 0
         local aliases_val=\$(sed -n 's/^aliases=//p' "\$config" 2>/dev/null)
         case ",\$aliases_val," in *",\${1:-},"*) return 0 ;; esac
-    done < <(find ~/.pwt/projects -maxdepth 2 -name config 2>/dev/null)
+    done < <(find "\${PWT_DIR:-\$HOME/.pwt}/projects" -maxdepth 2 -name config 2>/dev/null)
     return 1
 }
 
@@ -8632,7 +8632,7 @@ _pwt_detect_project() {
         local parent_dir="\${worktrees_dir%/*}"
         local parent_name="\${parent_dir##*/}"
         # Try to find matching project by worktrees_dir
-        for config in ~/.pwt/projects/*/config; do
+        for config in "\${PWT_DIR:-\$HOME/.pwt}"/projects/*/config; do
             [ -f "\$config" ] || continue
             local wt_dir=\$(sed -n 's/^worktrees_dir=//p' "\$config" 2>/dev/null)
             if [[ "\$wt_dir" == "\$worktrees_dir" ]]; then
@@ -8647,7 +8647,7 @@ _pwt_detect_project() {
     fi
 
     # Check if in a project's main app directory
-    for config in ~/.pwt/projects/*/config; do
+    for config in "\${PWT_DIR:-\$HOME/.pwt}"/projects/*/config; do
         [ -f "\$config" ] || continue
         local main_path=\$(sed -n 's/^path=//p' "\$config" 2>/dev/null)
         [ -z "\$main_path" ] && main_path=\$(sed -n 's/^main_app=//p' "\$config" 2>/dev/null)
@@ -8667,6 +8667,9 @@ _pwt_update_title() {
     if [[ "\${PWT_TITLE_ENABLED:-1}" == "0" ]]; then
         return 0
     fi
+    # Only a terminal can render a title: without this, the escape
+    # sequence leaks into captured stdout (pipes, scripts, tests)
+    [[ -t 1 ]] || return 0
 
     # Get format from env var or config (default: {project}:{worktree})
     local format="\${PWT_TITLE_FORMAT:-}"
@@ -8746,14 +8749,11 @@ $cmd_name() {
         _is_cd=true
     elif [[ "\${2:-}" == "cd" ]]; then
         _is_cd=true
-    elif type _pwt_is_project >/dev/null 2>&1 && _pwt_is_project "\${1:-}" && [[ -z "\${2:-}" || "\${2:-}" == @* || "\${2:-}" == -h || "\${2:-}" == --help ]]; then
-        # pwt <project> without command OR pwt <project> @
-        if [[ "\${2:-}" == -h || "\${2:-}" == --help ]]; then
-            "$pwt_path" "\$@"
-            return \$?
-        fi
-        _is_cd=true
     elif [[ -z "\${2:-}" ]] || { type _pwt_is_project >/dev/null 2>&1 && _pwt_is_project "\${1:-}" && [[ -z "\${3:-}" ]]; }; then
+        # No wrapper-side project fast path: only the binary knows the
+        # name-vs-command precedence, so the probe decides every cd.
+        # (A project fast path here once cd'ed on a name the binary had
+        # already ruled a command.)
         _implicit_cd_target=\$("$pwt_path" _implicit-cd "\$@" 2>/dev/null)
         if [[ \$? -eq 0 && -d "\$_implicit_cd_target" ]]; then
             _is_cd=true

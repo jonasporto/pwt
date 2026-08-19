@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-08-19
+
 ### Changed
 - A project named after a builtin command now resolves to the command,
   with a stderr warning naming the project's own routes (its alias, or

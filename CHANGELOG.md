@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A stale shell wrapper no longer deadlocks the shell. The function
+  bakes the binary's path at generation time; when that install
+  disappeared (an npm or brew copy removed), every `pwt` call errored
+  AND `source ~/.zshrc` could not heal it, because the eval line calls
+  the broken function itself (functions shadow PATH binaries). The
+  wrapper now falls back to the first `pwt` on PATH when the baked path
+  is gone, so a stale function regenerates itself; with no binary
+  anywhere it exits 127 with a reinstall hint instead of a raw path
+  error. One-time recovery for already-broken shells:
+  `unfunction pwt; source ~/.zshrc`.
+
 ## [0.2.11] - 2026-08-19
 
 ### Fixed

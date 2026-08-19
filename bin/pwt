@@ -8742,6 +8742,18 @@ fi
 _pwt_update_title
 
 $cmd_name() {
+    # The binary path is baked in at generation time; if that install is
+    # gone (npm/brew copy removed, worktree deleted), fall back to PATH
+    # so a stale function can still regenerate itself via shell-init
+    # instead of deadlocking every 'source ~/.zshrc' behind itself.
+    local _pwt_bin="$pwt_path"
+    if [[ ! -x "\$_pwt_bin" ]]; then
+        _pwt_bin=\$(whence -p $cmd_name 2>/dev/null) ||
+            _pwt_bin=\$(type -P $cmd_name 2>/dev/null) || {
+            echo "pwt: no binary found ('$pwt_path' is gone and PATH has no $cmd_name); reinstall pwt" >&2
+            return 127
+        }
+    fi
     # Check if this invocation should change the shell's directory.
     local _is_cd=false
     local _implicit_cd_target=""
@@ -8755,7 +8767,7 @@ $cmd_name() {
         # (A project fast path here once cd'ed on a name the binary had
         # already ruled a command.) Bare "--project X" is probed too: it
         # is the explicit route the collision warning advertises.
-        _implicit_cd_target=\$("$pwt_path" _implicit-cd "\$@" 2>/dev/null)
+        _implicit_cd_target=\$("\$_pwt_bin" _implicit-cd "\$@" 2>/dev/null)
         if [[ \$? -eq 0 && -d "\$_implicit_cd_target" ]]; then
             _is_cd=true
         else
@@ -8793,9 +8805,9 @@ $cmd_name() {
             target="\${PWT_PREVIOUS_PATH:-}"
         else
             if [[ -n "\$project" ]]; then
-                target=\$("$pwt_path" "\$project" _cd "\$input" 2>&1)
+                target=\$("\$_pwt_bin" "\$project" _cd "\$input" 2>&1)
             else
-                target=\$("$pwt_path" _cd "\$input" 2>&1)
+                target=\$("\$_pwt_bin" _cd "\$input" 2>&1)
             fi
             if [[ \$? -ne 0 ]] || [[ ! -d "\$target" ]]; then
                 echo "\$target"
@@ -8821,12 +8833,12 @@ $cmd_name() {
         local target
         if [[ "\${1:-}" == "select" ]]; then
             shift
-            target=\$("$pwt_path" _select "\$@" 2>&1)
+            target=\$("\$_pwt_bin" _select "\$@" 2>&1)
         else
             # pwt <project> select
             local project="\${1:-}"
             shift 2
-            target=\$("$pwt_path" "\$project" _select "\$@" 2>&1)
+            target=\$("\$_pwt_bin" "\$project" _select "\$@" 2>&1)
         fi
         if [[ \$? -ne 0 ]] || [[ -z "\$target" ]]; then
             [[ -n "\$target" ]] && echo "\$target"
@@ -8852,7 +8864,7 @@ $cmd_name() {
         fi
     elif [[ "\${1:-}" == "use" ]] || [[ "\${2:-}" == "use" ]]; then
         # pwt use or pwt <project> use - run command then follow symlink if inside current
-        "$pwt_path" "\$@"
+        "\$_pwt_bin" "\$@"
         local exit_code=\$?
 
         # If we're inside a 'current' symlink, cd to follow the new target
@@ -8867,7 +8879,7 @@ $cmd_name() {
         fi
         return \$exit_code
     else
-        "$pwt_path" "\$@"
+        "\$_pwt_bin" "\$@"
     fi
 }
 EOF

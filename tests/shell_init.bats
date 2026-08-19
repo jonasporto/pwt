@@ -200,6 +200,45 @@ EOF
     [ "$?" -eq 0 ]
 }
 
+@test "a stale wrapper falls back to PATH instead of deadlocking" {
+    # The function bakes the binary path at generation. If that install
+    # disappears (npm/brew copy removed), every call errored AND
+    # 'source ~/.zshrc' could not heal it, because the eval line calls
+    # the broken function itself (functions shadow PATH in zsh/bash).
+    mkdir -p "$TEST_TEMP_DIR/oldbin"
+    ln -s "$PWT_BIN" "$TEST_TEMP_DIR/oldbin/pwt"
+
+    run bash -c "
+        export PWT_DIR='$PWT_DIR' PWT_NO_UPDATE_CHECK=1
+        eval \"\$('$TEST_TEMP_DIR/oldbin/pwt' shell-init)\"
+        rm '$TEST_TEMP_DIR/oldbin/pwt'
+        export PATH=\"$(dirname "$PWT_BIN"):\$PATH\"
+        pwt version
+    "
+    assert_success "the wrapper must resolve the binary from PATH when the baked path is gone"
+    [[ "$output" == *"pwt version"* ]] || {
+        echo "expected version output via the fallback, got: $output" >&2
+        return 1
+    }
+}
+
+@test "a stale wrapper with no binary anywhere fails with a message, not a path error" {
+    mkdir -p "$TEST_TEMP_DIR/oldbin2" "$TEST_TEMP_DIR/emptybin"
+    ln -s "$PWT_BIN" "$TEST_TEMP_DIR/oldbin2/pwt"
+
+    run -127 bash -c "
+        export PWT_DIR='$PWT_DIR' PWT_NO_UPDATE_CHECK=1
+        eval \"\$('$TEST_TEMP_DIR/oldbin2/pwt' shell-init)\"
+        rm '$TEST_TEMP_DIR/oldbin2/pwt'
+        export PATH='$TEST_TEMP_DIR/emptybin:/usr/bin:/bin'
+        pwt version
+    "
+    [[ "$output" == *"reinstall pwt"* ]] || {
+        echo "expected the guidance message, got: $output" >&2
+        return 1
+    }
+}
+
 @test "shell function passes help command correctly" {
     run bash -c "
         export PWT_DIR='$PWT_DIR'

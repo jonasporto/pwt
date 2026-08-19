@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PATH is not the binary running, a note when no pwt is on PATH at all,
   and a pointer to `pwt self`. Motivated by an hour spent debugging
   fixes that were correct all along while the terminal ran an npm
-  0.2.8 that shadowed the development symlink.
+  0.2.8 that shadowed the development symlink. When no local pwt can be
+  trusted, `npx @jonasporto/pwt@latest doctor` runs the latest published
+  doctor with no install; the stale-wrapper error and doctor both point
+  at it.
 
 ### Fixed
 - A stale shell wrapper no longer deadlocks the shell. The function

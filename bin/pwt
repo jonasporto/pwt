@@ -7236,6 +7236,7 @@ cmd_doctor() {
     else
         echo -e "${YELLOW}⚠${NC}  Installation: no pwt on PATH (running via explicit path)"
         echo -e "    ${DIM}List installations: pwt self${NC}"
+        echo -e "    ${DIM}Rescue doctor without any install: npx @jonasporto/pwt@latest doctor${NC}"
     fi
 
     # Check git
@@ -8777,6 +8778,7 @@ $cmd_name() {
         _pwt_bin=\$(whence -p $cmd_name 2>/dev/null) ||
             _pwt_bin=\$(type -P $cmd_name 2>/dev/null) || {
             echo "pwt: no binary found ('$pwt_path' is gone and PATH has no $cmd_name); reinstall pwt" >&2
+            echo "pwt: no install needed to diagnose: npx @jonasporto/pwt@latest doctor" >&2
             return 127
         }
     fi

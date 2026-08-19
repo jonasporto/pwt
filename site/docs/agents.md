@@ -275,6 +275,9 @@ fix that before editing code or tests.
 If pwt itself behaves unexpectedly, run `pwt doctor` first: it reports
 when the pwt on PATH is not the binary running (a shadowed install makes
 correct fixes look broken), and `pwt self` lists every installation.
+When the local pwt cannot be trusted at all,
+`npx @jonasporto/pwt@latest doctor` runs the latest published doctor
+without touching any local install.
 
 Before handing anyone a gateway URL, run `pwt gateway status` immediately
 beforehand and report the confirmed target. Gateway state changes during

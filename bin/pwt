@@ -82,7 +82,7 @@ BASE_PORT=5000
 PWT_DOCS_URL="${PWT_DOCS_URL:-https://jonasporto.github.io/pwt}"
 
 # Version
-PWT_VERSION="0.2.9"
+PWT_VERSION="0.2.10"
 PWT_VERSION_CHECK_URL="https://api.github.com/repos/jonasporto/pwt/releases/latest"
 PWT_VERSION_CACHE="$PWT_DIR/version-check"
 PWT_VERSION_CACHE_TTL=18000 # 5 hours

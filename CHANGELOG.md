@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-08-19
+
 ### Added
 - `pwt doctor` reports which installation actually answers when you type
   `pwt`: a warning with both paths and versions when the first pwt on

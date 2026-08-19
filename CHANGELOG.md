@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-08-19
+
 ### Fixed
 - The shell wrapper bypassed the 0.2.10 name-vs-command precedence: it
   kept a project fast path that cd'ed before ever consulting the binary,

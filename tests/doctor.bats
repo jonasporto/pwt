@@ -198,3 +198,57 @@ EOF
     # Everything after the hook must still run
     [[ "$output" == *"All checks passed"* ]] || [[ "$output" == *"issue"* ]]
 }
+
+# ============================================
+# Installations: which pwt actually answers
+# ============================================
+# Measured cost of not having this: an hour of debugging fixes that were
+# correct all along, because the terminal ran an npm-installed 0.2.8
+# while the repo binary carried them. doctor is the command whose job is
+# "tell me what is wrong with my setup", and "you are not running the
+# pwt you think" is the setup problem that hides every other one.
+
+_second_install() {
+    # A genuinely distinct install (copy, not symlink: doctor compares
+    # resolved paths, and a symlink would collapse into the original)
+    mkdir -p "$TEST_TEMP_DIR/other/bin"
+    cp "$PWT_BIN" "$TEST_TEMP_DIR/other/bin/pwt"
+    cp -R "$(dirname "$PWT_BIN")/../lib" "$TEST_TEMP_DIR/other/lib"
+}
+
+@test "doctor warns when the pwt on PATH is not the one running" {
+    _second_install
+    cd "$TEST_REPO"
+    PATH="$TEST_TEMP_DIR/other/bin:$PATH" run "$PWT_BIN" doctor
+    [[ "$output" == *"not the one running"* ]] || {
+        echo "expected the shadow warning, got: $output" >&2
+        return 1
+    }
+    [[ "$output" == *"$TEST_TEMP_DIR/other/bin/pwt"* ]] || {
+        echo "the warning must name the PATH binary, got: $output" >&2
+        return 1
+    }
+}
+
+@test "doctor lists other installations with their versions" {
+    _second_install
+    cd "$TEST_REPO"
+    PATH="$TEST_TEMP_DIR/other/bin:$PATH" run "$PWT_BIN" doctor
+    [[ "$output" == *"pwt self"* ]] || {
+        echo "expected the pointer to 'pwt self', got: $output" >&2
+        return 1
+    }
+}
+
+@test "doctor is calm when the running pwt is the one on PATH" {
+    cd "$TEST_REPO"
+    PATH="$(dirname "$PWT_BIN"):/usr/bin:/bin" run "$PWT_BIN" doctor
+    [[ "$output" != *"not the one running"* ]] || {
+        echo "no shadow exists, no warning may fire: $output" >&2
+        return 1
+    }
+    [[ "$output" == *"Installation"* ]] || {
+        echo "the section must still confirm which install answers: $output" >&2
+        return 1
+    }
+}

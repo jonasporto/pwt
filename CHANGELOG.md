@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwt doctor` reports which installation actually answers when you type
+  `pwt`: a warning with both paths and versions when the first pwt on
+  PATH is not the binary running, a note when no pwt is on PATH at all,
+  and a pointer to `pwt self`. Motivated by an hour spent debugging
+  fixes that were correct all along while the terminal ran an npm
+  0.2.8 that shadowed the development symlink.
+
 ### Fixed
 - A stale shell wrapper no longer deadlocks the shell. The function
   bakes the binary's path at generation time; when that install

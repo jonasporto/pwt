@@ -7212,6 +7212,32 @@ cmd_doctor() {
         echo -e "${GREEN}✓${NC} pwt: $PWT_VERSION"
     fi
 
+    # Which pwt actually answers when the user types 'pwt'? Fixes that
+    # are correct in one install do nothing while the shell runs another:
+    # measured cost of not checking this was an hour of debugging a
+    # terminal that ran an npm 0.2.8 while the repo binary had the fix.
+    local _running _path_first
+    _running=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "${BASH_SOURCE[0]:-$0}" 2>/dev/null)
+    [ -n "$_running" ] || _running="${BASH_SOURCE[0]:-$0}"
+    _path_first=$(type -P pwt 2>/dev/null || true)
+    if [ -n "$_path_first" ]; then
+        local _path_first_real
+        _path_first_real=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "$_path_first" 2>/dev/null || echo "$_path_first")
+        if [ "$_path_first_real" != "$_running" ]; then
+            local _path_ver
+            _path_ver=$(grep -m1 '^PWT_VERSION=' "$_path_first_real" 2>/dev/null | cut -d'"' -f2)
+            echo -e "${YELLOW}⚠${NC}  Installation: the pwt on PATH is not the one running"
+            echo -e "    running:  $_running (v$PWT_VERSION)"
+            echo -e "    on PATH:  $_path_first (v${_path_ver:-?})"
+            echo -e "    ${DIM}Your shell answers with the PATH one. List all: pwt self${NC}"
+        else
+            echo -e "${GREEN}✓${NC} Installation: $_running is the pwt on PATH"
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC}  Installation: no pwt on PATH (running via explicit path)"
+        echo -e "    ${DIM}List installations: pwt self${NC}"
+    fi
+
     # Check git
     if command -v git &>/dev/null; then
         local git_version=$(git --version | cut -d' ' -f3)

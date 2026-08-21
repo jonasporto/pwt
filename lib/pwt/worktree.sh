@@ -1151,6 +1151,48 @@ cmd_remove() {
 	export PWT_PROJECT="$CURRENT_PROJECT"
 	export MAIN_APP="$MAIN_APP"
 
+	# SAFETY: Check for uncommitted changes BEFORE any destructive step.
+	# This confirmation used to come after the --kill delegations, so an
+	# aborted remove had already killed the worktree's servers/workers.
+	local has_changes=false
+	local changes_detail=""
+
+	if [ -d "$worktree_dir" ]; then
+		# Check using BOTH methods for maximum safety
+		local porcelain_status=$(git -C "$worktree_dir" status --porcelain 2>/dev/null)
+		local untracked_count=$(git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+		local staged_count=$(git -C "$worktree_dir" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+		local modified_count=$(git -C "$worktree_dir" diff --name-only 2>/dev/null | wc -l | tr -d ' ')
+
+		if [ -n "$porcelain_status" ] || [ "$untracked_count" -gt 0 ] || [ "$staged_count" -gt 0 ] || [ "$modified_count" -gt 0 ]; then
+			has_changes=true
+			changes_detail="staged=$staged_count, modified=$modified_count, untracked=$untracked_count"
+		fi
+	fi
+
+	if [ "$has_changes" = true ]; then
+		echo -e "${RED}⚠️  WARNING: Worktree has uncommitted changes!${NC}"
+		echo -e "    ${changes_detail}"
+		echo ""
+		git -C "$worktree_dir" status --short 2>/dev/null | head -10
+		echo ""
+
+		if [ "$auto_yes" = true ]; then
+			echo -e "${YELLOW}Proceeding due to -y flag (changes will be LOST)${NC}"
+		elif [ -t 0 ]; then
+			# Interactive terminal - ask for confirmation
+			if ! confirm_action "Are you SURE you want to remove this worktree? Changes will be PERMANENTLY LOST!"; then
+				echo -e "${GREEN}Aborted. Worktree preserved.${NC}"
+				exit 1
+			fi
+		else
+			# Non-interactive - refuse to proceed
+			echo -e "${RED}⛔ SAFETY: Cannot remove dirty worktree non-interactively${NC}"
+			echo "Use 'pwt remove $name -y' to force removal"
+			exit 1
+		fi
+	fi
+
 	local kill_target
 	for kill_target in $kill_delegations; do
 		if ! [[ "$kill_target" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
@@ -1221,46 +1263,6 @@ cmd_remove() {
 	fi
 
 	echo -e "${YELLOW}Removing worktree: $name${NC}"
-
-	# SAFETY: Check for uncommitted changes before removing
-	local has_changes=false
-	local changes_detail=""
-
-	if [ -d "$worktree_dir" ]; then
-		# Check using BOTH methods for maximum safety
-		local porcelain_status=$(git -C "$worktree_dir" status --porcelain 2>/dev/null)
-		local untracked_count=$(git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
-		local staged_count=$(git -C "$worktree_dir" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
-		local modified_count=$(git -C "$worktree_dir" diff --name-only 2>/dev/null | wc -l | tr -d ' ')
-
-		if [ -n "$porcelain_status" ] || [ "$untracked_count" -gt 0 ] || [ "$staged_count" -gt 0 ] || [ "$modified_count" -gt 0 ]; then
-			has_changes=true
-			changes_detail="staged=$staged_count, modified=$modified_count, untracked=$untracked_count"
-		fi
-	fi
-
-	if [ "$has_changes" = true ]; then
-		echo -e "${RED}⚠️  WARNING: Worktree has uncommitted changes!${NC}"
-		echo -e "    ${changes_detail}"
-		echo ""
-		git -C "$worktree_dir" status --short 2>/dev/null | head -10
-		echo ""
-
-		if [ "$auto_yes" = true ]; then
-			echo -e "${YELLOW}Proceeding due to -y flag (changes will be LOST)${NC}"
-		elif [ -t 0 ]; then
-			# Interactive terminal - ask for confirmation
-			if ! confirm_action "Are you SURE you want to remove this worktree? Changes will be PERMANENTLY LOST!"; then
-				echo -e "${GREEN}Aborted. Worktree preserved.${NC}"
-				exit 1
-			fi
-		else
-			# Non-interactive - refuse to proceed
-			echo -e "${RED}⛔ SAFETY: Cannot remove dirty worktree non-interactively${NC}"
-			echo "Use 'pwt remove $name -y' to force removal"
-			exit 1
-		fi
-	fi
 
 	# Run Pwtfile teardown (if exists), then hook
 	# (Pwtfile handles project-specific cleanup like databases)

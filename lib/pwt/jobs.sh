@@ -91,7 +91,9 @@ _resolve_job_id() {
 
 	local pick="" pick_running="" pick_server=""
 	local job_file j_wt j_cmd j_id j_status
-	for job_file in $(ls -t "$PWT_JOBS_DIR"/*.job 2>/dev/null); do
+	# newest-first without word-splitting: $(ls -t) breaks on a PWT_DIR
+	# containing a space (every path splits into non-files)
+	while IFS= read -r job_file; do
 		[ -f "$job_file" ] || continue
 		j_wt=$(state_get "$job_file" "worktree")
 		[ "$j_wt" = "$target" ] || continue
@@ -105,7 +107,7 @@ _resolve_job_id() {
 				pick_server="$j_id"
 			fi
 		fi
-	done
+	done < <(ls -t "$PWT_JOBS_DIR"/*.job 2>/dev/null)
 
 	local resolved="${pick_server:-${pick_running:-$pick}}"
 	[ -n "$resolved" ] || return 1
@@ -364,7 +366,8 @@ cmd_logs() {
 	# Pick a job: running server > most recent running > most recent overall
 	local pick="" pick_running="" pick_server="" running_list=""
 	local job_file j_wt j_cmd j_id j_status
-	for job_file in $(ls -t "$PWT_JOBS_DIR"/*.job 2>/dev/null); do
+	# See the read-loop note above: ls -t via word-split loses spaced paths
+	while IFS= read -r job_file; do
 		[ -f "$job_file" ] || continue
 		j_wt=$(state_get "$job_file" "worktree")
 		[ "$j_wt" = "$target" ] || continue
@@ -379,7 +382,7 @@ cmd_logs() {
 			fi
 			running_list="${running_list:+$running_list, }$j_cmd ($j_id)"
 		fi
-	done
+	done < <(ls -t "$PWT_JOBS_DIR"/*.job 2>/dev/null)
 
 	local job="${pick_server:-${pick_running:-$pick}}"
 	if [ -z "$job" ]; then

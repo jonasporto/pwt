@@ -286,3 +286,34 @@ PWTFILE
     logs_line=$(echo "$output" | grep -n "pwt jobs logs" | head -1 | cut -d: -f1)
     [ "$wait_line" -lt "$logs_line" ]
 }
+
+# ============================================
+# --count validates its value
+# ============================================
+
+@test "an invalid --count is a usage error, not a silent 1" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+blip() { echo "ran"; }
+PWTEOF
+    cd "$TEST_REPO"
+    run -2 "$PWT_BIN" blip --bg --count abc
+    [[ "$output" == *"--count"* ]] || {
+        echo "the error must name the flag, got: $output" >&2
+        return 1
+    }
+    local n
+    n=$(ls "$PWT_DIR/jobs"/*.job 2>/dev/null | wc -l | tr -d ' ')
+    [ "$n" = "0" ] || {
+        echo "no job may launch on a rejected flag, found $n" >&2
+        return 1
+    }
+}
+
+@test "--count 0 and --count=junk are rejected too" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+blip() { echo "ran"; }
+PWTEOF
+    cd "$TEST_REPO"
+    run -2 "$PWT_BIN" blip --bg --count 0
+    run -2 "$PWT_BIN" blip --bg --count=junk
+}

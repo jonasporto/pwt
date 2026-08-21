@@ -428,3 +428,104 @@ PWTEOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"pwt version"* ]]
 }
+
+@test "workspace_link over a real directory warns instead of silently doing nothing" {
+    # ln -sfn into an existing REAL directory drops the link INSIDE it
+    # and the workspace link never works; the failure was fully silent
+    cd "$TEST_REPO"
+    "$PWT_BIN" create WS-REAL HEAD >/dev/null 2>&1
+
+    mkdir -p "$TEST_TEMP_DIR/real-dir"
+    "$PWT_BIN" config workspace_link "$TEST_TEMP_DIR/real-dir" >/dev/null
+
+    run "$PWT_BIN" use WS-REAL
+    [[ "$output" == *"workspace_link"* ]] || {
+        echo "expected a loud warning about the real directory, got: $output" >&2
+        return 1
+    }
+    # And nothing may have been created inside the user's real directory
+    [ -z "$(ls -A "$TEST_TEMP_DIR/real-dir")" ] || {
+        echo "a link was dropped inside the real dir: $(ls "$TEST_TEMP_DIR/real-dir")" >&2
+        return 1
+    }
+}
+
+# ============================================
+# Project index staleness: the two blind spots
+# ============================================
+
+@test "a config edited in the same second as the cache write is not served stale" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" version >/dev/null    # builds the index cache
+
+    # Edit the config, then force config and cache into the SAME mtime
+    # second: -nt is false on equality, so the old check served the
+    # pre-edit index forever
+    echo "alias=freshalias" >> "$PWT_DIR/projects/test-project/config"
+    touch -r "$PWT_DIR/cache/project-index" "$PWT_DIR/projects/test-project/config"
+
+    run "$PWT_BIN" _implicit-cd freshalias
+    assert_success "the fresh alias must resolve; equal mtimes are not 'cache is newer'"
+    [[ "$output" == *"$TEST_REPO"* ]]
+}
+
+@test "renaming a project directory invalidates the index" {
+    cd "$TEST_REPO"
+    "$PWT_BIN" version >/dev/null    # builds the index cache
+
+    # A rename keeps the config's old mtime: no config is newer than the
+    # cache and the count is unchanged, so nothing ever rebuilt
+    mv "$PWT_DIR/projects/test-project" "$PWT_DIR/projects/renamed-project"
+
+    run "$PWT_BIN" _implicit-cd renamed-project
+    assert_success "the renamed project must resolve without touching any config"
+    [[ "$output" == *"$TEST_REPO"* ]]
+}
+
+# ============================================
+# self use: the whole use path (only the loop had a test)
+# ============================================
+
+@test "self use with a repo-root path relinks the managed symlink" {
+    mkdir -p "$TEST_TEMP_DIR/other-install/bin"
+    cp "$PWT_BIN" "$TEST_TEMP_DIR/other-install/bin/pwt"
+
+    HOME="$TEST_TEMP_DIR/home" run "$PWT_BIN" self use "$TEST_TEMP_DIR/other-install"
+    assert_success
+    [ "$(readlink "$TEST_TEMP_DIR/home/.local/bin/pwt")" = "$TEST_TEMP_DIR/other-install/bin/pwt" ]
+}
+
+@test "self use with a direct binary path works too" {
+    mkdir -p "$TEST_TEMP_DIR/other2"
+    cp "$PWT_BIN" "$TEST_TEMP_DIR/other2/pwt"
+
+    HOME="$TEST_TEMP_DIR/home" run "$PWT_BIN" self use "$TEST_TEMP_DIR/other2/pwt"
+    assert_success
+    [ "$(readlink "$TEST_TEMP_DIR/home/.local/bin/pwt")" = "$TEST_TEMP_DIR/other2/pwt" ]
+}
+
+@test "self use with an unknown target fails with not-found, not a broken link" {
+    HOME="$TEST_TEMP_DIR/home" run -3 "$PWT_BIN" self use /nowhere/at/all
+    [ ! -e "$TEST_TEMP_DIR/home/.local/bin/pwt" ]
+}
+
+@test "self use npm resolves through npm prefix -g on npm>=9" {
+    # npm >= 9 removed 'npm bin -g'; the old fallback built a path from an
+    # error message. Stub npm the way 9+ behaves and give it a binary.
+    mkdir -p "$TEST_TEMP_DIR/stub" "$TEST_TEMP_DIR/npmglobal/bin"
+    cp "$PWT_BIN" "$TEST_TEMP_DIR/npmglobal/bin/pwt"
+    cat >"$TEST_TEMP_DIR/stub/npm" <<STUBEOF
+#!/usr/bin/env bash
+case "\$*" in
+    "prefix -g") echo "$TEST_TEMP_DIR/npmglobal" ;;
+    "bin -g") echo "npm error: bin is not an npm command" >&2; exit 1 ;;
+    *) exit 1 ;;
+esac
+STUBEOF
+    chmod +x "$TEST_TEMP_DIR/stub/npm"
+
+    HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/stub:$PATH" \
+        run "$PWT_BIN" self use npm
+    assert_success "npm>=9 must resolve via prefix -g, got: $output"
+    [ "$(readlink "$TEST_TEMP_DIR/home/.local/bin/pwt")" = "$TEST_TEMP_DIR/npmglobal/bin/pwt" ]
+}

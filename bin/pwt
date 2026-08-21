@@ -307,6 +307,16 @@ pwt_error() {
     echo -e "${RED}$*${NC}" >&2
 }
 
+# Validate a --count value: a typo silently becoming "1 instance" is
+# how someone asks for 8 workers and gets one without noticing.
+# Usage: _validate_bg_count <value>
+_validate_bg_count() {
+    if ! [[ "$1" =~ ^[1-9][0-9]*$ ]]; then
+        pwt_error "Invalid --count: '$1' (expected a positive integer)"
+        exit $EXIT_USAGE
+    fi
+}
+
 # Strip --bg and --no-input from arguments, setting globals instead
 # Uses string concatenation (not arrays) to avoid empty array issues with set -u
 # Sets PWT_BG/PWT_NO_INPUT/PWT_BG_COUNT and PWT_STRIPPED_ARGS as globals.
@@ -322,12 +332,14 @@ _strip_pwt_execution_flags() {
             --bg) PWT_BG=true ;;
             --no-input) PWT_NO_INPUT=true ;;
             --count)
-                if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
-                    PWT_BG_COUNT="$2"
-                    shift
-                fi
+                _validate_bg_count "${2:-}"
+                PWT_BG_COUNT="$2"
+                shift
                 ;;
-            --count=*) PWT_BG_COUNT="${1#--count=}" ;;
+            --count=*)
+                _validate_bg_count "${1#--count=}"
+                PWT_BG_COUNT="${1#--count=}"
+                ;;
             *)
                 PWT_ARGV+=("$1")
                 PWT_ARGC=$((PWT_ARGC + 1))
@@ -1486,12 +1498,20 @@ build_project_index() {
     [ -f "${configs[0]}" ] || return 0
 
     # Disk cache: loading it is pure bash (zero spawns), so startup stays fast.
-    # Stale when any config is newer (edits/additions) or the count changed (removals).
+    # Stale when any config is newer (edits/additions), the count changed
+    # (removals), or the projects dir itself changed (renames: a renamed
+    # dir keeps its config's old mtime, so nothing else ever notices).
+    # Freshness requires the cache to be STRICTLY newer than every config:
+    # -nt is false on equal mtimes, and with 1-second granularity an edit
+    # in the same second as the cache write used to be served stale forever.
     local cache_file="$PWT_DIR/cache/project-index"
     if [ -f "$cache_file" ]; then
         local stale=false cfg
+        if [ "$PWT_PROJECTS_DIR" -nt "$cache_file" ]; then
+            stale=true
+        fi
         for cfg in "${configs[@]}"; do
-            if [ "$cfg" -nt "$cache_file" ]; then
+            if ! [ "$cache_file" -nt "$cfg" ]; then
                 stale=true
                 break
             fi
@@ -3142,8 +3162,11 @@ _run_pwtfile_bg() {
     # --count N: spawn N instances (workers); skips the duplicate guard since
     # multiple instances are explicitly requested
     local count="${PWT_BG_COUNT:-1}"
-    if ! [[ "$count" =~ ^[0-9]+$ ]] || [ "$count" -lt 1 ]; then
-        count=1
+    # Parsers validate; this is the last line of defense for programmatic
+    # callers setting PWT_BG_COUNT directly
+    if ! [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+        pwt_error "Invalid --count: '$count' (expected a positive integer)"
+        return $EXIT_USAGE
     fi
 
     # Check for duplicate (single-instance launches only)
@@ -3167,6 +3190,14 @@ _run_pwtfile_bg() {
 
         local job_id="$base_job_id"
         [ "$count" -gt 1 ] && job_id="${base_job_id}-$_idx"
+        # The id embeds a whole-second timestamp: a fast job frees the
+        # duplicate guard, and a relaunch in the same second would
+        # overwrite the first job's record and log. Bump until free.
+        local _bump=2 _job_base="$job_id"
+        while [ -e "$PWT_JOBS_DIR/${job_id}.job" ]; do
+            job_id="${_job_base}-$_bump"
+            _bump=$((_bump + 1))
+        done
         local log_file="$PWT_JOBS_DIR/${job_id}.log"
         local pid_file="$PWT_JOBS_DIR/${job_id}.pid"
         local pwt_argv_literal
@@ -3969,14 +4000,12 @@ cmd_server() {
                 shift
                 ;;
             --count)
-                if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
-                    PWT_BG_COUNT="$2"
-                    shift 2
-                else
-                    shift
-                fi
+                _validate_bg_count "${2:-}"
+                PWT_BG_COUNT="$2"
+                shift 2
                 ;;
             --count=*)
+                _validate_bg_count "${1#--count=}"
                 PWT_BG_COUNT="${1#--count=}"
                 shift
                 ;;
@@ -4565,8 +4594,16 @@ set_current_worktree() {
     ws_link=$(get_project_config "$CURRENT_PROJECT" "workspace_link" 2>/dev/null || echo "")
     if [ -n "$ws_link" ]; then
         ws_link="${ws_link/#\~/$HOME}"
-        mkdir -p "$(dirname "$ws_link")" 2>/dev/null || true
-        ln -sfn "$target_path" "$ws_link" 2>/dev/null || true
+        # A real directory at the link path is not ours to replace, and
+        # ln -sfn would silently drop the link INSIDE it: the workspace
+        # link then never works and nothing ever says why
+        if [ -e "$ws_link" ] && [ ! -L "$ws_link" ]; then
+            echo -e "${YELLOW}⚠ workspace_link not updated:${NC} $ws_link exists and is not a symlink" >&2
+            echo "  Move it aside (or pick another path: pwt config workspace_link <path>)" >&2
+        else
+            mkdir -p "$(dirname "$ws_link")" 2>/dev/null || true
+            ln -sfn "$target_path" "$ws_link" 2>/dev/null || true
+        fi
     fi
 }
 
@@ -6866,8 +6903,15 @@ cmd_self() {
                 new_bin="$self_real"
                 ;;
             npm)
-                new_bin=$(ls "$HOME"/.nvm/versions/node/*/bin/pwt 2>/dev/null | tail -1)
-                [ -z "$new_bin" ] && new_bin=$(npm bin -g 2>/dev/null)/pwt
+                # || true: under pipefail an unmatched glob makes ls kill
+                # the whole run before the npm-prefix fallback below
+                new_bin=$(ls "$HOME"/.nvm/versions/node/*/bin/pwt 2>/dev/null | tail -1) || true
+                # npm >= 9 removed 'npm bin'; prefix -g works on 8 and 9+
+                if [ -z "$new_bin" ]; then
+                    local _npm_prefix
+                    _npm_prefix=$(npm prefix -g 2>/dev/null) || _npm_prefix=""
+                    [ -n "$_npm_prefix" ] && new_bin="$_npm_prefix/bin/pwt"
+                fi
                 ;;
             brew)
                 new_bin="/opt/homebrew/bin/pwt"

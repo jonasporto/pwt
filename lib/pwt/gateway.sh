@@ -91,6 +91,11 @@ _gateway_set_port() {
 		pwt_error "Error: gateway port must be numeric"
 		return $EXIT_USAGE
 	fi
+	# The numeric check alone let 0 and 70000 through, to fail only at bind
+	if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+		pwt_error "Error: gateway port must be in 1-65535 (got: $port)"
+		return $EXIT_USAGE
+	fi
 
 	state_set "$config_file" "gateway_port" "$port" && invalidate_project_index
 }

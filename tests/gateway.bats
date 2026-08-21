@@ -158,3 +158,39 @@ http.get({host: "127.0.0.1", port, path: "/"}, (res) => {
     local target=$(echo "$output" | jq -r '.target')
     [ "$target" = "GATEWAY-A" ]
 }
+
+# ============================================
+# Port validation (A9): shipped in August with zero tests
+# ============================================
+
+@test "gateway init without a port is a usage error" {
+    cd "$TEST_REPO"
+    run -2 "$PWT_BIN" gateway init
+    [[ "$output" == *"--port"* ]]
+}
+
+@test "gateway init rejects a non-numeric port" {
+    cd "$TEST_REPO"
+    run -2 "$PWT_BIN" gateway init --port abc
+    [[ "$output" == *"port"* ]]
+    # And nothing may have been persisted
+    run grep -c "gateway_port" "$PWT_DIR/projects/test-project/config"
+    [[ "$output" == "0" ]] || [ "$status" -ne 0 ]
+}
+
+@test "gateway init rejects a port outside 1-65535" {
+    cd "$TEST_REPO"
+    run -2 "$PWT_BIN" gateway init --port 0
+    run -2 "$PWT_BIN" gateway init --port 70000
+    [[ "$output" == *"1-65535"* ]] || {
+        echo "expected the valid range in the message, got: $output" >&2
+        return 1
+    }
+}
+
+@test "gateway init persists a valid port" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" gateway init --port 45123
+    assert_success
+    grep -q "gateway_port=45123" "$PWT_DIR/projects/test-project/config"
+}

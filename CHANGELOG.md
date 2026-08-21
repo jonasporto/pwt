@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Two background launches of the same fast command in the same second no
+  longer overwrite each other's job record: the id (which embeds a
+  whole-second timestamp) is bumped until free.
+- `pwt jobs`/`pwt logs` survive a `PWT_DIR` containing a space: two
+  newest-first scans word-split `$(ls -t)` and lost every path.
+- An invalid `--count` is a usage error instead of silently launching 1
+  instance (`--count abc`, `--count 0`, `--count=junk` all rejected).
+- The project index notices a config edited in the same second as the
+  cache write (freshness now requires the cache to be strictly newer)
+  and notices a renamed project directory (the projects dir mtime joins
+  the staleness check). Both used to serve stale entries forever.
+- `workspace_link` pointing at a real directory is reported loudly; it
+  used to silently drop the symlink INSIDE the directory.
+- `pwt remove` asks its uncommitted-changes confirmation BEFORE running
+  `--kill-*` delegations: an aborted remove had already killed the
+  worktree's servers and workers.
+- `pwt self use npm` works again: an unmatched nvm glob killed the run
+  under pipefail before any fallback, and the fallback itself used
+  `npm bin -g`, removed in npm 9 (now `npm prefix -g`).
+- `pwt gateway init` rejects ports outside 1-65535; the numeric check
+  alone let 0 and 70000 through to fail only at bind.
+
+### Added
+- Test coverage the August review flagged as missing: gateway port
+  validation, the whole `pwt self use` path, and every fix above landed
+  red-first.
+
 ### Changed
 - `pwt server` stops announcing "Starting server on port N" as fact when
   the Pwtfile's `server()` never reads `$PWT_PORT` (comments do not

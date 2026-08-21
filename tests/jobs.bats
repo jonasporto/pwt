@@ -272,3 +272,52 @@ JOB
     [[ "$output" == *'"pid":null'* ]]
     [[ "$output" != *'"pid":abc'* ]]
 }
+
+# ============================================
+# Job ids must be unique, even in the same second
+# ============================================
+
+@test "two fast launches in the same second keep two job records" {
+    # The id is worktree-cmd-epoch; a job that exits instantly frees the
+    # duplicate guard, and a relaunch within the same second used to
+    # overwrite the first job's record and log
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+blip() { echo "ran"; }
+PWTEOF
+    cd "$TEST_REPO"
+    "$PWT_BIN" blip --bg >/dev/null 2>&1
+    "$PWT_BIN" blip --bg >/dev/null 2>&1
+
+    local n
+    n=$(ls "$PWT_DIR/jobs"/*.job 2>/dev/null | wc -l | tr -d ' ')
+    [ "$n" -ge 2 ] || {
+        echo "expected 2 job records, found $n (second launch overwrote the first)" >&2
+        ls "$PWT_DIR/jobs" >&2 || true
+        return 1
+    }
+}
+
+@test "jobs and logs survive a PWT_DIR containing a space" {
+    # jobs.sh iterated $(ls -t ...) unquoted in two places; word splitting
+    # broke every path under a directory with a space
+    local spaced="$TEST_TEMP_DIR/pwt dir"
+    mkdir -p "$spaced"
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+blip() { echo "spaced ran"; }
+PWTEOF
+    cd "$TEST_REPO"
+    PWT_DIR="$spaced" "$PWT_BIN" blip --bg >/dev/null 2>&1
+    sleep 1
+
+    PWT_DIR="$spaced" run "$PWT_BIN" jobs list
+    [[ "$output" == *"blip"* ]] || {
+        echo "jobs list lost the job under a spaced dir: $output" >&2
+        return 1
+    }
+
+    PWT_DIR="$spaced" run "$PWT_BIN" logs @
+    [[ "$output" == *"spaced ran"* ]] || {
+        echo "logs could not find the job log: $output" >&2
+        return 1
+    }
+}

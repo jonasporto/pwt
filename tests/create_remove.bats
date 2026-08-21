@@ -592,3 +592,34 @@ EOF
     [ -d "$TEST_WORKTREES/TICKET-100-A" ]
     [ -d "$TEST_WORKTREES/TICKET-100-B" ]
 }
+
+# ============================================
+# --kill delegation must not fire before the remove is confirmed
+# ============================================
+
+@test "an aborted dirty remove has not run the kill delegation" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+worker() {
+    if [ "${PWT_KILL_TARGET:-}" = "worker" ]; then
+        echo "KILL_RAN" >> "$PWT_DIR/kill-log"
+    fi
+}
+PWTEOF
+    cd "$TEST_REPO"
+    "$PWT_BIN" create KILL-ORDER HEAD >/dev/null 2>&1
+
+    # Make the worktree dirty so the remove needs confirmation, then run
+    # non-interactively: the remove must refuse AND the delegation must
+    # not have fired
+    local wt_dir
+    wt_dir=$(sed -n 's/^path=//p' "$PWT_DIR/state/test-project/KILL-ORDER.meta")
+    echo "dirty" > "$wt_dir/uncommitted.txt"
+
+    run "$PWT_BIN" remove KILL-ORDER --kill-worker < /dev/null
+    [ "$status" -ne 0 ]
+    [ ! -f "$PWT_DIR/kill-log" ] || {
+        echo "the delegation killed the worker before the remove was confirmed" >&2
+        return 1
+    }
+    [ -d "$wt_dir" ]
+}

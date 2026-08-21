@@ -221,6 +221,11 @@ setup() {
 }
 
 server() {
+    # remove --kill-server delegates here meaning "stop and return"
+    if [ "${PWT_KILL_TARGET:-}" = "server" ]; then
+        pwtfile_stop_jobs server    # this worktree's jobs only
+        return 0
+    fi
     case "${1:-start}" in
         start) exec env PORT="$PWT_PORT" ./scripts/dev ;;
         stop) ./scripts/dev-stop ;;

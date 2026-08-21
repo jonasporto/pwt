@@ -215,6 +215,35 @@ idempotently to the repo's common `.git/info/exclude`, so generated files
 ever being committed. When asked to keep a generated file out of git
 without touching `.gitignore`, declare it there in `setup()`.
 
+When you WRITE or edit a Pwtfile, two contracts are not optional:
+
+1. **The kill delegation.** Any function that starts a long-lived process
+   (server, worker) must begin with the guard — `pwt remove X --kill-<cmd>`
+   calls the function with `PWT_KILL_TARGET=<cmd>` meaning *stop and
+   return*, and without the guard the start path runs mid-removal:
+
+   ```bash
+   worker() {
+       if [ "${PWT_KILL_TARGET:-}" = "worker" ]; then
+           pwtfile_stop_jobs worker   # this worktree's jobs only
+           return 0
+       fi
+       exec ...start...
+   }
+   ```
+
+   `pwtfile_stop_jobs` filters the job registry by worktree and command,
+   so a shared worker in another worktree (or the main app's catch-all)
+   survives — never stop things by `pkill`-ing a process name.
+
+2. **Never read `$PWT_DIR/jobs/*` or state files directly.** The storage
+   format changed once and silently broke the one Pwtfile that did; the
+   stable interfaces are `pwt jobs list --porcelain`, `pwt state --json`
+   and the `pwtfile_*` helpers.
+
+`examples/Pwtfile.reference` in the pwt repo catalogs the recurring
+scenarios (derive / isolate / share, and the stop side of each).
+
 ## Worktree lifecycle
 
 ```bash

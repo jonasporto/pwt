@@ -327,3 +327,43 @@ branch_name() {
         echo "feature/${worktree}"
     fi
 }
+
+# ---------------------------------------------------------------------------
+# Workers, and the kill-delegation contract (the STOP side of every scenario)
+# ---------------------------------------------------------------------------
+# Everything above starts resources; removal is where the classification
+# bites back. `pwt remove X --kill-worker` calls worker() with
+# PWT_KILL_TARGET=worker, and that call means STOP AND RETURN. Without the
+# guard, the function falls through to its start path and boots a worker in
+# the middle of the removal (a real Pwtfile shipped exactly that).
+worker() {
+    if [ "${PWT_KILL_TARGET:-}" = "worker" ]; then
+        pwtfile_stop_jobs worker   # registry-scoped: only THIS worktree's jobs
+        return 0
+    fi
+
+    # Which queue this worker consumes is the isolate-or-share decision
+    # from the Redis section above; the kill guard is the same either way:
+    #
+    #   Shared queue   the queue outlives the worktree. Stopping this
+    #                  worker loses nothing - pending jobs stay in the
+    #                  broker and the surviving consumers (the main app's
+    #                  catch-all) drain them.
+    #   Isolated queue the broker dies with the worktree (teardown stops
+    #                  the container), so drain or accept the loss.
+    #
+    # pwtfile_stop_jobs is why the guard is safe under sharing: it filters
+    # the job registry by worktree AND command, so a same-named worker in
+    # another worktree - or the main app's - is never touched. A
+    # pkill-by-process-name here would murder them all.
+    exec bundle exec my_worker
+}
+
+# The same guard belongs in server() when servers are started with --bg:
+#   if [ "${PWT_KILL_TARGET:-}" = "server" ]; then
+#       pwtfile_stop_jobs server
+#       return 0
+#   fi
+# Never read $PWT_DIR/jobs/* directly for any of this: the storage format
+# changed once already and silently broke the one Pwtfile doing it. The
+# registry's public faces are `pwt jobs list --porcelain` and the helpers.

@@ -2978,6 +2978,52 @@ get_base_branch() {
 # Hash-based port generation (deterministic)
 # Usage: pwtfile_hash_port [name] [base]
 # Output: port number
+# Stop this worktree's running background jobs of one command, through the
+# job registry. This is the kill-delegation contract made trivial: a
+# Pwtfile command called with PWT_KILL_TARGET set is expected to stop its
+# thing and return, and the registry filter (worktree + command) is what
+# keeps a SHARED worker in another worktree - or the main app's catch-all -
+# untouched, where a pkill-by-name would murder it.
+#
+#   sidekiq() {
+#       if [ "${PWT_KILL_TARGET:-}" = "sidekiq" ]; then
+#           pwtfile_stop_jobs sidekiq
+#           return 0
+#       fi
+#       ...start path...
+#   }
+#
+# Usage: pwtfile_stop_jobs <command>
+pwtfile_stop_jobs() {
+    local want="${1:-}"
+    if [ -z "$want" ]; then
+        echo "Usage: pwtfile_stop_jobs <command>" >&2
+        return 2
+    fi
+    load_module jobs
+    _init_jobs_dir
+
+    local f wt cmd id stopped=0
+    for f in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
+        [ -f "$f" ] || continue
+        wt=$(state_get "$f" "worktree")
+        [ "$wt" = "${PWT_WORKTREE:-}" ] || continue
+        cmd=$(state_get "$f" "command")
+        [ "$cmd" = "$want" ] || continue
+        id=$(state_get "$f" "id")
+        [ -n "$id" ] || continue
+        _is_job_alive "$id" || continue
+        cmd_jobs stop "$id" >/dev/null 2>&1 || true
+        echo "  ✓ stopped $id"
+        stopped=$((stopped + 1))
+    done
+
+    if [ "$stopped" -eq 0 ]; then
+        echo "  No running $want job for this worktree"
+    fi
+    return 0
+}
+
 pwtfile_hash_port() {
     local name="${1:-${PWT_WORKTREE:-}}"
     local base="${2:-${PORT_BASE:-5000}}"
@@ -3101,6 +3147,7 @@ run_single_pwtfile() {
             replace_re() { pwtfile_replace_re "$@"; }
             run() { pwtfile_run "$@"; }
             git_exclude() { pwtfile_git_exclude "$@"; }
+            stop_jobs() { pwtfile_stop_jobs "$@"; }
 
             # User-provided file, path known only at runtime
             # shellcheck source=/dev/null
@@ -3121,6 +3168,7 @@ run_single_pwtfile() {
             replace_re() { pwtfile_replace_re "$@"; }
             run() { pwtfile_run "$@"; }
             git_exclude() { pwtfile_git_exclude "$@"; }
+            stop_jobs() { pwtfile_stop_jobs "$@"; }
 
             # User-provided file, path known only at runtime
             # shellcheck source=/dev/null
@@ -8089,7 +8137,6 @@ Core boundary:
 Lifecycle Hooks:
   setup()       Runs after worktree created
   server()      Runs when "pwt server" called (use exec for stdin)
-  server --kill Runs for "pwt remove --kill-server"
   teardown()    Runs when worktree removed
   doctor()      Runs as part of "pwt doctor" - project health checks
                 (deps installed, registry auth, services reachable...)
@@ -8104,6 +8151,26 @@ Command Forms:
   pwt <project> <worktree> <cmd> [args...]  Run Pwtfile command from anywhere
   pwt <worktree> <cmd> [args...]            Run Pwtfile command inside project
   pwt <cmd> [args...]                       Run Pwtfile command inside worktree
+
+Kill Delegation Contract:
+  "pwt remove X --kill-<cmd>" calls <cmd>() with PWT_KILL_TARGET=<cmd>
+  and PWT_ARGS="--kill". That call means STOP YOUR THING AND RETURN -
+  never fall through to the start path (a worker started mid-removal is
+  the classic violation). The two-line guard, first thing in the function:
+
+      sidekiq() {
+          if [ "${PWT_KILL_TARGET:-}" = "sidekiq" ]; then
+              pwtfile_stop_jobs sidekiq    # registry-scoped: THIS worktree
+              return 0                     # never reach the start path
+          fi
+          ...
+      }
+
+  pwtfile_stop_jobs stops only THIS worktree's jobs of that command: a
+  shared worker running in another worktree (or the main app's catch-all)
+  is never touched, which is exactly why it beats pkill-by-name. A shared
+  queue outlives the worktree - pending jobs stay in the broker for the
+  surviving consumers.
 
 Steps (for guided workflows):
   step_xxx()    Define with step_, list with "pwt steps", run with "pwt step xxx"

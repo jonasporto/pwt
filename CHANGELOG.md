@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwtfile_stop_jobs <command>` (alias `stop_jobs`): stops this
+  worktree's running background jobs of one command through the job
+  registry. Ships the kill-delegation contract as a two-line guard
+  instead of 30 lines everyone writes wrong: the registry filter
+  (worktree + command) is what keeps a shared worker in another worktree
+  untouched, where pkill-by-name would kill them all.
+- The kill-delegation contract is now stated where discovery actually
+  looks: `pwt help pwtfile` (semantics + guard), the agent skill (as a
+  rule for writing Pwtfiles), `examples/Pwtfile.reference` (a worker
+  section covering the stop side of shared vs isolated queues), and the
+  README example. Audit finding: every surface named `PWT_KILL_TARGET`,
+  none said what honoring it means, and the tool's own author shipped a
+  Pwtfile whose kill delegation started a worker.
+
 ### Fixed
 - Two background launches of the same fast command in the same second no
   longer overwrite each other's job record: the id (which embeds a

@@ -25,7 +25,6 @@ Core boundary:
 Lifecycle Hooks:
   setup()       Runs after worktree created
   server()      Runs when "pwt server" called (use exec for stdin)
-  server --kill Runs for "pwt remove --kill-server"
   teardown()    Runs when worktree removed
   doctor()      Runs as part of "pwt doctor" - project health checks
                 (deps installed, registry auth, services reachable...)
@@ -40,6 +39,26 @@ Command Forms:
   pwt <project> <worktree> <cmd> [args...]  Run Pwtfile command from anywhere
   pwt <worktree> <cmd> [args...]            Run Pwtfile command inside project
   pwt <cmd> [args...]                       Run Pwtfile command inside worktree
+
+Kill Delegation Contract:
+  "pwt remove X --kill-<cmd>" calls <cmd>() with PWT_KILL_TARGET=<cmd>
+  and PWT_ARGS="--kill". That call means STOP YOUR THING AND RETURN -
+  never fall through to the start path (a worker started mid-removal is
+  the classic violation). The two-line guard, first thing in the function:
+
+      sidekiq() {
+          if [ "${PWT_KILL_TARGET:-}" = "sidekiq" ]; then
+              pwtfile_stop_jobs sidekiq    # registry-scoped: THIS worktree
+              return 0                     # never reach the start path
+          fi
+          ...
+      }
+
+  pwtfile_stop_jobs stops only THIS worktree's jobs of that command: a
+  shared worker running in another worktree (or the main app's catch-all)
+  is never touched, which is exactly why it beats pkill-by-name. A shared
+  queue outlives the worktree - pending jobs stay in the broker for the
+  surviving consumers.
 
 Steps (for guided workflows):
   step_xxx()    Define with step_, list with "pwt steps", run with "pwt step xxx"

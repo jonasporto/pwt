@@ -1065,3 +1065,66 @@ PWTFILE
     grep -qxF "preexisting.txt" "$TEST_REPO/.git/info/exclude"
     grep -qxF "added.txt" "$TEST_REPO/.git/info/exclude"
 }
+
+# ============================================
+# pwtfile_stop_jobs: the kill contract, shipped instead of taught
+# ============================================
+# Audited 2026-08-21: the discovery surfaces named PWT_KILL_TARGET but
+# never its semantics, and the reference Pwtfile had no stop/kill
+# section at all - so the tool's own author shipped a Pwtfile whose kill
+# delegation STARTED a worker. The helper makes honoring the contract a
+# two-line guard, registry-scoped so a shared worker in another worktree
+# is never touched.
+
+@test "pwtfile_stop_jobs stops this worktree's job and spares the neighbour's" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+blip() { exec sleep 300; }
+stopper() { pwtfile_stop_jobs blip; }
+PWTEOF
+    cd "$TEST_REPO"
+    "$PWT_BIN" blip --bg >/dev/null 2>&1
+    sleep 1
+
+    # A neighbour worktree's job of the SAME command, alive for real
+    sleep 300 &
+    local other_pid=$!
+    cat >"$PWT_DIR/jobs/other-blip-999.job" <<JOBEOF
+id=other-blip-999
+command=blip
+worktree=other
+project=test-project
+pid=$other_pid
+pgid=$other_pid
+status=running
+log=$PWT_DIR/jobs/other-blip-999.log
+JOBEOF
+
+    run "$PWT_BIN" stopper
+    assert_success
+
+    # Ours: stopped; theirs: alive
+    local mine_pid
+    mine_pid=$(sed -n 's/^pid=//p' "$PWT_DIR"/jobs/@-blip-*.job 2>/dev/null | head -1)
+    if [ -n "$mine_pid" ]; then
+        ! kill -0 "$mine_pid" 2>/dev/null || {
+            kill "$mine_pid" "$other_pid" 2>/dev/null
+            echo "our job survived pwtfile_stop_jobs" >&2
+            return 1
+        }
+    fi
+    kill -0 "$other_pid" 2>/dev/null || {
+        echo "the neighbour worktree's job was killed" >&2
+        return 1
+    }
+    kill "$other_pid" 2>/dev/null || true
+}
+
+@test "pwtfile_stop_jobs with nothing running reports and succeeds" {
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+stopper() { pwtfile_stop_jobs ghost; }
+PWTEOF
+    cd "$TEST_REPO"
+    run "$PWT_BIN" stopper
+    assert_success
+    [[ "$output" == *"No running"* ]]
+}

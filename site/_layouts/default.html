@@ -108,6 +108,34 @@
     block.style.position = 'relative';
     block.appendChild(btn);
   });
+
+  // Demo lightbox: the grid videos render too small to read, so clicking
+  // one opens it near-fullscreen. The page video keeps looping; the
+  // lightbox gets its own clone with controls, freed again on close so
+  // two copies never download twice.
+  document.querySelectorAll('.demo-grid .term video').forEach(function (v) {
+    v.closest('.term').classList.add('zoomable');
+    v.closest('.term').addEventListener('click', function () {
+      var overlay = document.createElement('div');
+      overlay.className = 'lightbox';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-label', v.getAttribute('aria-label') || 'Demo recording');
+      var big = v.cloneNode(false);
+      big.controls = true; big.muted = true; big.autoplay = true;
+      big.removeAttribute('width'); big.removeAttribute('height');
+      big.currentTime = v.currentTime;
+      overlay.appendChild(big);
+      function close() {
+        big.pause(); big.removeAttribute('src'); big.load();
+        overlay.remove();
+        document.removeEventListener('keydown', onKey);
+      }
+      function onKey(e) { if (e.key === 'Escape') close(); }
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(overlay);
+    });
+  });
 </script>
 </body>
 </html>

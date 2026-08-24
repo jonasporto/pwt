@@ -24,6 +24,8 @@ is why nothing ever feels finished:
 - **Allocation** decides which number a project gets. It is bookkeeping.
 - **Naming** decides what you type in the browser. It is a proxy.
 
+{% include demo.html src="03-ports" caption="Three servers across two projects, one registry, zero collisions." %}
+
 ## Layer 1 is bookkeeping, and scanning is not it
 
 The registry question is "who owns 8001". The universal answer, and the

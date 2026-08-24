@@ -1,0 +1,17 @@
+{% comment %}
+Terminal-framed demo recording. Usage in a post:
+  {% include demo.html src="03-ports" caption="One registry across projects." %}
+src is the basename under assets/demos/ (mp4 + -poster.jpg pair).
+Optional: width/height (default 900x520), controls=true, alt.
+{% endcomment %}
+<figure class="demo">
+  <div class="term">
+    <div class="term-bar"><i></i><i></i><i></i></div>
+    <video src="{{ '/assets/demos/' | append: include.src | append: '.mp4' | relative_url }}"
+      poster="{{ '/assets/demos/' | append: include.src | append: '-poster.jpg' | relative_url }}"
+      width="{{ include.width | default: 900 }}" height="{{ include.height | default: 520 }}"
+      autoplay muted loop playsinline{% if include.controls %} controls{% endif %}
+      preload="metadata" aria-label="{{ include.alt | default: include.caption | default: 'Terminal demo recording' }}"></video>
+  </div>
+  {% if include.caption %}<figcaption>{{ include.caption }}</figcaption>{% endif %}
+</figure>

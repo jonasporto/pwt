@@ -24,6 +24,8 @@ what happened: those three lines are the complete contents of the one
 file pwt created, and this post is short because there is honestly not
 much more to it.
 
+{% include demo.html src="01-quickstart" caption="What init unlocks: create allocates a port, runs the setup hook, copies .env." %}
+
 ## Where the state lives, and where it does not
 
 Everything landed outside your repo, in `~/.pwt/projects/<name>/config`,

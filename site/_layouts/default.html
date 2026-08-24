@@ -113,7 +113,7 @@
   // one opens it near-fullscreen. The page video keeps looping; the
   // lightbox gets its own clone with controls, freed again on close so
   // two copies never download twice.
-  document.querySelectorAll('.demo-grid .term video').forEach(function (v) {
+  document.querySelectorAll('.demo-grid .term video, article figure.demo .term video').forEach(function (v) {
     v.closest('.term').classList.add('zoomable');
     v.closest('.term').addEventListener('click', function () {
       var overlay = document.createElement('div');

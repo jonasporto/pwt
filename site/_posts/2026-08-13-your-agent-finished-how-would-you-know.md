@@ -24,6 +24,8 @@ pwt jobs wait / server wait   5
 their own wait loop a hundred times instead. This post is about the problem,
 the four ways the field solves it, and the honest conclusion about mine.
 
+{% include demo.html src="04-jobs-wait" caption="The primitive in question: test --bg starts the job, jobs wait blocks until it stops." %}
+
 ## What an agent writes when it has to wait
 
 These are real commands out of my logs, with paths generalized:

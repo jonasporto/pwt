@@ -58,6 +58,49 @@ teardown() {
     [ "$status" -eq 0 ]
 }
 
+@test "get_pids_on_port reports the listener, never a client of the port" {
+    # A connection matches `lsof -i :port` from EITHER end, so an
+    # unqualified query hands clients of the port to every kill path:
+    # remove --kill-port -y would SIGKILL a browser that merely has a tab
+    # open on the port, and the identical pattern in test teardowns killed
+    # the CI runner's own agent when its ephemeral port landed in a test's
+    # port window. The ss/fuser fallbacks were always listener-only.
+    command -v lsof >/dev/null 2>&1 || skip "exercises the lsof branch"
+    command -v python3 >/dev/null 2>&1 || skip "python3 is required for the listener"
+
+    source_pwt_functions has_lsof get_pids_on_port
+    _lsof_available=""
+
+    local port
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+
+    python3 -m http.server "$port" --bind 127.0.0.1 >/dev/null 2>&1 &
+    local server_pid=$!
+    local i
+    for i in $(seq 1 50); do
+        (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break
+        sleep 0.1
+    done
+
+    # A separate process holding an ESTABLISHED connection to the port,
+    # exec'd so the connection lives in exactly one PID we can assert on.
+    bash -c "exec 3<>/dev/tcp/127.0.0.1/$port; exec sleep 30" &
+    local client_pid=$!
+    sleep 0.5
+
+    run get_pids_on_port "$port"
+    kill "$client_pid" "$server_pid" 2>/dev/null || true
+
+    [[ "$output" == *"$server_pid"* ]] || {
+        echo "listener $server_pid missing from: $output" >&2
+        return 1
+    }
+    [[ "$output" != *"$client_pid"* ]] || {
+        echo "client $client_pid offered as a port owner: $output" >&2
+        return 1
+    }
+}
+
 @test "is_port_free returns 0 when lsof unavailable (best effort)" {
     source_pwt_functions has_lsof is_port_free
 

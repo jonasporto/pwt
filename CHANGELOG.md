@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Port ownership is now listener-only. `lsof -i :port` matches a
+  connection from either end, so every consumer of `get_pids_on_port`
+  also saw CLIENTS of the port: `pwt remove --kill-port -y` would
+  SIGKILL a browser that merely had a tab open on the worktree's port,
+  `fix-port` offered the same victims, and status displays could report
+  "running" off a lingering half-closed connection. The identical
+  pattern in three test teardowns is the confirmed cause of the CI
+  runner deaths ("runner received a shutdown signal", 6 since August
+  16): the teardown killed every PID on an 81-port window that overlaps
+  Linux's ephemeral range, and sooner or later the runner agent's own
+  outbound connection landed in it. The lsof branch now matches the
+  ss/fuser fallbacks, which were always listener-only.
+
 ## [0.2.13] - 2026-08-24
 
 ### Added

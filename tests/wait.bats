@@ -43,7 +43,7 @@ teardown() {
     if command -v lsof >/dev/null 2>&1 && [ -n "${TEST_BASE_PORT:-}" ]; then
         for port in $(seq "$TEST_BASE_PORT" "$((TEST_BASE_PORT + 10))"); do
             local pids
-            pids=$(lsof -ti ":$port" 2>/dev/null || true)
+            pids=$(lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null || true)
             [ -n "$pids" ] && echo "$pids" | xargs kill -9 2>/dev/null || true
         done
     fi

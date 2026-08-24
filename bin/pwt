@@ -666,7 +666,13 @@ get_pids_on_port() {
     local port="$1"
 
     if has_lsof; then
-        lsof -ti ":$port" 2>/dev/null || true
+        # Listener only: a connection matches `-i :port` from either end,
+        # so the unqualified form also returns CLIENTS of the port (a
+        # browser with a tab open on it, the CI runner agent whose
+        # ephemeral port landed here) and every kill path downstream
+        # would SIGKILL them. The ss/fuser fallbacks below were always
+        # listener-only; this aligns the lsof branch with them.
+        lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null || true
         return 0
     fi
 
@@ -738,7 +744,10 @@ is_port_free() {
     local port="$1"
 
     if has_lsof; then
-        ! lsof -ti ":$port" >/dev/null 2>&1
+        # Free means nobody LISTENS: a lingering TIME_WAIT/CLOSE_WAIT or a
+        # client connection is not occupancy, and the /dev/tcp fallback
+        # below (connect probe) already measures exactly this.
+        ! lsof -ti "tcp:$port" -sTCP:LISTEN >/dev/null 2>&1
         return $?
     fi
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-08-24
+
 ### Added
 - `pwtfile_stop_jobs <command>` (alias `stop_jobs`): stops this
   worktree's running background jobs of one command through the job

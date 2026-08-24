@@ -155,11 +155,32 @@ header.hero { text-align: center; padding: 4.5rem 1rem 2.5rem; }
 .cards li strong { display: block; margin-bottom: 0.2rem; font-family: var(--mono); font-size: 0.95rem; }
 .cards li span { color: var(--muted); font-size: 0.94rem; }
 
+/* documentation cards: whole card is the link */
+.docs-cards li { padding: 0; }
+.docs-cards a {
+  display: block; padding: 1.05rem 1.15rem; text-decoration: none;
+  color: var(--fg); border-radius: 12px; height: 100%;
+  transition: border-color 0.12s;
+}
+.docs-cards li:hover { border-color: var(--accent); }
+.docs-cards a strong { color: var(--accent); }
+
 /* terminal block */
 .term { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 1.4rem 0; }
 .term-bar { display: flex; gap: 6px; padding: 0.6rem 0.95rem; background: var(--card); border-bottom: 1px solid var(--border); }
 .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--border); }
 .term pre { border: 0; border-radius: 0; margin: 0; }
+.term video { display: block; width: 100%; height: auto; }
+
+/* demo recordings (mp4 re-encodes of the README gifs) */
+figure.demo { margin: 1.75rem 0; }
+figure.demo .term { margin: 0; }
+figure.demo figcaption {
+  margin-top: 0.6rem; text-align: center; color: var(--muted);
+  font-size: 0.88rem; font-family: var(--mono);
+}
+.demo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 1.25rem; }
+.demo-grid figure.demo { margin: 0.4rem 0; }
 
 /* hint callouts: blockquote + {: .hint} (or .hint-agent) in kramdown */
 blockquote.hint, blockquote.hint-agent {

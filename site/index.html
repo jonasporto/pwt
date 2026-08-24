@@ -7,16 +7,27 @@ image:
   height: 630
 ---
 <header class="hero">
-  <h1><code>pwt</code> — Power Worktrees</h1>
+  <h1><code>pwt</code>: Power Worktrees</h1>
   <p class="tagline">One branch per worktree, one port per server, one stable workflow.
   For humans and AI agents working in parallel.</p>
   <p><code class="install-line">brew install jonasporto/pwt/pwt</code></p>
   <div class="cta">
-    <a class="primary" href="https://github.com/jonasporto/pwt">View on GitHub</a>
-    <a href="https://www.npmjs.com/package/@jonasporto/pwt">npm package</a>
-    <a href="{{ '/blog/' | relative_url }}">Read the blog</a>
+    <a class="primary" href="{{ '/docs/' | relative_url }}">Get started</a>
+    <a href="https://github.com/jonasporto/pwt">GitHub</a>
+    <a href="{{ '/blog/' | relative_url }}">Blog</a>
   </div>
 </header>
+
+<figure class="demo">
+  <div class="term">
+    <div class="term-bar"><i></i><i></i><i></i></div>
+    <video src="{{ '/assets/demos/00-overview.mp4' | relative_url }}"
+      poster="{{ '/assets/demos/00-overview-poster.jpg' | relative_url }}"
+      width="1200" height="700" autoplay muted loop playsinline controls
+      preload="metadata" aria-label="Terminal recording: pwt overview"></video>
+  </div>
+  <figcaption>The whole loop in under a minute: init, create, server, jump, remove.</figcaption>
+</figure>
 
 <h2>Why pwt</h2>
 <ul class="cards">
@@ -27,6 +38,30 @@ image:
   <li><strong>Background jobs</strong><span>Real detached daemons with logs, exit codes, and wait primitives.</span></li>
   <li><strong>Agent-ready</strong><span>Porcelain output, stable exit codes, and <code>pwt skill</code> for AI-driven workflows.</span></li>
 </ul>
+
+<h2>See it in action</h2>
+<div class="demo-grid">
+  <figure class="demo">
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+      <video src="{{ '/assets/demos/01-quickstart.mp4' | relative_url }}"
+        poster="{{ '/assets/demos/01-quickstart-poster.jpg' | relative_url }}"
+        width="900" height="520" autoplay muted loop playsinline
+        preload="metadata" aria-label="Terminal recording: pwt quick start"></video>
+    </div>
+    <figcaption><code>pwt init</code> to a running worktree: port allocated, setup done.</figcaption>
+  </figure>
+  <figure class="demo">
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+      <video src="{{ '/assets/demos/02-use-symlink.mp4' | relative_url }}"
+        poster="{{ '/assets/demos/02-use-symlink-poster.jpg' | relative_url }}"
+        width="900" height="520" autoplay muted loop playsinline
+        preload="metadata" aria-label="Terminal recording: pwt use with a stable symlink"></video>
+    </div>
+    <figcaption><code>pwt use</code>: one stable path for your editor, branches swap underneath.</figcaption>
+  </figure>
+</div>
 
 <h2>One setup, every agent</h2>
 <p>Claude Code, Codex, Cursor and the rest each create worktrees their own
@@ -114,10 +149,17 @@ back to the latest three when nothing is marked. {% endcomment %}
 {% endif %}
 
 <h2>Documentation</h2>
-<p>
+<ul class="cards docs-cards">
+  <li><a href="{{ '/docs/concepts/' | relative_url }}"><strong>Concepts</strong><span>What a worktree is here, and when pwt beats raw <code>git worktree</code>.</span></a></li>
+  <li><a href="{{ '/docs/commands/' | relative_url }}"><strong>Commands</strong><span>Every command's own <code>--help</code>, generated from the binary.</span></a></li>
+  <li><a href="{{ '/docs/navigation/' | relative_url }}"><strong>Navigation</strong><span><code>cd</code>, aliases, partial names, multi-project.</span></a></li>
+  <li><a href="{{ '/docs/pwtfile/' | relative_url }}"><strong>Pwtfile</strong><span>Hooks, helpers and the <code>PWT_*</code> variables.</span></a></li>
+  <li><a href="{{ '/docs/agents/' | relative_url }}"><strong>For agents</strong><span>The guide <code>pwt skill</code> prints.</span></a></li>
+  <li><a href="https://github.com/jonasporto/pwt/blob/main/FAQ.md"><strong>FAQ</strong><span>Design decisions and the questions behind them.</span></a></li>
+</ul>
+<p class="post-meta">
   <a href="https://github.com/jonasporto/pwt#readme">README</a> ·
   <a href="https://github.com/jonasporto/pwt/blob/main/INSTALL.md">Install guide</a> ·
-  <a href="https://github.com/jonasporto/pwt/blob/main/FAQ.md">FAQ</a> ·
   <a href="https://github.com/jonasporto/pwt/blob/main/CHANGELOG.md">Changelog</a> ·
   <a href="https://github.com/jonasporto/pwt/blob/main/docs/state-v2-contract.md">State contract</a> ·
   <a href="{{ '/llms.txt' | relative_url }}">llms.txt</a>

@@ -3,8 +3,10 @@ layout: default
 ---
 <article>
   <header>
+    <p class="crumbs"><a href="{{ '/blog/' | relative_url }}">← Blog</a></p>
     <h1>{{ page.title }}</h1>
-    <p class="post-meta">{{ page.date | date: "%B %-d, %Y" }}</p>
+    <p class="post-meta">{{ page.date | date: "%B %-d, %Y" }}
+      · {% assign words = content | strip_html | number_of_words %}{{ words | divided_by: 220 | at_least: 1 }} min read</p>
   </header>
   {% if page.cover %}
   <figure class="cover"><img src="{{ page.cover | relative_url }}" alt="{{ page.cover_alt | default: page.title }}"></figure>
@@ -19,9 +21,11 @@ layout: default
     throwaway worktree.</p>
     {% comment %}
     Per-article extension. Keep it plain markdown: Liquid is not evaluated
-    in front matter, so a `{{ ... | relative_url }}` there renders literally
-    and its pipe turns the paragraph into a kramdown table. Links go through
-    agent_hint_doc instead, resolved here.
+    in front matter, so a relative_url expression there renders literally
+    and its pipe turns the paragraph into a kramdown table. (Spelling the
+    braces out here trips the lexer even inside this comment block, hence
+    the prose description.) Links go through agent_hint_doc instead,
+    resolved here.
     {% endcomment %}
     {% if page.agent_hint_extra %}
     <p>{{ page.agent_hint_extra | markdownify | remove: '<p>' | remove: '</p>' }}{% if page.agent_hint_doc %}

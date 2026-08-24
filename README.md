@@ -6,14 +6,31 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.2.12-green.svg)](CHANGELOG.md)
 
+**[Website](https://jonasporto.github.io/pwt/)** ·
+[Docs](https://jonasporto.github.io/pwt/docs/) ·
+[Blog](https://jonasporto.github.io/pwt/blog/)
+
 ## Demos
 
+Quick start: `pwt create` allocates a port, runs the setup hook, copies `.env`:
+
 ![Quick Start](examples/gifs/01-quickstart.gif)
+
+`pwt use`: one stable path for your editor, branches swap underneath:
+
 ![Use Symlink](examples/gifs/02-use-symlink.gif)
 
-[Watch overview (mp4)](examples/videos/00-overview.mp4)
+`pwt ports`: every project on the machine, one registry:
 
-More demos in `examples/` (tapes in `examples/tapes`, gifs in `examples/gifs`, how to record in `examples/README.md`).
+![Ports](examples/gifs/03-ports.gif)
+
+`pwt jobs`: background work with an exit you can wait on:
+
+![Jobs Wait](examples/gifs/04-jobs-wait.gif)
+
+[Watch the full overview (mp4)](examples/videos/00-overview.mp4), or see
+them play as video on the [website](https://jonasporto.github.io/pwt/).
+Tapes and how to re-record: `examples/README.md`.
 
 ---
 
@@ -130,19 +147,20 @@ cd ~/projects/myapp
 pwt init                        # Initialize project
 pwt add feat/user-auth          # Create worktree from branch
 pwt feat/user-auth              # Jump to a worktree
-pwt cd --select                 # Interactive worktree picker
+pwt server --bg                 # Start its dev server, detached
+pwt server wait                 # Block until it actually answers
 pwt list                        # List worktrees with git status
 ```
 
 ### Custom commands (Pwtfile)
 
+Any function in the project's `Pwtfile` becomes a `pwt` command:
+
 ```bash
 pwt editor                      # Open editor in current worktree
 pwt build                       # Run build command
 pwt server                      # Start dev server (auto port allocation)
-pwt gateway up --port 5999      # Start stable project gateway daemon
-pwt gateway use feat/user-auth  # Route gateway to a worktree server
-pwt servers                     # Show active project servers
+pwt test --bg                   # Any Pwtfile command, daemonized
 ```
 
 ---
@@ -252,7 +270,9 @@ pwt <worktree> <command> [args...]            # From inside the project
 pwt <command> [args...]                       # From inside the worktree
 ```
 
-**Variables:** `$PWT_PORT`, `$PWT_WORKTREE`, `$PWT_BRANCH`, `$PWT_PROJECT`, `$MAIN_APP`
+**Variables:** `$PWT_PORT`, `$PWT_WORKTREE`, `$PWT_WORKTREE_PATH`,
+`$PWT_BRANCH`, `$PWT_TICKET`, `$PWT_PROJECT`, `$PWT_ARGS`, `$MAIN_APP`;
+`$PWT_AGENT=1` when running under `--no-input`.
 
 Run `pwt help pwtfile` for full syntax.
 
@@ -274,14 +294,17 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | Command | Description |
 |---------|-------------|
 | `init` | Initialize project in current repo |
-| `add <branch>` | Create worktree from branch (`-e` editor) |
+| `create <name> [base] [desc]` | Create worktree: port, metadata, setup hook (`add` is an alias) |
 | `track <remote-branch>` | Create worktree tracking an existing remote branch |
 | `adopt [path]` | Register an existing worktree and run setup |
-| `list` | List worktrees with git status (`--dirty`) |
+| `list` | List worktrees with git status (`--dirty`, `--porcelain`) |
 | `cd <worktree>` | Navigate to worktree (`@` main, `-` previous, `--select`) |
+| `use <worktree>` | Point the stable `current` symlink at a worktree |
 | `project` | List all configured projects |
 | `<worktree>` | Navigate to worktree inside the current project (any unique fragment matches: `pwt 1234` finds `TICKET-1234-fix-login`) |
 | `<project> <worktree>` | Jump to worktree in another project |
+| `run <worktree> <cmd>` | Run a command inside that worktree |
+| `for-each <cmd>` | Run a command in the main checkout and every worktree |
 | `editor` | Open editor in current worktree |
 | `server` | Start dev server (from Pwtfile) |
 | `server wait [worktree]` | Block until the server is ready (`--log-contains`, `--timeout`) |
@@ -290,8 +313,12 @@ Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 | `servers` | Show active servers, gateway target, and background jobs |
 | `logs [worktree]` | Show background job logs (`-f` to follow) |
 | `ports` | Machine-wide port registry: every allocation, every project, conflicts flagged |
+| `meta set <wt> <key> <val>` | Free-form worktree metadata (what dashboards read) |
+| `doctor` | Check machine, project layout, and the Pwtfile's own `doctor()` hook |
 | `self` | List installed pwt versions / switch active (`self use <target>`) |
-| `remove <worktree>` | Remove worktree (`--with-branch`) |
+| `remove <worktree>` | Remove worktree (`--with-branch`, `--kill-port`) |
+| `auto-remove [target]` | Bulk-remove merged worktrees (dry-run by default, `--execute`) |
+| `restore [backup] [wt]` | Recover uncommitted work that `remove` backed up to trash |
 | `state --json` | Versioned JSON snapshot of all pwt state (projects, worktrees, jobs) |
 
 ---

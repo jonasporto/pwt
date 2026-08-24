@@ -23,7 +23,7 @@ pwt skill --install    # copy it into your agent's skills directory
 
 `pwt` manages git worktrees with per-worktree port allocation, background
 jobs, and project-defined commands (`Pwtfile`). This guide is shipped with the
-CLI — print it any time with `pwt skill`, and prefer it over remembered
+CLI: print it any time with `pwt skill`, and prefer it over remembered
 behaviour. If it ever disagrees with the installed binary, the binary wins:
 check `pwt --help` and `pwt help commands`.
 
@@ -31,7 +31,7 @@ check `pwt --help` and `pwt help commands`.
 
 In a pwt-managed repository, **never use raw `git worktree add`** for work
 that will run project commands. pwt's `create` also allocates a port, writes
-metadata, and runs the project's `setup` hook — env files, dependencies,
+metadata, and runs the project's `setup` hook: env files, dependencies,
 databases, symlinks. A raw worktree looks fine and then fails at runtime, in
 ways that are slow to diagnose.
 
@@ -43,7 +43,7 @@ project command will run in that worktree.
 ## When to suggest pwt for a repo that does not use it yet
 
 If pwt is installed but the repository is not managed by it, suggest
-`pwt init` when the work at hand shows these symptoms — they are exactly
+`pwt init` when the work at hand shows these symptoms; they are exactly
 what pwt automates:
 
 - Two branches need dev servers at the same time and their ports collide.
@@ -55,7 +55,7 @@ what pwt automates:
   `pwt server wait` / `pwt jobs wait`.
 
 For a one-off second checkout with no server and no setup, raw
-`git worktree add` is fine — do not suggest pwt just to have it.
+`git worktree add` is fine; do not suggest pwt just to have it.
 
 ## Orient yourself before doing anything
 
@@ -76,7 +76,7 @@ macOS AirPlay Receiver holds 5000 and 7000, so never read that as "the
 dev server is already running".
 
 `pwt state --json` gives all of it in one versioned document (projects,
-worktrees with metadata, jobs) — useful when you want a single snapshot
+worktrees with metadata, jobs), useful when you want a single snapshot
 rather than several calls.
 
 Worktree arguments accept any unique fragment of the name: `pwt 1234 logs`
@@ -92,7 +92,7 @@ matches a command.
 Everything a project-specific playbook would hard-code is discoverable this
 way, and discovery cannot go stale.
 
-### When in doubt, ask the tool — do not guess
+### When in doubt, ask the tool instead of guessing
 
 pwt is self-describing. Every uncertainty below has a command that answers it,
 and the answer is always more current than any document, including this one:
@@ -114,7 +114,7 @@ Prefer running one of these over inferring from a directory name, a branch
 name, or an earlier turn in the conversation. If a command errors, read the
 message: pwt's errors name the missing thing and usually the fix.
 
-If a command is not in `pwt help`, it does not exist in this version — do not
+If a command is not in `pwt help`, it does not exist in this version; do not
 attempt it and do not work around it with raw git. Say what is missing.
 
 ## Machine-readable output
@@ -140,7 +140,7 @@ out: `~/.pwt` holds flat `key=value` files (`projects/<name>/config`,
 `state/<project>/<wt>.meta`, `jobs/<id>.job`) plus an append-only TSV
 `events.log` (`ts  project  worktree  kind  detail`). Check
 `~/.pwt/state-version` (currently `2`) before parsing and refuse on an
-unexpected value — see `docs/state-v2-contract.md`.
+unexpected value; see `docs/state-v2-contract.md`.
 
 ## Exit codes
 
@@ -176,7 +176,7 @@ pwt jobs wait TICKET-123 --timeout 900     # prints "<job-id> stopped"
 ```
 
 `server wait` exits 3 when the worktree has no allocated port, or (with
-`--log-contains`) when no server job exists yet — start one with
+`--log-contains`) when no server job exists yet; start one with
 `pwt server <wt> --bg` first.
 
 ## Run commands in the right worktree
@@ -203,13 +203,13 @@ functions become `pwt step <name>`. Discover them with `pwt steps` and
 
 Arguments reach the function as `"$1"`, `"$2"`, … and as raw `$PWT_ARGS`. A
 step that the project's own `setup()` calls with arguments needs the same
-arguments from you — under `set -u`, a missing one fails with
+arguments from you: under `set -u`, a missing one fails with
 `$1: unbound variable`, which is the step asking for input, not a pwt error.
 
 Inside Pwtfile functions these helpers are available: `pwtfile_copy <path>`
 (copy from main checkout), `pwtfile_symlink <path>`,
 `pwtfile_replace_re <file> <pattern> <replacement>`, and
-`pwtfile_git_exclude <pattern>...` (alias `git_exclude`) — appends patterns
+`pwtfile_git_exclude <pattern>...` (alias `git_exclude`), which appends patterns
 idempotently to the repo's common `.git/info/exclude`, so generated files
 (derived lockfiles, agent configs) are ignored in every worktree without
 ever being committed. When asked to keep a generated file out of git
@@ -218,7 +218,7 @@ without touching `.gitignore`, declare it there in `setup()`.
 When you WRITE or edit a Pwtfile, two contracts are not optional:
 
 1. **The kill delegation.** Any function that starts a long-lived process
-   (server, worker) must begin with the guard — `pwt remove X --kill-<cmd>`
+   (server, worker) must begin with the guard: `pwt remove X --kill-<cmd>`
    calls the function with `PWT_KILL_TARGET=<cmd>` meaning *stop and
    return*, and without the guard the start path runs mid-removal:
 
@@ -234,7 +234,7 @@ When you WRITE or edit a Pwtfile, two contracts are not optional:
 
    `pwtfile_stop_jobs` filters the job registry by worktree and command,
    so a shared worker in another worktree (or the main app's catch-all)
-   survives — never stop things by `pkill`-ing a process name.
+   survives; never stop things by `pkill`-ing a process name.
 
 2. **Never read `$PWT_DIR/jobs/*` or state files directly.** The storage
    format changed once and silently broke the one Pwtfile that did; the
@@ -273,9 +273,9 @@ The short forms (`pwt meta <key>`, `pwt meta <key> <value>`,
 
 Ask the user before running any of these, and never as a "cleanup" reflex:
 
-- `pwt remove` — deletes a worktree. Uncommitted work is backed up to
+- `pwt remove` deletes a worktree. Uncommitted work is backed up to
   `~/.pwt/trash`, recoverable with `pwt restore`, but the worktree is gone.
-- `pwt auto-remove --execute` (alias `cleanup`) — bulk removal of merged
+- `pwt auto-remove --execute` (alias `cleanup`) is bulk removal of merged
   worktrees. It is dry-run by default; **preview first**:
   `pwt auto-remove <target> --dry-run` works non-interactively and changes
   nothing.
@@ -298,7 +298,7 @@ pwt run <worktree> git status     # branch and dirty state
 pwt run <worktree> <runtime probe># e.g. ruby -v, node -v, python -V
 ```
 
-If the probe reports an unexpected version, the runtime context is wrong —
+If the probe reports an unexpected version, the runtime context is wrong;
 fix that before editing code or tests.
 
 If pwt itself behaves unexpectedly, run `pwt doctor` first: it reports
@@ -320,9 +320,9 @@ its base.
 
 | Symptom | Likely cause |
 |---|---|
-| Command works in one worktree, fails in another | ran from the wrong checkout — use `pwt run` |
+| Command works in one worktree, fails in another | ran from the wrong checkout; use `pwt run` |
 | `Worktree not found: stop` (or another verb) | the argument was taken as a worktree name; check the command's argument order |
-| Server "started" but nothing answers | you did not wait — use `pwt server wait` |
+| Server "started" but nothing answers | you did not wait; use `pwt server wait` |
 | A Pwtfile command silently does nothing | it may read pwt state files directly; state is `key=value` since schema 2, use `--porcelain` interfaces instead |
 | Exit 6 | a required external tool is missing; the message names it |
 

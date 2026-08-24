@@ -8,11 +8,11 @@
 
 Everything else is optional; pwt degrades gracefully without it:
 
-- **fzf** — richer interactive picker (`select`, `cd --select`); without it a
+- **fzf**: richer interactive picker (`select`, `cd --select`); without it a
   builtin picker is used
-- **lsof** — port owner detection; falls back to `ss`, `fuser`, then a bash
+- **lsof**: port owner detection; falls back to `ss`, `fuser`, then a bash
   `/dev/tcp` probe
-- **jq** — needed **once** to convert pre-v2 JSON state, and never again;
+- **jq**: needed **once** to convert pre-v2 JSON state, and never again;
   fresh installs never use it
 
 **Windows:** supported via **WSL** only (native Windows shell is not supported).

@@ -9,8 +9,8 @@ release. If you are on an older version, upgrade before reporting.
 
 Please **do not** open a public issue for a security problem.
 
-Use GitHub's private reporting — *Security* → *Report a vulnerability* on
-https://github.com/jonasporto/pwt — which opens a confidential thread with
+Use GitHub's private reporting: *Security* → *Report a vulnerability* on
+https://github.com/jonasporto/pwt. It opens a confidential thread with
 the maintainer.
 
 Include what you can: the pwt version (`pwt --version`), your OS and shell,

@@ -17,20 +17,15 @@ More demos in `examples/` (tapes in `examples/tapes`, gifs in `examples/gifs`, h
 
 ---
 
-✅ Work in parallel
-— multiple projects, or parallel changes within the same project
+✅ Work in parallel: multiple projects, or parallel changes within the same project
 
-✅ One stable workflow
-— keep one editor open, swap branches underneath it
+✅ One stable workflow: keep one editor open, swap branches underneath it
 
-✅ No local conflicts
-— automatic per-worktree ports, predictable dev servers
+✅ No local conflicts: automatic per-worktree ports, predictable dev servers
 
-✅ Project-aware automation
-— run setup, servers, and custom commands via Pwtfile
+✅ Project-aware automation: run setup, servers, and custom commands via Pwtfile
 
-✅ Built on Git worktrees
-— clones when isolation is required
+✅ Built on Git worktrees: clones when isolation is required
 
 ---
 
@@ -48,7 +43,7 @@ More demos in `examples/` (tapes in `examples/tapes`, gifs in `examples/gifs`, h
 | Several projects on one machine keep claiming the same port | Ports are allocated machine-wide; `pwt ports` shows every allocation and flags conflicts |
 
 A one-off second checkout with no server and no setup? Raw `git worktree
-add` is fine — pwt earns its keep when the lifecycle around the worktree
+add` is fine; pwt earns its keep when the lifecycle around the worktree
 (ports, setup, servers, jobs) is the problem.
 
 ---
@@ -384,7 +379,7 @@ active ports. Add `--all` to include stopped worktrees.
 
 | Mode | When to use |
 |------|-------------|
-| **Worktree** (default) | Most cases — faster, shares git objects |
+| **Worktree** (default) | Most cases: faster, shares git objects |
 | **Clone** (`--clone`) | Submodules, or need same branch checked out twice |
 
 ---
@@ -424,7 +419,7 @@ primitives (`pwt server wait`, `pwt jobs wait`) that replace poll loops.
 
 External tools can also read pwt state directly: `~/.pwt` holds flat
 key=value files plus an append-only `events.log`, versioned via
-`~/.pwt/state-version` — see
+`~/.pwt/state-version`; see
 [docs/state-v2-contract.md](docs/state-v2-contract.md).
 
 ---
@@ -441,5 +436,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 [MIT](LICENSE) © Jonas Porto
 
-Found a security issue? See [SECURITY.md](SECURITY.md) — please report it
+Found a security issue? See [SECURITY.md](SECURITY.md); please report it
 privately rather than opening an issue.

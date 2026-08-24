@@ -196,7 +196,7 @@ pwt conflicts TICKET-1 TICKET-2  # Check specific pair
 pwt batch-plan tasks.json        # AI-powered phase planning
 ```
 
-**Reality check:** The hard part isn't detecting conflicts—it's knowing what files a task will touch BEFORE implementing it. That requires either:
+**Reality check:** The hard part isn't detecting conflicts, it's knowing what files a task will touch BEFORE implementing it. That requires either:
 - Human knowledge of the codebase
 - AI analysis of task descriptions
 - Learning from past similar tasks

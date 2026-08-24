@@ -529,7 +529,7 @@ removed. External consumers of `~/.pwt` should read `state-version` and
 
 ### Changed
 - `cmd_server` flag parsing: flags with values (`-p 5002`) now correctly captured as pairs
-- Current symlink pointing to `@` no longer errors — runs server on main app instead
+- Current symlink pointing to `@` no longer errors; runs server on main app instead
 
 ### Internal
 - Replaced `$(basename ...)` with `${var##*/}` parameter expansion in shell-init (faster, no fork)

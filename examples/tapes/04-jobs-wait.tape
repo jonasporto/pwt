@@ -28,8 +28,14 @@ Type "git init -q --bare $HOME/origin.git && git remote add origin $HOME/origin.
 Enter
 Type "source <(pwt shell-init bash) && pwt init >/dev/null 2>&1"
 Enter
-Type "pwt create feature-a main 'checkout flow' >/dev/null 2>&1 && clear"
+Type "pwt create feature-a main 'checkout flow' >/dev/null 2>&1"
 Enter
+# Sleep-then-clear barrier: Show resumes filming immediately, so the
+# setup must have finished and the screen must already be clear.
+Sleep 5s
+Type "clear"
+Enter
+Sleep 500ms
 Show
 
 Type "pwt feature-a test --bg"

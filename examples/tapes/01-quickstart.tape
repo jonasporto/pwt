@@ -30,8 +30,14 @@ Enter
 # printing the yellow no-origin fallback in the recording.
 Type "git init -q --bare $HOME/origin.git && git remote add origin $HOME/origin.git && git push -qu origin main 2>/dev/null"
 Enter
-Type "source <(pwt shell-init bash) && pwt init >/dev/null 2>&1 && clear"
+Type "source <(pwt shell-init bash) && pwt init >/dev/null 2>&1"
 Enter
+# Sleep-then-clear barrier: Show resumes filming immediately, so the
+# setup must have finished and the screen must already be clear.
+Sleep 4s
+Type "clear"
+Enter
+Sleep 500ms
 Show
 
 Type "pwt create feature-a main 'checkout flow'"

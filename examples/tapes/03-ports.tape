@@ -34,8 +34,14 @@ Type "mkproj blog-api 5101"
 Enter
 Type "pwt create redesign main 'new layout' >/dev/null 2>&1"
 Enter
-Type "pwt server redesign --bg --no-input >/dev/null 2>&1 && pwt server wait redesign >/dev/null && clear"
+Type "pwt server redesign --bg --no-input >/dev/null 2>&1 && pwt server wait redesign >/dev/null"
 Enter
+# Sleep-then-clear barrier: Show resumes filming immediately, so the
+# whole queued setup must have finished and the screen must be clear.
+Sleep 12s
+Type "clear"
+Enter
+Sleep 500ms
 Show
 
 Type "pwt ports"
@@ -47,7 +53,7 @@ Enter
 Sleep 3s
 
 Hide
-Type "pwt remove redesign --kill-server -y >/dev/null 2>&1"
+Type "pwt remove redesign --kill-port -y >/dev/null 2>&1"
 Enter
-Type "cd $HOME/projects/acme-shop && pwt remove feature-a --kill-server -y >/dev/null 2>&1 && pwt remove feature-b --kill-server -y >/dev/null 2>&1"
+Type "cd $HOME/projects/acme-shop && pwt remove feature-a --kill-port -y >/dev/null 2>&1 && pwt remove feature-b --kill-port -y >/dev/null 2>&1"
 Enter

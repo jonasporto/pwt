@@ -32,8 +32,15 @@ Enter
 # printing the yellow no-origin fallback in the recording.
 Type "git init -q --bare $HOME/origin.git && git remote add origin $HOME/origin.git && git push -qu origin main 2>/dev/null"
 Enter
-Type "source <(pwt shell-init bash) && pwt init >/dev/null 2>&1 && clear"
+Type "source <(pwt shell-init bash) && pwt init >/dev/null 2>&1"
 Enter
+# Hide stops recording but not terminal echo, and Show resumes as soon as
+# the last keystroke is dispatched: without this sleep-then-clear barrier
+# the setup backlog is still on screen when filming starts.
+Sleep 4s
+Type "clear"
+Enter
+Sleep 500ms
 Show
 
 Type "pwt create feature-a main 'checkout flow'"
@@ -70,7 +77,7 @@ Type "pwt list"
 Enter
 Sleep 3.5s
 
-Type "pwt remove feature-b --kill-server -y"
+Type "pwt remove feature-b --kill-port -y"
 Enter
 Sleep 2.5s
 
@@ -79,5 +86,5 @@ Enter
 Sleep 2s
 
 Hide
-Type "pwt remove feature-a --kill-server -y"
+Type "pwt remove feature-a --kill-port -y"
 Enter

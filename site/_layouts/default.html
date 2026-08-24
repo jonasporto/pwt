@@ -4,6 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% seo %}
+<!-- Icones gerados de assets/icon.svg pelo web-kit (make-icons + make-ico), nao
+     desenhados a mao: um .png reexportado a mao envelhece em silencio.
+     SVG primeiro para quem suporta, PNG como fallback: o Google Search NAO
+     renderiza favicon SVG, entao sem o PNG o icone some dos resultados. -->
+<link rel="icon" href="{{ '/favicon.ico' | relative_url }}" sizes="any">
+<link rel="icon" href="{{ '/assets/icon.svg' | relative_url }}" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="96x96" href="{{ '/favicon-96.png' | relative_url }}">
+<link rel="icon" type="image/png" sizes="48x48" href="{{ '/favicon-48.png' | relative_url }}">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ '/favicon-32.png' | relative_url }}">
+<link rel="apple-touch-icon" sizes="180x180" href="{{ '/apple-touch-icon.png' | relative_url }}">
+<meta name="theme-color" content="#fcf9f6">
+<!-- jekyll-seo-tag nao emite og:image:alt; sem ele o card fica sem texto
+     alternativo para quem usa leitor de tela. -->
+<meta property="og:image:alt" content="pwt, Power Worktrees: one branch per worktree, one port per server.">
+<meta name="twitter:image:alt" content="pwt, Power Worktrees: one branch per worktree, one port per server.">
+<link rel="manifest" href="{{ '/site.webmanifest' | relative_url }}">
 <link rel="preload" href="{{ '/assets/fonts/plex-mono-700.woff2' | relative_url }}" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ '/assets/style.css' | relative_url }}">
 <link rel="alternate" type="application/atom+xml" title="pwt blog" href="{{ '/blog/feed.xml' | relative_url }}">

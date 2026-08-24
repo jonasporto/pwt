@@ -49,7 +49,7 @@ image:
         width="900" height="520" autoplay muted loop playsinline
         preload="metadata" aria-label="Terminal recording: pwt quick start"></video>
     </div>
-    <figcaption><code>pwt init</code> to a running worktree: port allocated, setup done.</figcaption>
+    <figcaption><code>pwt create</code>: port allocated, setup hook run, <code>.env</code> in place.</figcaption>
   </figure>
   <figure class="demo">
     <div class="term">
@@ -60,6 +60,26 @@ image:
         preload="metadata" aria-label="Terminal recording: pwt use with a stable symlink"></video>
     </div>
     <figcaption><code>pwt use</code>: one stable path for your editor, branches swap underneath.</figcaption>
+  </figure>
+  <figure class="demo">
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+      <video src="{{ '/assets/demos/03-ports.mp4' | relative_url }}"
+        poster="{{ '/assets/demos/03-ports-poster.jpg' | relative_url }}"
+        width="900" height="520" autoplay muted loop playsinline
+        preload="metadata" aria-label="Terminal recording: pwt ports across two projects"></video>
+    </div>
+    <figcaption><code>pwt ports</code>: every project on the machine, one registry.</figcaption>
+  </figure>
+  <figure class="demo">
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+      <video src="{{ '/assets/demos/04-jobs-wait.mp4' | relative_url }}"
+        poster="{{ '/assets/demos/04-jobs-wait-poster.jpg' | relative_url }}"
+        width="900" height="520" autoplay muted loop playsinline
+        preload="metadata" aria-label="Terminal recording: background jobs and pwt jobs wait"></video>
+    </div>
+    <figcaption><code>pwt jobs</code>: background work with an exit you can wait on.</figcaption>
   </figure>
 </div>
 

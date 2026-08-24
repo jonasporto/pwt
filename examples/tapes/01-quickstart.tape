@@ -1,6 +1,7 @@
-# pwt Demo - Quick Start
-# Run: vhs examples/tapes/01-quickstart.tape
+# pwt Demo - Quick Start: init to a ready worktree
+# Run from the repo root: vhs examples/tapes/01-quickstart.tape
 
+Output examples/videos/01-quickstart.mp4
 Output examples/gifs/01-quickstart.gif
 Set Shell "bash"
 Set FontSize 14
@@ -10,59 +11,41 @@ Set Theme "Catppuccin Mocha"
 Set Padding 12
 Set TypingSpeed 40ms
 
-Env PATH "./bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-Env PWT_LIB "./lib/pwt"
 Env HOME "/tmp/pwt-demo-home"
 
 Hide
-Type "rm -rf $HOME"
+Type "export PATH=$PWD/bin:$PATH"
 Enter
-Type "mkdir -p $HOME/projects/acme-shop"
+Type "rm -rf $HOME && mkdir -p $HOME/projects/acme-shop && cd $HOME/projects/acme-shop"
 Enter
-Type "cd $HOME/projects/acme-shop"
+Type "git init -qb main && git config user.email demo@example.com && git config user.name Demo"
 Enter
-Type "git init -b main"
+Type "printf 'API_KEY=dev-secret\n' > .env"
 Enter
-Type "git config user.email demo@example.com"
+Type `printf 'PORT_BASE=5001\n\nsetup() {\n    pwtfile_copy ".env"\n    echo "deps installed"\n}\n' > Pwtfile`
 Enter
-Type "git config user.name Demo"
+Type "printf 'hello' > README.md && git add -A && git commit -qm init"
 Enter
-Type "printf 'hello' > README.md"
+# A local bare origin, so create resolves origin/main silently instead of
+# printing the yellow no-origin fallback in the recording.
+Type "git init -q --bare $HOME/origin.git && git remote add origin $HOME/origin.git && git push -qu origin main 2>/dev/null"
 Enter
-Type "git add README.md"
-Enter
-Type "git commit -m 'init'"
-Enter
-Type "source <(pwt shell-init bash)"
-Enter
-Type "pwt init"
+Type "source <(pwt shell-init bash) && pwt init >/dev/null 2>&1 && clear"
 Enter
 Show
 
-Type "pwt create quickstart main 'quick start'"
+Type "pwt create feature-a main 'checkout flow'"
 Enter
-Sleep 1s
+Sleep 4.5s
 
-Type "pwt cd quickstart"
+Type "pwt cd feature-a"
 Enter
-Sleep 500ms
+Sleep 800ms
 
 Type "pwd"
 Enter
-Sleep 600ms
+Sleep 1.5s
 
-Type "pwt cd @"
+Type "cat .env"
 Enter
-Sleep 400ms
-
-Type "pwt remove quickstart -y"
-Enter
-Sleep 900ms
-
-Type "pwt list"
-Enter
-Sleep 700ms
-
-Type "# github.com/jonasporto/pwt"
-Enter
-Sleep 1s
+Sleep 2.5s

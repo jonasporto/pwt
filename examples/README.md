@@ -1,20 +1,20 @@
 # Demos
 
-This folder holds VHS tapes and rendered GIFs for the README.
+This folder holds VHS tapes and their rendered GIFs and MP4s. The README
+embeds the GIFs; the site (site/assets/demos/) uses the MP4s.
 
 Structure:
 
 ```
 examples/
   tapes/
+    00-overview.tape
     01-quickstart.tape
     02-use-symlink.tape
-  gifs/
-    00-overview.gif
-    01-quickstart.gif
-    02-use-symlink.gif
-  videos/
-    00-overview.mp4
+    03-ports.tape
+    04-jobs-wait.tape
+  gifs/       # one .gif per tape
+  videos/     # one .mp4 per tape
 ```
 
 ## Requirements
@@ -27,11 +27,14 @@ examples/
 Run from the repo root:
 
 ```
-vhs examples/tapes/01-quickstart.tape
-vhs examples/tapes/02-use-symlink.tape
+for t in examples/tapes/*.tape; do rm -rf /tmp/pwt-demo-home; vhs "$t"; done
 ```
 
 The tapes use a temp HOME at /tmp/pwt-demo-home and delete it at the start.
+Every command a tape shows must exit 0: dry-run the storyline in a shell
+first, because a recording that films an error ships that error to the
+landing page. After re-recording, copy the MP4s to site/assets/demos/ and
+regenerate the poster JPGs (see the site repo history for the ffmpeg line).
 
 If you add a new tape, keep the naming scheme and update the README demo list.
 

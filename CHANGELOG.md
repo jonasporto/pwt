@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pwtfile whose kill delegation started a worker.
 
 ### Fixed
+- `pwt statusline install` works again: the plugin still called the
+  core's `sed_inplace` helper, but a plugin execs as its own process
+  and cannot borrow core functions, so every install died with
+  "command not found" since statusline moved out of the core. The
+  helper is now defined in the plugin's self-contained block.
 - Two background launches of the same fast command in the same second no
   longer overwrite each other's job record: the id (which embeds a
   whole-second timestamp) is bumped until free.

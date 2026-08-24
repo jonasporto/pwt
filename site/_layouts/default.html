@@ -14,7 +14,18 @@
 <link rel="icon" type="image/png" sizes="48x48" href="{{ '/favicon-48.png' | relative_url }}">
 <link rel="icon" type="image/png" sizes="32x32" href="{{ '/favicon-32.png' | relative_url }}">
 <link rel="apple-touch-icon" sizes="180x180" href="{{ '/apple-touch-icon.png' | relative_url }}">
-<meta name="theme-color" content="#fcf9f6">
+<meta name="theme-color" content="#fcf9f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<script>
+  // Before first paint: honor a saved theme choice so the page never
+  // flashes the wrong palette. No saved choice = follow the system.
+  (function () {
+    try {
+      var t = localStorage.getItem('pwt-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
 <!-- jekyll-seo-tag nao emite og:image:alt; sem ele o card fica sem texto
      alternativo para quem usa leitor de tela. -->
 <meta property="og:image:alt" content="pwt, Power Worktrees: one branch per worktree, one port per server.">
@@ -40,6 +51,10 @@
   <a href="{{ '/blog/' | relative_url }}">Blog</a>
   <span class="spacer"></span>
   <a href="https://github.com/jonasporto/pwt">GitHub</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+    <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+  </button>
 </nav>
 <main>
 {{ content }}
@@ -48,6 +63,29 @@
   MIT © Jonas Porto · <a href="https://github.com/jonasporto/pwt">github.com/jonasporto/pwt</a> · <a href="{{ '/blog/feed.xml' | relative_url }}">RSS</a>
 </footer>
 <script>
+  (function () {
+    var root = document.documentElement;
+    function effective() {
+      return root.getAttribute('data-theme') ||
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    }
+    // Forcing a theme detaches the theme-color metas from their media
+    // queries, so keep them in sync by hand.
+    function syncMeta() {
+      var bg = effective() === 'dark' ? '#0d1117' : '#fcf9f6';
+      document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+        m.setAttribute('content', bg);
+      });
+    }
+    document.querySelector('.theme-toggle').addEventListener('click', function () {
+      var next = effective() === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('pwt-theme', next); } catch (e) {}
+      syncMeta();
+    });
+    if (root.hasAttribute('data-theme')) syncMeta();
+  })();
+
   // Hover anchor on every heading that has an id: docs pages set theirs
   // explicitly, kramdown derives the rest.
   document.querySelectorAll('main h2[id], main h3[id], main h4[id]').forEach(function (h) {

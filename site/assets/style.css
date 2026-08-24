@@ -33,8 +33,12 @@
   --tok-del: #cf222e;
   --tok-del-bg: #ffebe9;
 }
+/* Three theme states: no data-theme attr follows the system; the nav
+   toggle pins data-theme="dark" or "light", which must win over the
+   media query in both directions. The dark token block is therefore
+   written twice on purpose; plain CSS cannot share it. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0d1117;
     --fg: #e6edf3;
     --muted: #8b949e;
@@ -53,6 +57,25 @@
     --tok-del: #f85149;
     --tok-del-bg: rgba(248, 81, 73, 0.15);
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --fg: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --code-bg: #161b22;
+  --border: #30363d;
+  --card: #161b22;
+  --tok-kw: #ff7b72;
+  --tok-str: #a5d6ff;
+  --tok-com: #8b949e;
+  --tok-fn: #d2a8ff;
+  --tok-var: #ffa657;
+  --tok-num: #79c0ff;
+  --tok-ins: #3fb950;
+  --tok-ins-bg: rgba(46, 160, 67, 0.15);
+  --tok-del: #f85149;
+  --tok-del-bg: rgba(248, 81, 73, 0.15);
 }
 
 * { box-sizing: border-box; }
@@ -89,6 +112,21 @@ nav.top a { text-decoration: none; font-weight: 600; color: var(--muted); font-s
 nav.top a:hover { color: var(--accent); }
 nav.top a.brand { color: var(--fg); font-size: 1.1rem; font-weight: 700; }
 nav.top .spacer { flex: 1; }
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; cursor: pointer;
+  color: var(--muted); background: none; border: 1px solid var(--border);
+  border-radius: 8px; align-self: center;
+}
+.theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
+/* Show the icon for the theme the button switches TO */
+.theme-toggle .icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-toggle .icon-sun { display: block; }
+  :root:not([data-theme="light"]) .theme-toggle .icon-moon { display: none; }
+}
 
 /* hero */
 header.hero { text-align: center; padding: 4.5rem 1rem 2.5rem; }

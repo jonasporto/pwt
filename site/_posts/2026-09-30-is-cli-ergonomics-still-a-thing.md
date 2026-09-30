@@ -1,6 +1,6 @@
 ---
 title: "Is CLI ergonomics still a thing?"
-description: "We type less than we did a year ago. What we still type is a reaction to something on screen, and that is where a CLI earns its keep."
+description: "We type fewer commands than a year ago; the prompts got longer. What still goes into a shell is a reaction to something on screen, and that is where a CLI earns its keep."
 featured: true
 tags: [cli, agents, worktrees]
 ---
@@ -23,12 +23,14 @@ just refused, the path was right there in its own error, and the next
 action could not possibly be typing all of that again. What I actually
 wanted was for a past version of me to have thought of this already.
 
-## We type less. What we still type changed.
+## We type fewer commands. What still goes into the shell changed.
 
 Most of the commands run on my machine this year were not typed by me. An
 agent runs the long sequences: create the worktree, install, run the suite,
-read the log, run it again, write the commit. My own shell history is short
-and strange. It is full of one-word interjections between agent turns:
+read the log, run it again, write the commit. The typing did not go away;
+it moved into prompts, and the prompts got long. What shrank is the part
+that goes into a shell. My own shell history is short and strange. It is
+full of one-word interjections between agent turns:
 `pwt -`, `git diff`, `pwt logs`, and a lot of things I typed right after
 reading an error.
 
@@ -43,7 +45,7 @@ copy and paste stops feeling normal. Flows I accepted for fifteen years now
 feel broken, not because they got worse, but because everything around them
 got effortless.
 
-Fewer keystrokes, each one worth more. Ergonomics did not go away with
+Fewer commands, each one worth more. Ergonomics did not go away with
 agents. It concentrated.
 
 ## The tax is transcription

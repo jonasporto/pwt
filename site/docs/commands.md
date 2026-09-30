@@ -214,7 +214,10 @@ For humans, see 'pwt help' and 'pwt help pwtfile'.
 ## pwt cd {#cd}
 
 ```
-Usage: pwt cd [worktree|@|-]
+Usage: pwt cd [worktree|@|@there|-]
+       pwt cd <branch>    # the worktree that has the branch checked out
+       pwt cd @there      # ...named in the previous command line (git said
+                          #  'already checked out at'? pwt @there goes there)
        pwt cd <term>      # search by name or description
        pwt cd --select    # interactive picker (fzf)
 
@@ -222,8 +225,12 @@ Navigate to a worktree (outputs path for shell integration).
 
 Arguments:
   worktree  Name of the worktree
+  <branch>  Branch name (exact), e.g. the one git says is
+            'already checked out at' another path
   <term>    Search term (matches name AND description)
   @         Main app directory
+  @there    Worktree of the branch in the previous command line
+            (needs the shell integration: pwt shell-init)
   -         Previous worktree (like cd -)
   (none)    Last used worktree, or main
 
@@ -231,6 +238,7 @@ Options:
   --select, -s    Interactive worktree selector (fzf)
 
 Search behavior:
+  - Exact worktree name, then exact branch name, then:
   - Partial name match:  pwt cd auth
   - Description search:  pwt cd "auth login"
   - If no match found, falls back to fzf for fuzzy selection

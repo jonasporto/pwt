@@ -18,6 +18,7 @@ _pwt_commands() {
         'use:Set worktree as current'
         'current:Show current worktree path'
         '-:Go to previous worktree'
+        '@there:Go where git said the branch is already checked out'
         'info:Show worktree details'
         'show:Show worktree details'
         'remove:Remove worktree'

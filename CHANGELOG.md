@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwt @there`: after git's "fatal: 'x' is already checked out at
+  ...", go to that worktree without copying anything. The shell-init
+  wrapper (zsh, bash, fish) hands the previous command line to the
+  binary, which takes the branch named there (flags and redirections
+  skipped) and resolves it to its worktree. Also `pwt cd @there` and
+  `pwt run @there <cmd>`. Without the wrapper it explains what it needs.
+- `pwt cd <branch>` (and the implicit `pwt <branch>`, `pwt run
+  <branch> ...`) resolves a branch name to the worktree that has it
+  checked out, main included, straight from `git worktree list`.
+  Resolution order: exact worktree name, exact branch name, then the
+  existing name/description search.
+
 ### Fixed
+- `find_worktree_name_by_path` compared a resolved path against the
+  unresolved `worktrees_dir`, so a worktree under a symlinked directory
+  (`/var` vs `/private/var` on macOS) was never recognized by path.
 - Port ownership is now listener-only. `lsof -i :port` matches a
   connection from either end, so every consumer of `get_pids_on_port`
   also saw CLIENTS of the port: `pwt remove --kill-port -y` would

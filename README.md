@@ -287,6 +287,22 @@ eval "$(pwt shell-init zsh)"
 
 Enables `pwt cd`, `pwt cd @`, `pwt cd -`, and tab completion.
 
+`pwt cd` takes a worktree name, a branch name, `@` (main), `@there` or
+`-` (previous), then falls back to a name/description search.
+
+`@there` is for the moment git refuses a checkout:
+
+```bash
+$ git checkout feature/login
+fatal: 'feature/login' is already checked out at '/path/to/app-worktrees/login'
+$ pwt @there      # and you are in app-worktrees/login
+```
+
+The wrapper reads the previous command line from the shell's history
+and resolves the branch named there to its worktree (main included).
+Nothing to copy or retype. Without the shell integration, `@there` has
+no previous line to read and says so.
+
 ---
 
 ## Everyday Commands

@@ -134,10 +134,18 @@ Show port numbers
 
 .SS Navigation
 .TP
-.B cd \fINAME\fR|\fI@\fR|\fI-\fR|\fITERM\fR
-Navigate to worktree. Searches by name and description (case-insensitive).
+.B cd \fINAME\fR|\fIBRANCH\fR|\fI@\fR|\fI@there\fR|\fI-\fR|\fITERM\fR
+Navigate to worktree. Resolves, in order: exact worktree name, exact
+branch name (the worktree that has it checked out, main included), then
+a search by name and description (case-insensitive).
 If multiple matches found, opens fzf for selection.
 Use \fB@\fR for main app, \fB-\fR for previous worktree.
+.TP
+.B @there
+Go to the worktree of the branch named in the previous command line.
+Made for git's "fatal: 'x' is already checked out at ...": the next
+thing typed is \fBpwt @there\fR, nothing copied. Needs the shell
+integration (\fBshell-init\fR), which hands the previous line over.
 .TP
 .B use \fINAME\fR|\fI@\fR
 Set worktree as "current" (updates symlink). Supports partial name matching.

@@ -489,3 +489,129 @@ EOF
     [ "$status" -eq 0 ]
     [ "$output" = "$TEST_WORKTREES/wt-partial" ]
 }
+
+# ============================================
+# Branch name resolution
+# ============================================
+
+@test "pwt cd <branch> outputs the worktree that has the branch checked out" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" cd test/wt-one
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-one" ]
+}
+
+@test "pwt <branch> without command outputs the worktree path" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" test/wt-two
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-two" ]
+}
+
+@test "pwt cd <branch> accepts the refs/heads/ prefix" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" cd refs/heads/test/wt-one
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-one" ]
+}
+
+@test "pwt cd <main-branch> from a worktree outputs the main app path" {
+    local main_branch
+    main_branch=$(git -C "$TEST_REPO" rev-parse --abbrev-ref HEAD)
+    cd "$TEST_WORKTREES/wt-one"
+    run "$PWT_BIN" cd "$main_branch"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_REPO" ]
+}
+
+@test "pwt cd <branch> records navigation so pwt - returns" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" cd wt-two
+    [ "$status" -eq 0 ]
+    run "$PWT_BIN" cd test/wt-one
+    [ "$status" -eq 0 ]
+    run "$PWT_BIN" cd -
+
+    [ "$status" -eq 0 ]
+    # cd - announces the target on stderr first; run merges both streams
+    [[ "$output" == *"$TEST_WORKTREES/wt-two" ]]
+}
+
+@test "pwt cd <unknown-branch> still reports worktree not found" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" cd feature/does-not-exist
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Worktree not found: feature/does-not-exist"* ]]
+}
+
+@test "pwt run <branch> runs inside the branch's worktree" {
+    cd "$TEST_REPO"
+    run "$PWT_BIN" run test/wt-one pwd
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$TEST_WORKTREES/wt-one"* ]]
+}
+
+
+# ============================================
+# @there: the branch named in the previous command line
+# ============================================
+
+@test "pwt cd @there resolves the branch git said is already checked out" {
+    cd "$TEST_REPO"
+    export PWT_LAST_COMMAND="git checkout test/wt-one"
+    run "$PWT_BIN" cd @there
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-one" ]
+}
+
+@test "pwt cd @there skips flags and redirections in the previous line" {
+    cd "$TEST_REPO"
+    export PWT_LAST_COMMAND="  git checkout -q test/wt-two 2>/dev/null"
+    run "$PWT_BIN" cd @there
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-two" ]
+}
+
+@test "pwt @there without command outputs the worktree path" {
+    cd "$TEST_REPO"
+    export PWT_LAST_COMMAND="git switch test/wt-one"
+    run "$PWT_BIN" @there
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "$TEST_WORKTREES/wt-one" ]
+}
+
+@test "pwt run @there runs inside that worktree" {
+    cd "$TEST_REPO"
+    export PWT_LAST_COMMAND="git checkout test/wt-two"
+    run "$PWT_BIN" run @there pwd
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$TEST_WORKTREES/wt-two"* ]]
+}
+
+@test "pwt cd @there without the shell integration explains itself" {
+    cd "$TEST_REPO"
+    unset PWT_LAST_COMMAND
+    run "$PWT_BIN" cd @there
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"shell-init"* ]]
+}
+
+@test "pwt cd @there when the previous line names no branch says so" {
+    cd "$TEST_REPO"
+    export PWT_LAST_COMMAND="ls -la"
+    run "$PWT_BIN" cd @there
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Nothing in the previous command names a branch or worktree: ls -la"* ]]
+}

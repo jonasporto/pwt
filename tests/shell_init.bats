@@ -319,3 +319,41 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"TEST-WT"* ]]
 }
+
+
+# ============================================
+# @there: previous command line via the wrapper
+# ============================================
+
+@test "shell function pwt @there goes where git said the branch is checked out" {
+    cd "$TEST_TEMP_DIR"
+
+    # Interactive bash: fc needs history, which -c never records
+    run bash --norc --noprofile -i <<EOF
+export PWT_DIR='$PWT_DIR'
+eval "\$('$PWT_BIN' shell-init)"
+cd '$TEST_REPO'
+git checkout test/TEST-WT
+pwt @there
+echo "now-in=\$(basename "\$PWD")"
+EOF
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already checked out at"* ]]
+    # A marker, not the last line: interactive bash echoes prompts too
+    [[ "$output" == *"now-in=TEST-WT"* ]]
+}
+
+@test "shell function does not leak PWT_LAST_COMMAND into the shell" {
+    cd "$TEST_TEMP_DIR"
+
+    run bash --norc --noprofile -i <<EOF
+export PWT_DIR='$PWT_DIR'
+eval "\$('$PWT_BIN' shell-init)"
+cd '$TEST_REPO'
+git checkout test/TEST-WT
+pwt @there >/dev/null
+echo "leak=[\${PWT_LAST_COMMAND:-}]"
+EOF
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"leak=[]"* ]]
+}

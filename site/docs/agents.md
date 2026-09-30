@@ -179,6 +179,17 @@ pwt jobs wait TICKET-123 --timeout 900     # prints "<job-id> stopped"
 `--log-contains`) when no server job exists yet; start one with
 `pwt server <wt> --bg` first.
 
+## Find the worktree that has a branch
+
+`git checkout <branch>` fails with "is already checked out at <path>"
+when a worktree already holds the branch. Do not delete or detach
+anything: `pwt cd <branch>` (or `pwt run <branch> <command>`) resolves
+the branch to that worktree, main included. Exact worktree name wins
+over branch name, and both win over the partial-name search.
+`pwt @there` is the same thing for a human at an interactive shell (it
+reads the previous command line from history); from an agent, pass the
+branch name explicitly.
+
 ## Run commands in the right worktree
 
 A command run from the wrong checkout proves nothing. Use `pwt run` unless

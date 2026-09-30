@@ -4581,7 +4581,14 @@ find_worktree_name_by_path() {
     [ -n "$search_path" ] || return 1
     resolved_search=$(cd "$search_path" 2>/dev/null && pwd -P) || return 1
 
-    if [ -d "$WORKTREES_DIR" ] && [[ "$resolved_search" == "$WORKTREES_DIR"/* ]]; then
+    # Compare realpath to realpath: git reports worktrees resolved
+    # (/private/var on macOS) while WORKTREES_DIR keeps the configured
+    # spelling (/var), and the two must still match
+    local resolved_dir=""
+    if [ -d "$WORKTREES_DIR" ]; then
+        resolved_dir=$(cd "$WORKTREES_DIR" 2>/dev/null && pwd -P) || resolved_dir=""
+    fi
+    if [ -n "$resolved_dir" ] && [[ "$resolved_search" == "$resolved_dir"/* ]]; then
         basename "$resolved_search"
         return 0
     fi
@@ -4598,6 +4605,86 @@ find_worktree_name_by_path() {
         fi
     done < <(meta_worktree_paths "$project")
 
+    return 1
+}
+
+# The worktree that has <branch> checked out, straight from git: the
+# same source as "fatal: 'x' is already checked out at ...", so the
+# answer is the place git just refused. Exact match only; the
+# refs/heads/ prefix is tolerated. The main checkout counts too.
+# Prints "<name>\t<path>": name is "@" for main, the pwt worktree name
+# when pwt knows the path, else the directory's basename. The path is
+# pwt's own (configured) spelling, not git's realpath: git resolves
+# symlinks (/var vs /private/var on macOS) and every other route in
+# pwt answers with the configured path.
+# Usage: worktree_for_branch <branch>
+worktree_for_branch() {
+    local target="${1#refs/heads/}" line path="" branch="" found=""
+    [ -n "$target" ] && [ -n "${MAIN_APP:-}" ] || return 1
+    while IFS= read -r line; do
+        case "$line" in
+            "worktree "*) path="${line#worktree }" ;;
+            "branch refs/heads/"*)
+                branch="${line#branch refs/heads/}"
+                if [ "$branch" = "$target" ] && [ -d "$path" ]; then
+                    found="$path"
+                    break
+                fi
+                ;;
+        esac
+    done < <(git -C "$MAIN_APP" worktree list --porcelain 2>/dev/null)
+    [ -n "$found" ] || return 1
+
+    local real_found real_main name known_path
+    real_found=$(cd "$found" 2>/dev/null && pwd -P) || return 1
+    real_main=$(cd "$MAIN_APP" 2>/dev/null && pwd -P) || real_main=""
+    if [ "$real_found" = "$real_main" ]; then
+        printf '@\t%s\n' "$MAIN_APP"
+        return 0
+    fi
+    name=$(find_worktree_name_by_path "$found" 2>/dev/null) || name=""
+    if [ -n "$name" ] && known_path=$(get_worktree_path "$name" 2>/dev/null); then
+        printf '%s\t%s\n' "$name" "$known_path"
+        return 0
+    fi
+    printf '%s\t%s\n' "$(basename "$found")" "$found"
+}
+
+# "@there": the worktree of the branch named in the previous command
+# line. Made for git's "fatal: 'x' is already checked out at ..."
+# moment: the next thing typed is "pwt @there", nothing copied. Only
+# the shell has the previous line, so the shell-init wrapper hands it
+# over in PWT_LAST_COMMAND. Words are tried from the end, skipping
+# flags and redirections, so "git checkout -q x 2>/dev/null" and
+# "git switch x" both land on x. Prints "<name>\t<path>".
+# Usage: resolve_there_target
+resolve_there_target() {
+    local line="${PWT_LAST_COMMAND:-}" w entry="" p=""
+    if [ -z "$line" ]; then
+        echo "pwt @there needs the shell integration to see the previous command line: eval \"\$(pwt shell-init)\"" >&2
+        return 1
+    fi
+    # read -a, not words=($line): no globbing on the user's line
+    local words=()
+    IFS=' 	' read -r -a words <<<"$line"
+    local i=${#words[@]}
+    while [ "$i" -gt 0 ]; do
+        i=$((i - 1))
+        w="${words[$i]}"
+        w="${w%;}"
+        case "$w" in
+            '' | -* | *'>'* | *'<'* | '&&' | '||' | '|' | '&') continue ;;
+        esac
+        if entry=$(worktree_for_branch "$w"); then
+            printf '%s\n' "$entry"
+            return 0
+        fi
+        if p=$(get_worktree_path "$w" 2>/dev/null); then
+            printf '%s\t%s\n' "$w" "$p"
+            return 0
+        fi
+    done
+    echo "Nothing in the previous command names a branch or worktree: $line" >&2
     return 1
 }
 
@@ -5754,7 +5841,10 @@ cmd_alias() {
 cmd_cd() {
     # Handle --help
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-        echo "Usage: pwt cd [worktree|@|-]"
+        echo "Usage: pwt cd [worktree|@|@there|-]"
+        echo "       pwt cd <branch>    # the worktree that has the branch checked out"
+        echo "       pwt cd @there      # ...named in the previous command line (git said"
+        echo "                          #  'already checked out at'? pwt @there goes there)"
         echo "       pwt cd <term>      # search by name or description"
         echo "       pwt cd --select    # interactive picker (fzf)"
         echo ""
@@ -5762,8 +5852,12 @@ cmd_cd() {
         echo ""
         echo "Arguments:"
         echo "  worktree  Name of the worktree"
+        echo "  <branch>  Branch name (exact), e.g. the one git says is"
+        echo "            'already checked out at' another path"
         echo "  <term>    Search term (matches name AND description)"
         echo "  @         Main app directory"
+        echo "  @there    Worktree of the branch in the previous command line"
+        echo "            (needs the shell integration: pwt shell-init)"
         echo "  -         Previous worktree (like cd -)"
         echo "  (none)    Last used worktree, or main"
         echo ""
@@ -5771,6 +5865,7 @@ cmd_cd() {
         echo "  --select, -s    Interactive worktree selector (fzf)"
         echo ""
         echo "Search behavior:"
+        echo "  - Exact worktree name, then exact branch name, then:"
         echo "  - Partial name match:  pwt cd auth"
         echo "  - Description search:  pwt cd \"auth login\""
         echo "  - If no match found, falls back to fzf for fuzzy selection"
@@ -5839,6 +5934,15 @@ cmd_cd() {
         return 0
     fi
 
+    # @there = where git just said the branch is checked out
+    if [ "$target" = "@there" ]; then
+        local there_entry
+        there_entry=$(resolve_there_target) || return 1
+        _save_navigation "${there_entry%%	*}"
+        echo "${there_entry#*	}"
+        return 0
+    fi
+
     # current = symlink path (stable path for editors)
     if [ "$target" = "current" ]; then
         local symlink_path=$(get_current_symlink_path)
@@ -5857,6 +5961,18 @@ cmd_cd() {
     if [ -d "$worktree_path" ]; then
         _save_navigation "$target"
         echo "$worktree_path"
+        return 0
+    fi
+
+    # A branch name: after "fatal: 'x' is already checked out at ...",
+    # 'pwt cd x' goes exactly where git pointed. Exact branch beats the
+    # partial name match below, since a branch name is never a guess.
+    local branch_entry branch_name branch_path
+    if branch_entry=$(worktree_for_branch "$target"); then
+        branch_name="${branch_entry%%	*}"
+        branch_path="${branch_entry#*	}"
+        _save_navigation "$branch_name"
+        echo "$branch_path"
         return 0
     fi
 
@@ -5945,11 +6061,25 @@ resolve_worktree_path() {
         return 0
     fi
 
+    # @there = the branch in the previous command line (see resolve_there_target)
+    if [ "$target" = "@there" ]; then
+        local there_entry
+        there_entry=$(resolve_there_target 2>/dev/null) || return 1
+        echo "${there_entry#*	}"
+        return 0
+    fi
+
     # Exact match
     local exact_path
     exact_path=$(get_worktree_path "$target" 2>/dev/null || echo "")
     if [ -n "$exact_path" ]; then
         echo "$exact_path"
+        return 0
+    fi
+
+    # Exact branch name (same rule as cmd_cd)
+    if exact_path=$(worktree_for_branch "$target"); then
+        echo "${exact_path#*	}"
         return 0
     fi
 
@@ -6020,6 +6150,9 @@ _implicit_cd_target_candidate() {
     local target="${1%/}"
     [ -n "$target" ] || return 1
     [ "$target" = "@" ] && return 0
+    # Always a candidate: when it cannot resolve, cmd_cd's error must
+    # reach the user instead of an "unknown command" fallthrough
+    [ "$target" = "@there" ] && return 0
 
     if resolve_worktree_path "$target" >/dev/null 2>&1; then
         return 0
@@ -8062,7 +8195,8 @@ Worktree Management:
   auto-remove [target] [--execute] Remove worktrees merged into target
 
 Navigation:
-  cd [worktree|@|-]              Navigate to worktree (@ main, - previous)
+  cd [worktree|branch|@|-]       Navigate to worktree (@ main, - previous)
+  @there                         Go where git said the branch is "already checked out at"
   use <worktree>                 Set worktree as current (atomic symlink swap)
   current [--name|--resolved]    Show current worktree path
 
@@ -8312,7 +8446,7 @@ show_help_brief() {
     echo "  use <worktree> [--select]      Set worktree as current (--select for fzf picker)"
     echo "  ps1                            Fast prompt helper (O(1), no git)"
     echo "  remove [worktree] [flags]      Remove worktree (--with-branch, --force-branch)"
-    echo "  cd [worktree|@|-] [--select]   Navigate to worktree (--select for fzf picker)"
+    echo "  cd [worktree|branch|@|@there|-]   Navigate to worktree (--select for fzf picker)"
     echo "  run <worktree> <cmd>           Run command in worktree"
     echo "  for-each <cmd>                 Run command in all worktrees"
     echo "  editor [worktree]              Open worktree in editor"
@@ -8643,6 +8777,11 @@ end
 _pwt_update_title
 
 function __PWT_CMD__
+    # "@there": hand the previous command line to the binary (see the
+    # zsh/bash wrapper); local + exported, gone when the function returns
+    if contains -- @there $argv
+        set -lx PWT_LAST_COMMAND (history --max 1 2>/dev/null)
+    end
     set -l is_cd 0
     set -l implicit_cd_target ""
     if test (count $argv) -ge 1
@@ -8920,6 +9059,18 @@ $cmd_name() {
             return 127
         }
     fi
+    # "@there": the binary resolves the branch named in the previous
+    # command line, and only this shell has that line (fc). Local +
+    # export: the binary sees it, the shell forgets it on return.
+    local PWT_LAST_COMMAND="" _pwt_arg=""
+    for _pwt_arg in "\$@"; do
+        if [[ "\$_pwt_arg" == "@there" ]]; then
+            PWT_LAST_COMMAND=\$(fc -ln -1 2>/dev/null) || PWT_LAST_COMMAND=""
+            PWT_LAST_COMMAND="\${PWT_LAST_COMMAND#"\${PWT_LAST_COMMAND%%[![:space:]]*}"}"
+            export PWT_LAST_COMMAND
+            break
+        fi
+    done
     # Check if this invocation should change the shell's directory.
     local _is_cd=false
     local _implicit_cd_target=""
@@ -9441,6 +9592,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             # Shortcut: pwt - = pwt cd - (go to previous worktree)
             require_project --info-only
             cmd_cd "-"
+            _cd_status=$?
+            [ -t 1 ] && _show_shell_init_tip >&2
+            exit $_cd_status
+            ;;
+        @there)
+            # Shortcut: pwt @there = pwt cd @there. Without the shell
+            # wrapper this only explains itself (no previous line to read)
+            require_project --info-only
+            cmd_cd "@there"
             _cd_status=$?
             [ -t 1 ] && _show_shell_init_tip >&2
             exit $_cd_status

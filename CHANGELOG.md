@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `pwt @there` in a shell that keeps no history (bash started with
+  `+o history`, as vhs and some tmux setups do) now says so, instead of
+  asking for the shell integration that is already loaded.
+
 ## [0.2.14] - 2026-09-30
 
 ### Added

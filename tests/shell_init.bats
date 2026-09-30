@@ -359,3 +359,20 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"leak=[]"* ]]
 }
+
+@test "shell function pwt @there in a shell without history says so" {
+    cd "$TEST_TEMP_DIR"
+
+    # +o history: how vhs and some tmux setups start bash; fc has nothing to read
+    run bash --norc --noprofile -i +o history <<EOF
+export PWT_DIR='$PWT_DIR'
+eval "\$('$PWT_BIN' shell-init)"
+cd '$TEST_REPO'
+git checkout test/TEST-WT
+pwt @there
+echo "now-in=\$(basename "\$PWD")"
+EOF
+    [[ "$output" == *"keeps no history"* ]]
+    [[ "$output" != *"shell integration"* ]]
+    [[ "$output" == *"now-in=test-repo"* ]]
+}

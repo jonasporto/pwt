@@ -9067,6 +9067,12 @@ $cmd_name() {
         if [[ "\$_pwt_arg" == "@there" ]]; then
             PWT_LAST_COMMAND=\$(fc -ln -1 2>/dev/null) || PWT_LAST_COMMAND=""
             PWT_LAST_COMMAND="\${PWT_LAST_COMMAND#"\${PWT_LAST_COMMAND%%[![:space:]]*}"}"
+            # Integration loaded but nothing to read: the shell keeps no
+            # history (bash +o history, how vhs and some tmux setups start it)
+            if [[ -z "\$PWT_LAST_COMMAND" ]]; then
+                echo "pwt @there: this shell keeps no history, so the previous command line is unreadable (set -o history)" >&2
+                return 1
+            fi
             export PWT_LAST_COMMAND
             break
         fi

@@ -300,8 +300,9 @@ $ pwt @there      # and you are in app-worktrees/login
 
 The wrapper reads the previous command line from the shell's history
 and resolves the branch named there to its worktree (main included).
-Nothing to copy or retype. Without the shell integration, `@there` has
-no previous line to read and says so.
+Nothing to copy or retype. Newer git words the refusal as "is already
+used by worktree at"; same moment, same answer. Without the shell
+integration, `@there` has no previous line to read and says so.
 
 ---
 

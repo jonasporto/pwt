@@ -338,7 +338,9 @@ pwt @there
 echo "now-in=\$(basename "\$PWD")"
 EOF
     [ "$status" -eq 0 ]
-    [[ "$output" == *"already checked out at"* ]]
+    # git < 2.46 says "already checked out at", newer says "already used
+    # by worktree at"; both are the refusal @there is for
+    [[ "$output" == *"is already checked out at"* || "$output" == *"is already used by worktree at"* ]]
     # A marker, not the last line: interactive bash echoes prompts too
     [[ "$output" == *"now-in=TEST-WT"* ]]
 }

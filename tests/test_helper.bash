@@ -13,6 +13,11 @@ _pwt_build_test_repo() {
     git init -q "$dest"
     git -C "$dest" config user.email "test@test.com"
     git -C "$dest" config user.name "Test User"
+    # No background maintenance: it drops lock files into .git/objects
+    # after a commit, and a cp -R of this repo mid-maintenance dies on
+    # "maintenance.lock: No such file or directory" (seen on macOS CI)
+    git -C "$dest" config maintenance.auto false
+    git -C "$dest" config gc.auto 0
     touch "$dest/README.md"
     git -C "$dest" add README.md
     git -C "$dest" commit -q -m "Initial commit"
@@ -42,7 +47,17 @@ setup_test_env() {
     local tmpl_root="${BATS_SUITE_TMPDIR:-${BATS_FILE_TMPDIR:-}}"
     if [ -n "$tmpl_root" ]; then
         local tmpl="$tmpl_root/pwt-template-repo"
-        [ -d "$tmpl/.git" ] || _pwt_build_test_repo "$tmpl"
+        # BATS_SUITE_TMPDIR is shared by every parallel bats process, so
+        # the template must appear atomically: build it under a unique
+        # name and rename into place. A process that loses the race sees
+        # a complete template, never one still being committed to.
+        if [ ! -d "$tmpl/.git" ]; then
+            local build
+            build=$(mktemp -d "$tmpl_root/pwt-template-build.XXXXXX")
+            _pwt_build_test_repo "$build/repo"
+            mv "$build/repo" "$tmpl" 2>/dev/null || true
+            rm -rf "$build"
+        fi
         cp -R "$tmpl" "$TEST_REPO"
     else
         _pwt_build_test_repo "$TEST_REPO"

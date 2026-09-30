@@ -307,6 +307,9 @@ PWTEOF
     "$PWT_BIN" create GWMSG-1 HEAD
     "$PWT_BIN" gateway init --port 39888
     run "$PWT_BIN" gateway use GWMSG-1
+    # bats hides $output on failure; this test has failed on macOS CI
+    # without ever saying why
+    echo "$output"
     [ "$status" -eq 0 ]
     [[ "$output" == *"DEFAULT flags"* ]]
     "$PWT_BIN" gateway down 2>/dev/null || true

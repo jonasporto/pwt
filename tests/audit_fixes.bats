@@ -306,10 +306,22 @@ server() {
 PWTEOF
     "$PWT_BIN" create GWMSG-1 HEAD
     "$PWT_BIN" gateway init --port 39888
+    # macOS CI runners are slow and loaded (3 bats files in parallel); the
+    # 30s default was not enough for python's http.server to bind there
+    export PWT_GATEWAY_WAIT_SECONDS=90
     run "$PWT_BIN" gateway use GWMSG-1
     # bats hides $output on failure; this test has failed on macOS CI
-    # without ever saying why
+    # without ever saying why. On failure, also show what the server job
+    # itself logged and who (if anyone) holds the port.
     echo "$output"
+    if [ "$status" -ne 0 ]; then
+        local port
+        port=$(echo "$output" | grep -oE 'on port [0-9]+' | head -1 | awk '{print $3}')
+        echo "--- server job log:"
+        cat "$PWT_DIR"/jobs/*.log 2>/dev/null || echo "(no job log)"
+        echo "--- listeners on port ${port:-?}:"
+        lsof -nP -iTCP:"${port:-0}" 2>/dev/null || echo "(none)"
+    fi
     [ "$status" -eq 0 ]
     [[ "$output" == *"DEFAULT flags"* ]]
     "$PWT_BIN" gateway down 2>/dev/null || true

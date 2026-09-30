@@ -20,10 +20,8 @@ $ pwt @in
 They were not guesses at syntax I had forgotten. I knew none of them
 existed. I typed them the way you say a word you wish existed: git had
 just refused, the path was right there in its own error, and the next
-action could not possibly be typing all of that again. Each try fell into
-pwt's fuzzy picker, which is what it does with a word it cannot resolve;
-the `^C` is me leaving it. What I actually wanted was for a past version
-of me to have thought of this already.
+action could not possibly be typing all of that again. What I actually
+wanted was for a past version of me to have thought of this already.
 
 ## We type less. What we still type changed.
 

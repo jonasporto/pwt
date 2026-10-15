@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-10-15
+
 ### Added
 - Pwtfile `environment()` hook: prints shell assignments for the worktree
   (`mise env -s bash`, `direnv export bash`), and pwt applies them before

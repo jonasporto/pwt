@@ -36,6 +36,7 @@ links straight to it.
 <a href="#gateway"><code>gateway</code></a>
 <a href="#servers"><code>servers</code></a>
 <a href="#run"><code>run</code></a>
+<a href="#environment"><code>environment</code></a>
 <a href="#for-each"><code>for-each</code></a>
 <a href="#diff"><code>diff</code></a>
 <a href="#repair"><code>repair</code></a>
@@ -435,6 +436,24 @@ Examples:
   pwt run TICKET-123 ./scripts/test    # in specific worktree
   pwt run @ git status           # in main app
   pwt run ./scripts/test         # in current/main
+```
+
+## pwt environment {#environment}
+
+```
+Usage: pwt environment [worktree]
+
+Print the shell assignments the Pwtfile's environment() gives a
+worktree (the global Pwtfile's first, the project's last).
+pwt applies them itself before 'pwt run' and every Pwtfile command;
+this prints them for anything else.
+
+Arguments:
+  worktree   Target worktree (@ for main; default: current or main)
+
+Examples:
+  eval "$(pwt environment)"            # this shell, current worktree
+  pwt environment TICKET-123 > .env.sh   # for a tool that sources a file
 ```
 
 ## pwt for-each {#for-each}

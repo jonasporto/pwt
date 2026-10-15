@@ -196,6 +196,14 @@ pwt for-each <command>             # main checkout + every worktree; exits
                                    # non-zero listing worktrees that failed
 ```
 
+If the project's tools come from a version manager that switches on a shell
+hook (mise activate, direnv, nvm), the Pwtfile's `environment()` is what
+gives `pwt run` the worktree's tools; `pwt environment [worktree]` prints
+those assignments for a shell pwt does not start (`eval "$(pwt environment)"`).
+A runtime probe that reports another version than the project declares means
+no `environment()` covers it: report that, do not work around it with a
+hard-coded path.
+
 This applies to runtime probes (`ruby -v`, `node -v`), test runners, linters,
 generators, and anything that reads `.env`, installed dependencies, generated
 config or setup output.

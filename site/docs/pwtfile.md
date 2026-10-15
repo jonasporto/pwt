@@ -30,6 +30,10 @@ Lifecycle Hooks:
                 (deps installed, registry auth, services reachable...)
   branch_name() Names the branch for "pwt create" ($1 worktree, $2 desc).
                 Owns the project's naming convention; --branch still wins.
+  environment() Prints shell assignments for the worktree (e.g.
+                "mise env -s bash", "direnv export bash"); applied before
+                "pwt run" and every Pwtfile command, printed by
+                "pwt environment". Global Pwtfile first, project last.
 
 Custom Commands:
   xxx()         Any function becomes "pwt xxx"

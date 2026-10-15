@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Pwtfile `environment()` hook: prints shell assignments for the worktree
+  (`mise env -s bash`, `direnv export bash`), and pwt applies them before
+  `pwt run`, `for-each` and every Pwtfile command, background jobs and
+  setup on create included. Version managers that switch on a shell hook
+  never fired in pwt's subshells, so commands ran with the tools of wherever
+  pwt was called from. The global Pwtfile's come first, the project's last;
+  a failing `environment()` warns and never blocks.
+- `pwt environment [worktree]` prints those assignments, for scripts and
+  agent shells pwt does not start.
+
 ### Fixed
 - `pwt @there` in a shell that keeps no history (bash started with
   `+o history`, as vhs and some tmux setups do) now says so, instead of

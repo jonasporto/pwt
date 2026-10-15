@@ -213,6 +213,12 @@ List installed pwt versions (aliases: \fBversions\fR, \fBwhich\fR). With
 .B run \fINAME\fR \fICOMMAND\fR...
 Run command in specific worktree context
 .TP
+.B environment \fR[\fINAME\fR]
+Print the shell assignments the Pwtfile's \fBenvironment()\fR gives the
+worktree (default: current or main), for \fBeval "$(pwt environment)"\fR
+or a tool that sources a file. pwt applies them itself before \fBrun\fR,
+\fBfor\-each\fR and every Pwtfile command.
+.TP
 .B for\-each \fICOMMAND\fR...
 Run command in all worktrees
 .TP
@@ -362,6 +368,15 @@ Run after worktree creation
 .TP
 .B cleanup()
 Run before worktree removal
+.TP
+.B environment()
+Print shell assignments for the worktree it runs in (for example
+\fBmise env \-s bash\fR or \fBdirenv export bash\fR). A version manager
+that switches on a shell hook never fires in the subshell pwt runs commands
+in; pwt applies these assignments before \fBpwt run\fR, \fBfor\-each\fR and
+every Pwtfile command, and prints them with \fBpwt environment\fR. The global
+Pwtfile's come first and the project's last, so the project wins. A failing
+\fBenvironment()\fR warns and the command runs without it.
 .TP
 .I custom_command()
 Any function becomes available as \fBpwt custom_command\fR

@@ -262,6 +262,26 @@ hook: it receives the worktree name and description and prints the branch to
 create (`--branch` always wins, and returning nothing falls back to pwt's
 default). See `examples/Pwtfile.reference` for the full semantics.
 
+A version manager that switches on a shell hook (`mise activate`, direnv,
+nvm, chruby) never fires in the subshell pwt runs commands in, so a command
+gets the tools of wherever pwt was called from. An `environment()` hook
+prints shell assignments for the worktree it runs in, and pwt applies them
+before `pwt run`, `for-each` and every Pwtfile command (setup on create,
+`server`, background jobs):
+
+```bash
+# In ~/.pwt/Pwtfile (every project) or the project's Pwtfile
+environment() {
+    mise env -s bash          # or: direnv export bash
+}
+```
+
+The global Pwtfile's assignments come first and the project's last, so the
+project wins. A failing `environment()` warns and the command runs without
+it. `pwt environment [worktree]` prints the same lines for anything that runs
+outside pwt: `eval "$(pwt environment)"` in a script, or an agent's shell
+that sources an env file.
+
 Pwtfile commands can be called with progressively less context:
 
 ```bash
@@ -321,6 +341,7 @@ integration, `@there` has no previous line to read and says so.
 | `<worktree>` | Navigate to worktree inside the current project (any unique fragment matches: `pwt 1234` finds `TICKET-1234-fix-login`) |
 | `<project> <worktree>` | Jump to worktree in another project |
 | `run <worktree> <cmd>` | Run a command inside that worktree |
+| `environment [worktree]` | Print the worktree's `environment()` assignments (`eval "$(pwt environment)"`) |
 | `for-each <cmd>` | Run a command in the main checkout and every worktree |
 | `editor` | Open editor in current worktree |
 | `server` | Start dev server (from Pwtfile) |

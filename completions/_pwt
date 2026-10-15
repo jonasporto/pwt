@@ -31,6 +31,7 @@ _pwt_commands() {
         'self:List/switch installed pwt versions'
         'versions:List/switch installed pwt versions'
         'run:Run command in worktree'
+        'environment:Print the worktree environment (Pwtfile environment())'
         'for-each:Run command in all worktrees'
         'editor:Open worktree in editor'
         'e:Open worktree in editor'
@@ -295,7 +296,7 @@ _pwt() {
                             "worktrees:worktree:_pwt_worktrees $_project" \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|port|editor|e|current|repair|fix|step)
+                    cd|use|server|s|info|show|fix-port|port|editor|e|current|repair|fix|step|environment)
                         _pwt_worktrees "$_project"
                         ;;
                     gateway)
@@ -424,7 +425,7 @@ _pwt() {
                             'worktrees:worktree:_pwt_worktrees' \
                             'flags:flag:_pwt_remove_flags'
                         ;;
-                    cd|use|server|s|info|show|fix-port|repair|fix|port|editor|e|current)
+                    cd|use|server|s|info|show|fix-port|repair|fix|port|editor|e|current|environment)
                         _pwt_worktrees
                         ;;
                     gateway)

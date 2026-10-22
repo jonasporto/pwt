@@ -186,7 +186,7 @@ _router_url() {
 		[ "$scheme" = http ] && port=$(_router_get port)
 	fi
 	case "$scheme:$port" in
-		*: | *:none | *:0 | http:80 | https:443) port="" ;;
+	*: | *:none | *:0 | http:80 | https:443) port="" ;;
 	esac
 	printf '%s://%s%s\n' "$scheme" "$host" "${port:+:$port}"
 }
@@ -353,10 +353,10 @@ router_activity() {
 
 _router_node_env() {
 	PWT_ROUTER_PORT="$(_router_get port)" \
-		PWT_ROUTER_LISTEN="$(_router_get listen)" \
-		PWT_BIN="$(_pwt_realpath "$0")" \
-		PWT_DIR="$PWT_DIR" \
-		PWT_NO_UPDATE_CHECK=1 \
+	PWT_ROUTER_LISTEN="$(_router_get listen)" \
+	PWT_BIN="$(_pwt_realpath "$0")" \
+	PWT_DIR="$PWT_DIR" \
+	PWT_NO_UPDATE_CHECK=1 \
 		"$@"
 }
 
@@ -436,42 +436,42 @@ _router_set_option() {
 		return "$EXIT_USAGE"
 	fi
 	case "$key" in
-		port | port_offset | hold_seconds | boot_timeout | max_servers)
-			if ! [[ "$value" =~ ^[0-9]+$ ]]; then
-				pwt_error "Error: $key takes a whole number (got '$value')"
-				return "$EXIT_USAGE"
-			fi
-			;;
-		idle_minutes)
-			if ! [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-				pwt_error "Error: idle_minutes takes a number of minutes (got '$value')"
-				return "$EXIT_USAGE"
-			fi
-			;;
-		domain)
-			if [ -n "$value" ] && ! [[ "$value" =~ ^[A-Za-z0-9.-]+$ ]]; then
-				pwt_error "Error: domain must be a hostname without scheme or port"
-				return "$EXIT_USAGE"
-			fi
-			;;
-		template | alias_template | main_template | main_alias_template)
-			if ! [[ "$value" =~ ^[A-Za-z0-9.{}-]+$ ]]; then
-				pwt_error "Error: $key may contain letters, digits, '.', '-' and {project} {worktree} {alias}"
-				return "$EXIT_USAGE"
-			fi
-			;;
-		host_routing | expose_logs)
-			if [ "$value" != true ] && [ "$value" != false ]; then
-				pwt_error "Error: $key is true or false"
-				return "$EXIT_USAGE"
-			fi
-			;;
-		scheme)
-			if [ "$value" != http ] && [ "$value" != https ]; then
-				pwt_error "Error: scheme is http or https"
-				return "$EXIT_USAGE"
-			fi
-			;;
+	port | port_offset | hold_seconds | boot_timeout | max_servers)
+		if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+			pwt_error "Error: $key takes a whole number (got '$value')"
+			return "$EXIT_USAGE"
+		fi
+		;;
+	idle_minutes)
+		if ! [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+			pwt_error "Error: idle_minutes takes a number of minutes (got '$value')"
+			return "$EXIT_USAGE"
+		fi
+		;;
+	domain)
+		if [ -n "$value" ] && ! [[ "$value" =~ ^[A-Za-z0-9.-]+$ ]]; then
+			pwt_error "Error: domain must be a hostname without scheme or port"
+			return "$EXIT_USAGE"
+		fi
+		;;
+	template | alias_template | main_template | main_alias_template)
+		if ! [[ "$value" =~ ^[A-Za-z0-9.{}-]+$ ]]; then
+			pwt_error "Error: $key may contain letters, digits, '.', '-' and {project} {worktree} {alias}"
+			return "$EXIT_USAGE"
+		fi
+		;;
+	host_routing | expose_logs)
+		if [ "$value" != true ] && [ "$value" != false ]; then
+			pwt_error "Error: $key is true or false"
+			return "$EXIT_USAGE"
+		fi
+		;;
+	scheme)
+		if [ "$value" != http ] && [ "$value" != https ]; then
+			pwt_error "Error: scheme is http or https"
+			return "$EXIT_USAGE"
+		fi
+		;;
 	esac
 	state_set "$PWT_DIR/config" "router.$key" "$value"
 }
@@ -481,39 +481,39 @@ _router_routes() {
 	routes=$(_router_rows | _router_render)
 	hosts=$(_router_get host_routing)
 	case "$format" in
-		porcelain)
-			[ -n "$routes" ] && printf '%s\n' "$routes"
-			;;
-		json)
-			local host p w port alias var pub rows=""
-			while IFS=$'\037' read -r host p w port alias var pub; do
-				[ -n "$host" ] || continue
-				[ -z "$alias" ] || [ "$hosts" = true ] || continue
-				rows="${rows:+$rows,}$(printf '{"project":%s,"worktree":%s,"port":%s,"public_port":%s,"public_url":%s,"host":%s,"alias":%s}' \
-					"$(json_str "$p")" "$(json_str "$w")" "$(json_num_or_null "$port")" \
-					"$(json_num_or_null "$pub")" "$(json_str_or_null "${pub:+http://localhost:$pub}")" \
-					"$(json_str_or_null "$([ "$hosts" = true ] && echo "$host")")" "$(json_str_or_null "$alias")")"
-			done <<<"$(printf '%s' "$routes" | tr '\t' '\037')"
-			printf '[%s]\n' "$rows"
-			;;
-		*)
-			if [ -z "$routes" ]; then
-				echo "(no routes: no project has a worktree with a port yet)"
-				return 0
-			fi
+	porcelain)
+		[ -n "$routes" ] && printf '%s\n' "$routes"
+		;;
+	json)
+		local host p w port alias var pub rows=""
+		while IFS=$'\037' read -r host p w port alias var pub; do
+			[ -n "$host" ] || continue
+			[ -z "$alias" ] || [ "$hosts" = true ] || continue
+			rows="${rows:+$rows,}$(printf '{"project":%s,"worktree":%s,"port":%s,"public_port":%s,"public_url":%s,"host":%s,"alias":%s}' \
+				"$(json_str "$p")" "$(json_str "$w")" "$(json_num_or_null "$port")" \
+				"$(json_num_or_null "$pub")" "$(json_str_or_null "${pub:+http://localhost:$pub}")" \
+				"$(json_str_or_null "$([ "$hosts" = true ] && echo "$host")")" "$(json_str_or_null "$alias")")"
+		done <<<"$(printf '%s' "$routes" | tr '\t' '\037')"
+		printf '[%s]\n' "$rows"
+		;;
+	*)
+		if [ -z "$routes" ]; then
+			echo "(no routes: no project has a worktree with a port yet)"
+			return 0
+		fi
+		if [ "$hosts" = true ]; then
+			printf '%-8s %-20s %-28s %-6s %s\n' "PUBLIC" "PROJECT" "WORKTREE" "PORT" "HOST"
+		else
+			printf '%-8s %-20s %-28s %s\n' "PUBLIC" "PROJECT" "WORKTREE" "PORT"
+		fi
+		printf '%s\n' "$routes" | tr '\t' '\037' | while IFS=$'\037' read -r host p w port alias var pub; do
 			if [ "$hosts" = true ]; then
-				printf '%-8s %-20s %-28s %-6s %s\n' "PUBLIC" "PROJECT" "WORKTREE" "PORT" "HOST"
-			else
-				printf '%-8s %-20s %-28s %s\n' "PUBLIC" "PROJECT" "WORKTREE" "PORT"
+				printf '%-8s %-20s %-28s %-6s %s\n' "${pub:--}" "$p" "$w" "$port" "$host"
+			elif [ -z "$alias" ]; then
+				printf '%-8s %-20s %-28s %s\n' "${pub:--}" "$p" "$w" "$port"
 			fi
-			printf '%s\n' "$routes" | tr '\t' '\037' | while IFS=$'\037' read -r host p w port alias var pub; do
-				if [ "$hosts" = true ]; then
-					printf '%-8s %-20s %-28s %-6s %s\n' "${pub:--}" "$p" "$w" "$port" "$host"
-				elif [ -z "$alias" ]; then
-					printf '%-8s %-20s %-28s %s\n' "${pub:--}" "$p" "$w" "$port"
-				fi
-			done
-			;;
+		done
+		;;
 	esac
 }
 
@@ -588,147 +588,147 @@ cmd_router() {
 	shift || true
 
 	case "$subcmd" in
-		-h | --help | help)
-			_router_help
-			;;
-		up | start)
-			local foreground=false
-			while [ $# -gt 0 ]; do
-				case "$1" in
-					--port | -p)
-						_router_set_option port "${2:-}" || return $?
-						shift 2
-						;;
-					--listen)
-						_router_set_option listen "${2:-}" || return $?
-						shift 2
-						;;
-					--foreground)
-						foreground=true
-						shift
-						;;
-					*)
-						pwt_error "Unknown option: $1"
-						return "$EXIT_USAGE"
-						;;
-				esac
-			done
-			if [ "$foreground" = true ]; then
-				command -v node >/dev/null 2>&1 || {
-					pwt_error "Error: node is required for pwt router"
-					return "$EXIT_DEPENDENCY"
-				}
-				_router_node_env exec node "$PWT_LIB/router.js"
-			fi
-			_router_start || return $?
-			echo "Router running (status page: http://localhost:$(_router_get port))"
-			echo "  Worktrees: pwt router routes"
-			;;
-		down | stop)
-			_router_stop
-			;;
-		restart)
-			_router_stop >/dev/null
-			_router_start || return $?
-			echo "Router running on port $(_router_get port)"
-			;;
-		status)
-			_router_status "$@"
-			;;
-		routes)
-			case "${1:-}" in
-				--json) _router_routes json ;;
-				--porcelain) _router_routes porcelain ;;
-				"") _router_routes text ;;
-				*)
-					pwt_error "Unknown option: $1"
-					return "$EXIT_USAGE"
-					;;
+	-h | --help | help)
+		_router_help
+		;;
+	up | start)
+		local foreground=false
+		while [ $# -gt 0 ]; do
+			case "$1" in
+			--port | -p)
+				_router_set_option port "${2:-}" || return $?
+				shift 2
+				;;
+			--listen)
+				_router_set_option listen "${2:-}" || return $?
+				shift 2
+				;;
+			--foreground)
+				foreground=true
+				shift
+				;;
+			*)
+				pwt_error "Unknown option: $1"
+				return "$EXIT_USAGE"
+				;;
 			esac
-			;;
-		url)
-			require_project
-			local target="${1:-}" name
-			if [ -z "$target" ]; then
-				name=$(get_current_from_symlink 2>/dev/null || true)
-				[[ "$PWD" == "$WORKTREES_DIR"/* ]] && name=$(basename "${PWD#"$WORKTREES_DIR"/}")
-				name="${name%%/*}"
-			elif [ "$target" = "@" ]; then
-				name="@"
-			else
-				local path
-				path=$(resolve_worktree_path "$target" 2>/dev/null || true)
-				[ -n "$path" ] && [ -d "$path" ] && name=$(basename "$path")
-			fi
-			if [ -z "${name:-}" ]; then
-				pwt_error "Error: Worktree not found: ${target:-(none current)}"
-				return "$EXIT_NOT_FOUND"
-			fi
-			local wt_port
-			if [ "$name" = "@" ]; then
-				wt_port="${BASE_PORT:-5000}"
-			else
-				wt_port=$(get_metadata "$name" "port")
-			fi
-			router_export_env "$CURRENT_PROJECT" "$name" "$wt_port"
-			if [ "$(_router_get host_routing)" = true ] && [ -n "$PWT_URL" ]; then
-				echo "$PWT_URL"
-				return 0
-			fi
-			if [ -z "$PWT_PUBLIC_URL" ]; then
-				pwt_error "Error: No public port for $name (pwt port ${wt_port:-unknown})"
-				return "$EXIT_NOT_FOUND"
-			fi
-			echo "$PWT_PUBLIC_URL"
-			;;
-		config)
-			local key="${1:-}" value
-			if [ -z "$key" ]; then
-				printf '%s\n' "$_ROUTER_KEYS" | while IFS=$'\t' read -r key _ _; do
-					printf '%s=%s\n' "$key" "$(_router_get "$key")"
-				done
-				return 0
-			fi
-			if ! _router_key_default "$key" >/dev/null; then
-				_router_set_option "$key" "" # prints the error and the list
-				return $?
-			fi
-			if [ $# -lt 2 ]; then
-				_router_get "$key"
-				return 0
-			fi
-			value="$2"
-			if [ "$value" = "--unset" ]; then
-				state_del "$PWT_DIR/config" "router.$key"
-				echo "router.$key reset to default: $(_router_get "$key")"
-				return 0
-			fi
-			_router_set_option "$key" "$value" || return $?
-			echo "router.$key=$value"
-			case "$key" in
-				port | listen)
-					_router_is_running && echo "  Restart to apply: pwt router restart"
-					;;
-			esac
-			return 0
-			;;
-		logs | log)
-			local log_file
-			log_file=$(_router_log_file)
-			[ -f "$log_file" ] || {
-				echo "No router log found"
-				return 0
+		done
+		if [ "$foreground" = true ]; then
+			command -v node >/dev/null 2>&1 || {
+				pwt_error "Error: node is required for pwt router"
+				return "$EXIT_DEPENDENCY"
 			}
-			if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--follow" ]; then
-				tail -f "$log_file"
-			else
-				tail -50 "$log_file"
-			fi
-			;;
+			_router_node_env exec node "$PWT_LIB/router.js"
+		fi
+		_router_start || return $?
+		echo "Router running (status page: http://localhost:$(_router_get port))"
+		echo "  Worktrees: pwt router routes"
+		;;
+	down | stop)
+		_router_stop
+		;;
+	restart)
+		_router_stop >/dev/null
+		_router_start || return $?
+		echo "Router running on port $(_router_get port)"
+		;;
+	status)
+		_router_status "$@"
+		;;
+	routes)
+		case "${1:-}" in
+		--json) _router_routes json ;;
+		--porcelain) _router_routes porcelain ;;
+		"") _router_routes text ;;
 		*)
-			pwt_error "Unknown router command: $subcmd"
-			echo "Run 'pwt router help' for usage" >&2
+			pwt_error "Unknown option: $1"
 			return "$EXIT_USAGE"
 			;;
+		esac
+		;;
+	url)
+		require_project
+		local target="${1:-}" name
+		if [ -z "$target" ]; then
+			name=$(get_current_from_symlink 2>/dev/null || true)
+			[[ "$PWD" == "$WORKTREES_DIR"/* ]] && name=$(basename "${PWD#"$WORKTREES_DIR"/}")
+			name="${name%%/*}"
+		elif [ "$target" = "@" ]; then
+			name="@"
+		else
+			local path
+			path=$(resolve_worktree_path "$target" 2>/dev/null || true)
+			[ -n "$path" ] && [ -d "$path" ] && name=$(basename "$path")
+		fi
+		if [ -z "${name:-}" ]; then
+			pwt_error "Error: Worktree not found: ${target:-(none current)}"
+			return "$EXIT_NOT_FOUND"
+		fi
+		local wt_port
+		if [ "$name" = "@" ]; then
+			wt_port="${BASE_PORT:-5000}"
+		else
+			wt_port=$(get_metadata "$name" "port")
+		fi
+		router_export_env "$CURRENT_PROJECT" "$name" "$wt_port"
+		if [ "$(_router_get host_routing)" = true ] && [ -n "$PWT_URL" ]; then
+			echo "$PWT_URL"
+			return 0
+		fi
+		if [ -z "$PWT_PUBLIC_URL" ]; then
+			pwt_error "Error: No public port for $name (pwt port ${wt_port:-unknown})"
+			return "$EXIT_NOT_FOUND"
+		fi
+		echo "$PWT_PUBLIC_URL"
+		;;
+	config)
+		local key="${1:-}" value
+		if [ -z "$key" ]; then
+			printf '%s\n' "$_ROUTER_KEYS" | while IFS=$'\t' read -r key _ _; do
+				printf '%s=%s\n' "$key" "$(_router_get "$key")"
+			done
+			return 0
+		fi
+		if ! _router_key_default "$key" >/dev/null; then
+			_router_set_option "$key" "" # prints the error and the list
+			return $?
+		fi
+		if [ $# -lt 2 ]; then
+			_router_get "$key"
+			return 0
+		fi
+		value="$2"
+		if [ "$value" = "--unset" ]; then
+			state_del "$PWT_DIR/config" "router.$key"
+			echo "router.$key reset to default: $(_router_get "$key")"
+			return 0
+		fi
+		_router_set_option "$key" "$value" || return $?
+		echo "router.$key=$value"
+		case "$key" in
+		port | listen)
+			_router_is_running && echo "  Restart to apply: pwt router restart"
+			;;
+		esac
+		return 0
+		;;
+	logs | log)
+		local log_file
+		log_file=$(_router_log_file)
+		[ -f "$log_file" ] || {
+			echo "No router log found"
+			return 0
+		}
+		if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--follow" ]; then
+			tail -f "$log_file"
+		else
+			tail -50 "$log_file"
+		fi
+		;;
+	*)
+		pwt_error "Unknown router command: $subcmd"
+		echo "Run 'pwt router help' for usage" >&2
+		return "$EXIT_USAGE"
+		;;
 	esac
 }

@@ -658,10 +658,10 @@ _servers_boot_json() {
 	prev="${file%.jsonl}.prev.jsonl"
 	line=$(grep '"step":"boot"' "$file" 2>/dev/null | tail -1)
 	case "$line" in
-		*'"state":"done"'*) state=done ;;
-		*'"state":"fail"'*) state=failed ;;
-		*'"state":"start"'*) state=booting ;;
-		*) state=none ;;
+	*'"state":"done"'*) state=done ;;
+	*'"state":"fail"'*) state=failed ;;
+	*'"state":"start"'*) state=booting ;;
+	*) state=none ;;
 	esac
 	dur=$(printf '%s' "$line" | sed -n 's/.*"duration_ms":\([0-9][0-9]*\).*/\1/p')
 	if [ "$state" = done ]; then
@@ -682,25 +682,25 @@ _servers_stop() {
 	local target="" idle=false
 	while [ $# -gt 0 ]; do
 		case "$1" in
-			--idle)
-				idle=true
-				shift
-				;;
-			-h | --help)
-				echo "Usage: pwt servers stop <worktree|@> [--idle]"
-				echo ""
-				echo "Stop the background (pwt-managed) server of a worktree."
-				echo "  --idle   Refuse (exit 4) while a request or another pwt job is active"
-				return 0
-				;;
-			-*)
-				pwt_error "Unknown option: $1"
-				return $EXIT_USAGE
-				;;
-			*)
-				target="$1"
-				shift
-				;;
+		--idle)
+			idle=true
+			shift
+			;;
+		-h | --help)
+			echo "Usage: pwt servers stop <worktree|@> [--idle]"
+			echo ""
+			echo "Stop the background (pwt-managed) server of a worktree."
+			echo "  --idle   Refuse (exit 4) while a request or another pwt job is active"
+			return 0
+			;;
+		-*)
+			pwt_error "Unknown option: $1"
+			return $EXIT_USAGE
+			;;
+		*)
+			target="$1"
+			shift
+			;;
 		esac
 	done
 	if [ -z "$target" ]; then

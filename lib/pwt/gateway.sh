@@ -649,7 +649,97 @@ _servers_print_row() {
 	return 0
 }
 
+# Boot summary of one worktree as a JSON object:
+#   {"state":"booting|done|failed|none","duration_ms":N,"last_good_ms":N}
+# last_good_ms is the most recent successful boot, the wait estimate.
+_servers_boot_json() {
+	local file prev line state dur good
+	file=$(_boot_file "$1" "$2")
+	prev="${file%.jsonl}.prev.jsonl"
+	line=$(grep '"step":"boot"' "$file" 2>/dev/null | tail -1)
+	case "$line" in
+		*'"state":"done"'*) state=done ;;
+		*'"state":"fail"'*) state=failed ;;
+		*'"state":"start"'*) state=booting ;;
+		*) state=none ;;
+	esac
+	dur=$(printf '%s' "$line" | sed -n 's/.*"duration_ms":\([0-9][0-9]*\).*/\1/p')
+	if [ "$state" = done ]; then
+		good="$dur"
+	else
+		good=$(grep '"step":"boot","state":"done"' "$prev" 2>/dev/null | tail -1 |
+			sed -n 's/.*"duration_ms":\([0-9][0-9]*\).*/\1/p')
+	fi
+	printf '{"state":"%s","duration_ms":%s,"last_good_ms":%s}' \
+		"$state" "$(json_num_or_null "$dur")" "$(json_num_or_null "$good")"
+}
+
+# pwt servers stop <worktree> [--idle]
+# Stops the pwt-managed server jobs of one worktree. --idle refuses (exit 4)
+# while the worktree is busy: a request in flight through the router, or
+# another pwt job running for it. This is what the router's idle stop runs.
+_servers_stop() {
+	local target="" idle=false
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--idle)
+				idle=true
+				shift
+				;;
+			-h | --help)
+				echo "Usage: pwt servers stop <worktree|@> [--idle]"
+				echo ""
+				echo "Stop the background (pwt-managed) server of a worktree."
+				echo "  --idle   Refuse (exit 4) while a request or another pwt job is active"
+				return 0
+				;;
+			-*)
+				pwt_error "Unknown option: $1"
+				return $EXIT_USAGE
+				;;
+			*)
+				target="$1"
+				shift
+				;;
+		esac
+	done
+	if [ -z "$target" ]; then
+		pwt_error "Usage: pwt servers stop <worktree|@> [--idle]"
+		return $EXIT_USAGE
+	fi
+	local name="@"
+	if [ "$target" != "@" ]; then
+		local path
+		path=$(resolve_worktree_path "$target" 2>/dev/null || true)
+		if [ -z "$path" ] || [ ! -d "$path" ]; then
+			pwt_error "Error: Worktree not found: $target"
+			return $EXIT_NOT_FOUND
+		fi
+		name=$(basename "$path")
+	fi
+	load_module router
+	if [ "$idle" = true ] && _router_instance_busy "$CURRENT_PROJECT" "$name"; then
+		pwt_error "Busy: $name has a request or another pwt job in flight; not stopping"
+		return $EXIT_CONFLICT
+	fi
+	local rc=0
+	router_stop_instance "$CURRENT_PROJECT" "$name" || rc=$?
+	if [ "$rc" -eq "$EXIT_NOT_FOUND" ]; then
+		pwt_error "No pwt-managed server running for $name"
+		echo "  (a foreground server is stopped where it runs, with Ctrl-C)" >&2
+		return $EXIT_NOT_FOUND
+	fi
+	[ "$idle" = true ] && events_append "$CURRENT_PROJECT" "$name" "server_idle_stop" ""
+	return "$rc"
+}
+
 cmd_servers() {
+	if [ "${1:-}" = "stop" ]; then
+		shift
+		_servers_stop "$@"
+		return $?
+	fi
+
 	local show_all=false
 	local json=false
 
@@ -665,8 +755,10 @@ cmd_servers() {
 			;;
 		-h | --help | help)
 			echo "Usage: pwt servers [--all] [--json]"
+			echo "       pwt servers stop <worktree|@> [--idle]"
 			echo ""
 			echo "Show development server status for the current project."
+			echo "--json adds each worktree's public router port and boot summary."
 			echo ""
 			echo "Options:"
 			echo "  --all, -a   Include stopped worktrees"
@@ -688,8 +780,9 @@ cmd_servers() {
 	has_pwtfile_command "server" && has_server=true
 
 	if [ "$json" = true ]; then
+		load_module router
 		local rows=""
-		local name path port branch listening job marker row
+		local name path port branch listening job marker row activity
 		while IFS=$'\t' read -r name path; do
 			[ -n "$name" ] && [ -d "$path" ] || continue
 			port=$(get_metadata "$name" "port")
@@ -701,14 +794,21 @@ cmd_servers() {
 			[ "$name" = "$gateway_target" ] && marker="${marker}gateway "
 			[ "$name" = "$current" ] && marker="${marker}current "
 			if [ "$show_all" = true ] || [ "$listening" = true ] || [ -n "$job" ] || [ -n "$marker" ]; then
-				row=$(printf '{"name":%s,"path":%s,"port":%s,"branch":%s,"listening":%s,"job":%s,"marker":%s}' \
+				router_export_env "$CURRENT_PROJECT" "$name" "$port"
+				activity=$(router_activity "$CURRENT_PROJECT" "$name")
+				row=$(printf '{"name":%s,"path":%s,"port":%s,"branch":%s,"listening":%s,"job":%s,"marker":%s,"public_port":%s,"public_url":%s,"last_request_epoch":%s,"in_flight":%s,"boot":%s}' \
 					"$(json_str "$name")" \
 					"$(json_str "$path")" \
 					"$(json_num_or_null "$port")" \
 					"$(json_str "$branch")" \
 					"$listening" \
 					"$(json_str_or_null "$job")" \
-					"$(json_str "${marker% }")")
+					"$(json_str "${marker% }")" \
+					"$(json_num_or_null "$PWT_PUBLIC_PORT")" \
+					"$(json_str_or_null "$PWT_PUBLIC_URL")" \
+					"$(json_num_or_null "${activity%% *}")" \
+					"$(json_num_or_null "${activity##* }")" \
+					"$(_servers_boot_json "$CURRENT_PROJECT" "$name")")
 				rows="${rows:+$rows,}$row"
 			fi
 		done < <(list_known_worktree_entries)

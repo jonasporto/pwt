@@ -97,6 +97,7 @@ cmd_create() {
 	local use_clone=false
 	local explicit_branch=""
 	local track_existing_ref=""
+	local detach=false
 
 	# Parse arguments
 	while [ $# -gt 0 ]; do
@@ -141,6 +142,10 @@ cmd_create() {
 			from_current=true
 			shift
 			;;
+		--detach)
+			detach=true
+			shift
+			;;
 		--)
 			# Everything after -- is the description
 			shift
@@ -159,6 +164,8 @@ cmd_create() {
 			echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
 			echo "  --from-current    Create from current branch"
 			echo "  --branch <name>   Use exact Git branch name (directory still uses <branch>)"
+			echo "  --detach          Check out the base ref (a commit, tag, branch) detached:"
+			echo "                    no branch is created; <branch> only names the worktree"
 			echo "  --track <remote/ref>"
 			echo "  --track-existing <remote/ref>"
 			echo "                    Create local branch tracking an existing remote branch"
@@ -232,6 +239,17 @@ cmd_create() {
 		branch="$explicit_branch"
 	fi
 
+	if [ "$detach" = true ]; then
+		if [ -n "$explicit_branch" ] || [ -n "$track_existing_ref" ] || [ "$use_clone" = true ]; then
+			pwt_error "Error: --detach creates no branch; it cannot be combined with --branch, --track or --clone"
+			exit $EXIT_USAGE
+		fi
+		if [ -z "$base_ref" ]; then
+			pwt_error "Error: --detach needs the commit to check out: pwt create <name> <ref> --detach"
+			exit $EXIT_USAGE
+		fi
+	fi
+
 	if [ -z "$branch" ]; then
 		pwt_error "Error: Branch/ticket not specified"
 		echo "Usage: pwt create <branch> [base-ref] [description...] [options]"
@@ -243,6 +261,7 @@ cmd_create() {
 		echo "  --from <ref>      Create from specific ref (tag, commit, branch)"
 		echo "  --from-current    Create from current branch"
 		echo "  --branch <name>   Use exact Git branch name"
+		echo "  --detach          Detached at the base ref, no branch"
 		echo "  --track <remote/ref>"
 		echo "  --track-existing <remote/ref>"
 		echo "                    Create local branch tracking an existing remote branch"
@@ -312,8 +331,31 @@ cmd_create() {
 	# Determine if need to create new branch or use existing
 	local new_branch_name=""
 	local git_worktree_args=()
+	local detach_commit=""
 
-	if [ -n "$base_ref" ]; then
+	if [ "$detach" = true ]; then
+		# Any commit-ish; one this clone has not seen yet is fetched by name
+		# (a remote branch, tag or a full sha the remote still has)
+		detach_commit=$(git rev-parse --verify --quiet "$base_ref^{commit}" 2>/dev/null || true)
+		if [ -z "$detach_commit" ] && git remote get-url origin >/dev/null 2>&1; then
+			if git fetch origin "${base_ref#origin/}" --quiet 2>/dev/null; then
+				detach_commit=$(git rev-parse --verify --quiet "$base_ref^{commit}" 2>/dev/null ||
+					git rev-parse --verify --quiet "FETCH_HEAD^{commit}" 2>/dev/null || true)
+			fi
+		fi
+		if [ -z "$detach_commit" ]; then
+			release_metadata_lock
+			trap - EXIT
+			pwt_error "Error: Ref not found: $base_ref"
+			exit $EXIT_NOT_FOUND
+		fi
+		echo -e "${BLUE}Creating worktree:${NC} $worktree_name"
+		echo -e "  Detached at: $(git rev-parse --short "$detach_commit") ($base_ref)"
+		echo -e "  Port:   $port"
+		echo -e "  Dir:    $worktree_dir"
+		echo ""
+		git_worktree_args=(--detach "$worktree_dir" "$detach_commit")
+	elif [ -n "$base_ref" ]; then
 		# Base ref provided: create new branch from it
 		# Format: [prefix]ticket-name or [prefix]ticket-name-description-slug
 		local hook_branch=""
@@ -468,10 +510,11 @@ cmd_create() {
 		git worktree add "${git_worktree_args[@]}"
 	fi
 
-	_pwt_set_tracking_if_remote "$worktree_dir" "${new_branch_name:-$branch}" "$base_ref"
+	[ "$detach" = true ] || _pwt_set_tracking_if_remote "$worktree_dir" "${new_branch_name:-$branch}" "$base_ref"
 
-	# Save metadata
+	# Save metadata (a detached worktree has no branch to record)
 	local final_branch="${new_branch_name:-$branch}"
+	[ "$detach" = true ] && final_branch=""
 	local final_base="${base_ref:-master}"
 	local final_base_commit=$(git -C "$worktree_dir" merge-base HEAD "origin/${final_base#origin/}" 2>/dev/null || git -C "$worktree_dir" rev-parse HEAD 2>/dev/null)
 	local final_base_short=$(git -C "$worktree_dir" rev-parse --short "$final_base_commit" 2>/dev/null || echo "?")
@@ -1394,4 +1437,206 @@ cmd_remove() {
 			fi
 		fi
 	fi
+}
+
+# pwt repoint <worktree> <ref> [--stop] [--progress json]
+# Move an existing worktree to another commit, detached, keeping everything
+# that made it expensive to build: its port, metadata, databases, caches,
+# installed dependencies. Only the files that differ are rewritten, and the
+# Pwtfile's repoint() redoes only the steps whose inputs changed:
+#
+#   repoint() {
+#       pwt_changed Gemfile.lock && pwt_step deps bundle install
+#       pwt_changed db/schema.rb 'db/migrate/*' && pwt_step db bin/rails db:prepare
+#       return 0
+#   }
+#
+# repoint() sees PWT_CHANGED_FILES (one path per line), PWT_PREVIOUS_COMMIT
+# and the usual PWT_* variables. Progress goes to state/<project>/<wt>.repoint.jsonl,
+# the same line format as a server boot.
+cmd_repoint() {
+	local target="" ref="" stop=false progress_json=false
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--stop)
+			stop=true
+			shift
+			;;
+		--progress | --progress=*)
+			local fmt
+			if [ "$1" = "--progress" ]; then
+				fmt="${2:-}"
+				shift 2 || shift
+			else
+				fmt="${1#--progress=}"
+				shift
+			fi
+			if [ "$fmt" != json ]; then
+				pwt_error "Error: --progress takes 'json' (got '$fmt')"
+				return $EXIT_USAGE
+			fi
+			progress_json=true
+			;;
+		-h | --help)
+			echo "Usage: pwt repoint <worktree> <ref> [--stop] [--progress json]"
+			echo ""
+			echo "Check out <ref> (commit, tag, branch) detached in an existing worktree,"
+			echo "keeping its port, metadata, databases and caches. Then runs the"
+			echo "Pwtfile's repoint() with PWT_CHANGED_FILES, so it redoes only the steps"
+			echo "whose inputs changed (pwt_changed <glob...> && pwt_step <name> <cmd>)."
+			echo ""
+			echo "Options:"
+			echo "  --stop            Stop the worktree's pwt server and jobs first"
+			echo "                    (otherwise a running one is a conflict, exit 4)"
+			echo "  --progress json   Stream the steps as JSON lines on stdout"
+			echo ""
+			echo "Refuses (exit 4) with uncommitted changes to tracked files."
+			return 0
+			;;
+		-*)
+			pwt_error "Unknown option: $1"
+			return $EXIT_USAGE
+			;;
+		*)
+			if [ -z "$target" ]; then
+				target="$1"
+			elif [ -z "$ref" ]; then
+				ref="$1"
+			else
+				pwt_error "Error: unexpected argument: $1"
+				return $EXIT_USAGE
+			fi
+			shift
+			;;
+		esac
+	done
+	if [ -z "$target" ] || [ -z "$ref" ]; then
+		pwt_error "Usage: pwt repoint <worktree> <ref> [--stop] [--progress json]"
+		return $EXIT_USAGE
+	fi
+	if [ "$target" = "@" ]; then
+		pwt_error "Error: repoint moves a worktree; the main app (@) is not one"
+		return $EXIT_USAGE
+	fi
+	local path name
+	path=$(resolve_worktree_path "$target" 2>/dev/null || true)
+	if [ -z "$path" ] || [ ! -d "$path" ]; then
+		pwt_error "Error: Worktree not found: $target"
+		return $EXIT_NOT_FOUND
+	fi
+	name=$(basename "$path")
+
+	[ "$progress_json" = true ] && exec 3>&1 1>&2
+
+	# Nothing may be using the files about to change
+	load_module jobs
+	local f running=""
+	for f in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
+		[ -f "$f" ] || continue
+		[ "$(state_get "$f" "project")" = "$CURRENT_PROJECT" ] || continue
+		[ "$(state_get "$f" "worktree")" = "$name" ] || continue
+		[ "$(state_get "$f" "status")" = running ] || continue
+		local jid
+		jid=$(state_get "$f" "id")
+		_is_job_alive "$jid" && running="${running:+$running }$jid"
+	done
+	if [ -n "$running" ]; then
+		if [ "$stop" != true ]; then
+			pwt_error "Error: $name has running pwt jobs: $running"
+			echo "  Stop them first, or pass --stop: pwt repoint $name $ref --stop" >&2
+			return $EXIT_CONFLICT
+		fi
+		local jid
+		for jid in $running; do
+			_stop_job "$jid" >/dev/null || true
+		done
+		echo "Stopped: $running"
+	fi
+	local port
+	port=$(get_metadata "$name" "port")
+	if [[ "$port" =~ ^[0-9]+$ ]] && _boot_port_open "$port"; then
+		pwt_error "Error: something still listens on port $port for $name (a foreground server?)"
+		echo "  Stop it where it runs, then repoint." >&2
+		return $EXIT_CONFLICT
+	fi
+	if [ -n "$(git -C "$path" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+		pwt_error "Error: $name has uncommitted changes to tracked files"
+		echo "  Commit, stash or discard them first: pwt run $name git status" >&2
+		return $EXIT_CONFLICT
+	fi
+
+	# Resolve the target; fetch it by name when this clone lacks it
+	local new_commit
+	new_commit=$(git -C "$path" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null || true)
+	if [ -z "$new_commit" ] && git -C "$path" remote get-url origin >/dev/null 2>&1; then
+		if git -C "$path" fetch origin "${ref#origin/}" --quiet 2>/dev/null; then
+			new_commit=$(git -C "$path" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null ||
+				git -C "$path" rev-parse --verify --quiet "FETCH_HEAD^{commit}" 2>/dev/null || true)
+		fi
+	fi
+	if [ -z "$new_commit" ]; then
+		pwt_error "Error: Ref not found: $ref"
+		return $EXIT_NOT_FOUND
+	fi
+
+	local old_commit
+	old_commit=$(git -C "$path" rev-parse HEAD 2>/dev/null || true)
+
+	# Progress record (same format as a boot; repoint is the outer step)
+	local file
+	file="$PWT_DIR/state/$CURRENT_PROJECT/$name.repoint.jsonl"
+	mkdir -p "$(dirname "$file")"
+	: >|"$file"
+	export PWT_BOOT_FILE="$file"
+	export PWT_PROJECT="$CURRENT_PROJECT" PWT_WORKTREE="$name" PWT_WORKTREE_PATH="$path" PWT_PORT="$port"
+	local follow_pid=""
+	if [ "$progress_json" = true ]; then
+		_boot_follow "$file" 86400 repoint >&3 &
+		follow_pid=$!
+	fi
+	local t_all t0
+	t_all=$(_pwt_now_ms)
+	_boot_emit repoint start "" "${old_commit:0:12}..${new_commit:0:12}"
+
+	t0=$(_pwt_now_ms)
+	_boot_emit checkout start "" ""
+	if ! git -C "$path" checkout --detach --quiet "$new_commit"; then
+		_boot_emit checkout fail $(($(_pwt_now_ms) - t0)) "git checkout failed"
+		_boot_emit repoint fail $(($(_pwt_now_ms) - t_all)) "git checkout failed"
+		[ -n "$follow_pid" ] && wait "$follow_pid" 2>/dev/null
+		return $EXIT_ERROR
+	fi
+	local changed count=0
+	changed=$(git -C "$path" diff --name-only "$old_commit" "$new_commit" 2>/dev/null || true)
+	[ -n "$changed" ] && count=$(printf '%s\n' "$changed" | grep -c .)
+	_boot_emit checkout done $(($(_pwt_now_ms) - t0)) "$count files changed"
+
+	# Metadata: still this worktree, now detached at the new commit
+	local meta="$PWT_DIR/state/$CURRENT_PROJECT/$name.meta"
+	state_set "$meta" "branch" ""
+	state_set "$meta" "base" "$ref"
+	state_set "$meta" "base_commit" "$(git -C "$path" rev-parse --short "$new_commit")"
+	state_set "$meta" "repointed_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	events_append "$CURRENT_PROJECT" "$name" "repoint" "from=${old_commit:0:12} to=${new_commit:0:12} files=$count"
+
+	local rc=0
+	if has_pwtfile_command "repoint"; then
+		export PWT_CHANGED_FILES="$changed"
+		export PWT_PREVIOUS_COMMIT="$old_commit"
+		export PWT_BRANCH=""
+		run_pwtfile "repoint" || rc=$?
+	else
+		_boot_emit hooks skip "" "no repoint() in Pwtfile"
+	fi
+	if [ "$rc" -eq 0 ]; then
+		_boot_emit repoint done $(($(_pwt_now_ms) - t_all)) ""
+	else
+		_boot_emit repoint fail $(($(_pwt_now_ms) - t_all)) "repoint() exited $rc"
+	fi
+	[ -n "$follow_pid" ] && wait "$follow_pid" 2>/dev/null
+
+	echo -e "${GREEN}✓${NC} $name at $(git -C "$path" rev-parse --short HEAD) ($ref), $count files changed"
+	[ -n "$running" ] && echo "  Start it again: pwt server $name --bg (or let the router wake it)"
+	[ "$rc" -eq 0 ] || return $EXIT_ERROR
+	return 0
 }

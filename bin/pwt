@@ -1344,6 +1344,298 @@ events_maybe_truncate() {
     return 0
 }
 
+# ============================================
+# Boot progress (one JSON line per step)
+# ============================================
+# A server boot writes state/<project>/<wt>.boot.jsonl: pwt's own phases
+# (boot, environment, spawn, listen) plus whatever the Pwtfile wraps in
+# pwt_step. The last successful boot is kept as <wt>.boot.prev.jsonl, so a
+# reader (the router's "starting" page, an agent) can estimate each step
+# from how long it took last time. events.log stays the activity feed; it
+# has no per-step timing and should not grow one.
+#
+# Every function in this section is copied into --bg job scripts with
+# `declare -f`, so they may only call each other, json_escape and builtins.
+PWT_BOOT_FUNCTIONS="_pwt_now_ms _boot_emit pwt_step pwt_changed _boot_port_open _boot_watch json_escape _json_escape_c0"
+
+# Milliseconds since the epoch. bash 5 has EPOCHREALTIME; GNU date has %N;
+# macOS bash 3.2 has neither, and perl is the portable last precise option.
+_pwt_now_ms() {
+    if [ -n "${EPOCHREALTIME:-}" ]; then
+        local _s="${EPOCHREALTIME%[.,]*}" _f="${EPOCHREALTIME#*[.,]}000"
+        printf '%s%s\n' "$_s" "${_f:0:3}"
+        return 0
+    fi
+    local _n
+    _n=$(date +%s%N 2>/dev/null) || _n=""
+    case "$_n" in
+        "" | *[!0-9]*) ;;
+        *)
+            if [ "${#_n}" -gt 12 ]; then
+                printf '%s\n' "${_n:0:$((${#_n} - 6))}"
+                return 0
+            fi
+            ;;
+    esac
+    if command -v perl >/dev/null 2>&1 &&
+        perl -MTime::HiRes=time -e 'printf("%d\n", time() * 1000)' 2>/dev/null; then
+        return 0
+    fi
+    printf '%s000\n' "$(date +%s)"
+}
+
+# Append one step line to the current boot file (no-op outside a boot).
+# Usage: _boot_emit <step> <start|done|fail|skip> [duration_ms] [detail]
+_boot_emit() {
+    local _file="${PWT_BOOT_FILE:-}"
+    [ -n "$_file" ] || return 0
+    local _dur="${3:-}"
+    [[ "$_dur" =~ ^[0-9]+$ ]] || _dur=null
+    # One printf per line: appends under PIPE_BUF are atomic, so the job,
+    # its watcher and the launcher can all write the same file.
+    printf '{"ts":"%s","ts_ms":%s,"project":"%s","worktree":"%s","step":"%s","state":"%s","duration_ms":%s,"detail":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(_pwt_now_ms)" \
+        "$(json_escape "${PWT_PROJECT:-}")" "$(json_escape "${PWT_WORKTREE:-}")" \
+        "$(json_escape "$1")" "$2" "$_dur" "$(json_escape "${4:-}")" \
+        >>"$_file" 2>/dev/null || true
+    return 0
+}
+
+# Pwtfile helper: time one step of a server boot.
+# Usage (in server()): pwt_step <name> <command...>
+#                      pwt_step <name> --skip [reason]
+# Returns the command's exit status. Outside a server boot it just runs
+# the command, so the same helper works in setup() or a custom command.
+pwt_step() {
+    local _name="${1:-}"
+    if [ -z "$_name" ]; then
+        echo "Usage: pwt_step <name> <command...> | pwt_step <name> --skip [reason]" >&2
+        return 2
+    fi
+    shift
+    if [ "${1:-}" = "--skip" ]; then
+        shift
+        _boot_emit "$_name" skip "" "$*"
+        return 0
+    fi
+    if [ $# -eq 0 ]; then
+        _boot_emit "$_name" done 0 ""
+        return 0
+    fi
+    local _t0 _rc=0
+    _t0=$(_pwt_now_ms)
+    _boot_emit "$_name" start "" ""
+    "$@" || _rc=$?
+    local _d=$(($(_pwt_now_ms) - _t0))
+    if [ "$_rc" -eq 0 ]; then
+        _boot_emit "$_name" done "$_d" ""
+    else
+        _boot_emit "$_name" fail "$_d" "exit $_rc"
+    fi
+    return "$_rc"
+}
+
+# Does anything accept connections on <port>? Servers bind 127.0.0.1, ::1
+# or both depending on how "localhost" resolved for them, so try each.
+_boot_port_open() {
+    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && return 0
+    (exec 3<>"/dev/tcp/::1/$1") 2>/dev/null && return 0
+    return 1
+}
+
+# Watch a boot until the server listens, its process dies, or time runs out.
+# Runs in the background next to the server and records listen + boot.
+# Usage: _boot_watch <port> <server_pid> <timeout_s> <boot_started_ms>
+_boot_watch() {
+    local port="$1" pid="$2" timeout_s="${3:-120}" t_boot="$4" t0 now
+    t0=$(_pwt_now_ms)
+    _boot_emit listen start "" "port=$port"
+    local deadline=$((SECONDS + timeout_s))
+    while :; do
+        if _boot_port_open "$port"; then
+            now=$(_pwt_now_ms)
+            _boot_emit listen done $((now - t0)) "port=$port"
+            _boot_emit boot done $((now - t_boot)) ""
+            return 0
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            now=$(_pwt_now_ms)
+            _boot_emit listen fail $((now - t0)) "server exited before listening on port $port"
+            _boot_emit boot fail $((now - t_boot)) "server exited before listening on port $port"
+            return 1
+        fi
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            now=$(_pwt_now_ms)
+            _boot_emit listen fail $((now - t0)) "port $port not listening after ${timeout_s}s"
+            _boot_emit boot fail $((now - t_boot)) "timed out after ${timeout_s}s"
+            return 1
+        fi
+        sleep 0.25
+    done
+}
+
+# Pwtfile helper for repoint(): did any file matching one of the globs
+# change? Globs are bash patterns where * also crosses '/':
+#   pwt_changed Gemfile.lock 'package*.json' && pwt_step deps bundle install
+#   pwt_changed db/schema.rb 'db/migrate/*' && pwt_step db bin/rails db:prepare
+pwt_changed() {
+    local f g
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        for g in "$@"; do
+            # Unquoted on purpose: $g is the pattern
+            # shellcheck disable=SC2053
+            [[ "$f" == $g ]] && return 0
+        done
+    done <<<"${PWT_CHANGED_FILES:-}"
+    return 1
+}
+
+# Boot file paths for a worktree (current and last successful)
+_boot_file() {
+    printf '%s/state/%s/%s.boot.jsonl\n' "$PWT_DIR" "$1" "$2"
+}
+
+# Start a new boot record: the previous one becomes the estimate only if it
+# finished; a failed boot says nothing about how long a good one takes.
+# Sets PWT_BOOT_FILE for everything this boot runs.
+# Usage: _boot_begin <project> <worktree> <port>
+_boot_begin() {
+    local file prev
+    file=$(_boot_file "$1" "$2")
+    prev="${file%.jsonl}.prev.jsonl"
+    mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
+    if [ -f "$file" ] && grep -q '"step":"boot","state":"done"' "$file" 2>/dev/null; then
+        mv -f "$file" "$prev" 2>/dev/null || true
+    fi
+    : >|"$file" 2>/dev/null || return 0
+    export PWT_BOOT_FILE="$file"
+    _PWT_BOOT_STARTED_MS=$(_pwt_now_ms)
+    _boot_emit boot start "" "port=$3"
+}
+
+# The function bodies a --bg job needs to keep writing its boot file
+_boot_functions_source() {
+    local fn
+    for fn in $PWT_BOOT_FUNCTIONS; do
+        declare -f "$fn"
+    done
+}
+
+# Print progress lines to stdout as they land, until <step> (default boot)
+# ends. Exit: 0 done, 1 fail, 5 timeout.
+# Usage: _boot_follow <file> <timeout_s> [step]
+_boot_follow() {
+    local file="$1" timeout_s="$2" step="${3:-boot}" printed=0 total line
+    local deadline=$((SECONDS + timeout_s))
+    while :; do
+        if [ -f "$file" ]; then
+            total=$(wc -l <"$file" | tr -d ' ')
+            if [ "$total" -gt "$printed" ]; then
+                while IFS= read -r line; do
+                    printf '%s\n' "$line"
+                    case "$line" in
+                        *'"step":"'"$step"'","state":"done"'*) return 0 ;;
+                        *'"step":"'"$step"'","state":"fail"'*) return "$EXIT_ERROR" ;;
+                    esac
+                done < <(sed -n "$((printed + 1)),${total}p" "$file")
+                printed="$total"
+            fi
+        fi
+        [ "$SECONDS" -ge "$deadline" ] && return "$EXIT_TIMEOUT"
+        sleep 0.2
+    done
+}
+
+# Global server policy and router settings ($PWT_DIR/config, router.<key>)
+# Usage: router_config <key> [default]
+router_config() {
+    local v
+    v=$(state_get "$PWT_DIR/config" "router.$1")
+    printf '%s\n' "${v:-${2:-}}"
+}
+
+# ============================================
+# Detaching processes (perl optional)
+# ============================================
+# A background child must not keep the caller's pipes open: bats, $(...)
+# captures and CI log pipes all wait for EOF, and on Linux they block until
+# the child exits. perl's fork/setsid/close-every-fd has been the launcher
+# since 0.1.10. Minimal images (and PWT_NO_PERL=1, for tests) fall back to
+# a background subshell that closes the same descriptors and calls setsid(1)
+# when util-linux provides it.
+# Usage: _pwt_daemonize <log|/dev/null> <append|truncate> <command...>
+# Prints the daemon's pid.
+_pwt_daemonize() {
+    local log="$1" mode="$2"
+    shift 2
+    if [ -z "${PWT_NO_PERL:-}" ] && command -v perl >/dev/null 2>&1; then
+        perl -e '
+            use POSIX qw(setsid);
+            my $log = shift;
+            my $mode = shift;
+            my $pid = fork();
+            if ($pid == 0) {
+                setsid();
+                open(STDIN, "<", "/dev/null");
+                open(STDOUT, $mode eq "append" ? ">>" : ">", $log);
+                open(STDERR, ">&STDOUT");
+                my $max = POSIX::sysconf(&POSIX::_SC_OPEN_MAX) || 256;
+                $max = 4096 if $max > 4096 || $max < 0;   # ulimit -n can be huge
+                POSIX::close($_) for 3 .. $max;
+                exec(@ARGV) or die "exec failed: $!";
+            }
+            print "$pid\n";
+        ' "$log" "$mode" "$@"
+        return $?
+    fi
+    (
+        if [ "$mode" = append ]; then
+            exec </dev/null >>"$log" 2>&1
+        else
+            exec </dev/null >"$log" 2>&1
+        fi
+        local fd
+        for fd in $(_pwt_open_fds); do
+            [ "$fd" -gt 2 ] && eval "exec $fd>&-" 2>/dev/null
+        done
+        # Not a process group leader (no job control here), so setsid(1)
+        # takes the new session in place and the pid stays $!.
+        command -v setsid >/dev/null 2>&1 && exec setsid "$@"
+        exec "$@"
+    ) &
+    echo "$!"
+}
+
+# Descriptors open in this shell (Linux /proc; elsewhere a fixed range)
+_pwt_open_fds() {
+    local d="/proc/${BASHPID:-$$}/fd"
+    if [ -d "$d" ]; then
+        ls "$d" 2>/dev/null
+    else
+        local i=3
+        while [ "$i" -lt 255 ]; do
+            echo "$i"
+            i=$((i + 1))
+        done
+    fi
+}
+
+# Resolve symlinks to an absolute path (realpath, GNU readlink, perl)
+_pwt_realpath() {
+    local p="$1" r=""
+    if command -v realpath >/dev/null 2>&1; then
+        r=$(realpath "$p" 2>/dev/null) || r=""
+    fi
+    if [ -z "$r" ] && readlink -f / >/dev/null 2>&1; then
+        r=$(readlink -f "$p" 2>/dev/null) || r=""
+    fi
+    if [ -z "$r" ] && command -v perl >/dev/null 2>&1; then
+        r=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "$p" 2>/dev/null) || r=""
+    fi
+    printf '%s\n' "${r:-$p}"
+}
+
 # Read the on-disk state schema version (empty if unset)
 state_version_read() {
     [ -f "$PWT_DIR/state-version" ] || return 0
@@ -3174,9 +3466,12 @@ pwtfile_environment_lines() {
 # subshell that runs the command, never in pwt's own process).
 pwt_apply_environment() {
     local wt_path="$1"
-    local lines
+    local lines _t0=""
+    # Timed only inside a server boot: the clock can cost a fork per read
+    [ -n "${PWT_BOOT_FILE:-}" ] && _t0=$(_pwt_now_ms)
     lines=$(pwtfile_environment_lines "$wt_path")
     [ -z "$lines" ] && return 0
+    [ -n "$_t0" ] && _boot_emit environment done $(($(_pwt_now_ms) - _t0)) ""
     eval "$lines" || echo "pwt: the environment() output could not all be applied" >&2
     return 0
 }
@@ -3314,7 +3609,6 @@ _run_pwtfile_bg() {
             _bump=$((_bump + 1))
         done
         local log_file="$PWT_JOBS_DIR/${job_id}.log"
-        local pid_file="$PWT_JOBS_DIR/${job_id}.pid"
         local pwt_argv_literal
         pwt_argv_literal=$(_pwt_argv_literal)
 
@@ -3324,9 +3618,23 @@ _run_pwtfile_bg() {
         # its cd (written to a file: a heredoc would have to re-quote it).
         local env_file="$PWT_JOBS_DIR/${job_id}.environment"
         if [ "$phase" != environment ]; then
+            local _env_t0=""
+            [ -n "${PWT_BOOT_FILE:-}" ] && _env_t0=$(_pwt_now_ms)
             pwtfile_environment_lines "$PWT_WORKTREE_PATH" >"$env_file"
+            if [ -n "$_env_t0" ] && [ -s "$env_file" ] && [ "$_idx" -eq 1 ]; then
+                _boot_emit environment done $(($(_pwt_now_ms) - _env_t0)) ""
+            fi
         else
             : >"$env_file"
+        fi
+        # A server boot keeps writing its progress from inside the job: the
+        # boot helpers travel in the script, and index 1 watches the port.
+        local boot_source boot_watch=""
+        boot_source=$(_boot_functions_source)
+        if [ -n "${PWT_BOOT_FILE:-}" ] && [ "$phase" = server ]; then
+            if [ "$_idx" -eq 1 ] && [ "${PWT_BOOT_WATCH_PORT:-}" != "" ]; then
+                boot_watch="_boot_watch '${PWT_BOOT_WATCH_PORT}' \$\$ '${PWT_BOOT_TIMEOUT:-120}' '${_PWT_BOOT_STARTED_MS:-0}' </dev/null >/dev/null 2>&1 &"
+            fi
         fi
         cat >"$bg_script" <<BGEOF
 #!/usr/bin/env bash
@@ -3341,6 +3649,7 @@ export PWT_AGENT='${PWT_AGENT:-0}'
 export PWT_JOB_INDEX='${_idx}'
 export PWT_KILL_TARGET='${PWT_KILL_TARGET:-}'
 export MAIN_APP='${MAIN_APP:-}'
+export PWT_BOOT_FILE='${PWT_BOOT_FILE:-}'
 PWT_ARGC='${PWT_ARGC:-0}'
 PWT_ARGV=(${pwt_argv_literal})
 pwt_arg() {
@@ -3358,9 +3667,11 @@ pwt_arg() {
     if [ "\$found" = true ]; then echo "true"; return 0; fi
     return 1
 }
+${boot_source}
 cd '${PWT_WORKTREE_PATH}' || exit 1
 [ -s '${env_file}' ] && . '${env_file}'
 source '${pwtfile}'
+${boot_watch}
 # Record the phase's exit status: a detached daemon is reaped by init, so
 # this file is the launcher's only way to tell "finished fast, rc 0" from
 # "crashed on startup" when the process is already gone at the grace check.
@@ -3383,38 +3694,15 @@ exit "\$_pwt_rc"
 BGEOF
         chmod +x "$bg_script"
 
-        # Use perl double-fork daemon pattern
-        # This creates a truly detached process that won't be waited on by parent
-        perl -e '
-        use POSIX qw(setsid);
-        my $pid = fork();
-        if ($pid == 0) {
-            setsid();
-            open(STDIN, "<", "/dev/null");
-            open(STDOUT, ">", $ARGV[1]);
-            open(STDERR, ">&STDOUT");
-            # Close every inherited descriptor above stderr. Without this the
-            # daemon keeps the caller pipes open (bats output pipe, $(...)
-            # capture, CI log fd), and on Linux the caller blocks until the
-            # daemon exits. macOS happens to hide it; Linux does not.
-            my $max = POSIX::sysconf(&POSIX::_SC_OPEN_MAX) || 256;
-            $max = 4096 if $max > 4096 || $max < 0;   # ulimit -n can be huge
-            for my $fd (3 .. $max) {
-                POSIX::close($fd);
-            }
-            exec("/bin/bash", $ARGV[0]) or die "exec failed: $!";
-        }
-        open(my $fh, ">", $ARGV[2]);
-        print $fh "$pid\n";
-        close($fh);
-    ' "$bg_script" "$log_file" "$pid_file"
-
-        # Read the PID from the file
-        local bg_pid=""
-        if [ -f "$pid_file" ]; then
-            bg_pid=$(cat "$pid_file")
-            rm -f "$pid_file"
+        # Detached daemon (see _pwt_daemonize): a plain `&` child keeps the
+        # caller's pipes open, and on Linux the caller blocks until it exits.
+        local bg_pid="" _spawn_t0=""
+        if [ "$_idx" -eq 1 ] && [ "$phase" = server ] && [ -n "${PWT_BOOT_FILE:-}" ]; then
+            _spawn_t0=$(_pwt_now_ms)
+            _boot_emit spawn start "" ""
         fi
+        bg_pid=$(_pwt_daemonize "$log_file" truncate /bin/bash "$bg_script") || bg_pid=""
+        [[ "$bg_pid" =~ ^[0-9]+$ ]] || bg_pid=""
 
         if [ -z "$bg_pid" ]; then
             pwt_error "Background job failed to start (no PID)"
@@ -3452,14 +3740,30 @@ BGEOF
             [ "$PWT_QUIET" = true ] || echo "  pwt jobs logs $job_id       # view output"
         elif [ -n "$early_rc" ] || ! kill -0 "$bg_pid" 2>/dev/null; then
             pwt_error "Background job failed to start${early_rc:+ (exit $early_rc)}"
+            if [ "$_idx" -eq 1 ] && [ "$phase" = server ]; then
+                _boot_emit spawn fail "" "exit ${early_rc:-unknown} log=$log_file"
+                [ -n "${PWT_BOOT_WATCH_PORT:-}" ] ||
+                    _boot_emit boot fail "" "server exited during startup"
+            fi
             echo "Last output:" >&2
             tail -20 "$log_file" 2>/dev/null >&2 || echo "(no output)" >&2
             rm -f "$PWT_JOBS_DIR/${job_id}.job" 2>/dev/null
             return $EXIT_ERROR
         else
+            # A group is recorded only when the job leads its own: without
+            # setsid it shares the launching terminal's group, and stopping
+            # it must never signal that group.
             local pgid
             pgid=$(ps -o pgid= -p "$bg_pid" 2>/dev/null | tr -d ' ')
-            _save_job "$job_id" "$bg_pid" "${pgid:-$bg_pid}" "$phase" "$worktree" "$project" "$log_file"
+            [ "$pgid" = "$bg_pid" ] || pgid=""
+            _save_job "$job_id" "$bg_pid" "$pgid" "$phase" "$worktree" "$project" "$log_file"
+            if [ "$_idx" -eq 1 ] && [ "$phase" = server ]; then
+                _boot_emit spawn done "$([ -n "$_spawn_t0" ] && echo $(($(_pwt_now_ms) - _spawn_t0)))" "job=$job_id log=$log_file"
+                if [ -z "${PWT_BOOT_WATCH_PORT:-}" ]; then
+                    _boot_emit listen skip "" "server() picks its own port"
+                    _boot_emit boot done $(($(_pwt_now_ms) - ${_PWT_BOOT_STARTED_MS:-0})) ""
+                fi
+            fi
 
             if [ "$PWT_QUIET" = true ]; then
                 echo "{\"job_id\":\"$job_id\",\"pid\":$bg_pid,\"log\":\"$log_file\"}"
@@ -3632,7 +3936,14 @@ run_pwtfile() {
     export PWT_AGENT="${PWT_AGENT:-0}"
     export PWT_JOB_INDEX="${PWT_JOB_INDEX:-}"
     export PWT_KILL_TARGET="${PWT_KILL_TARGET:-}"
+    export PWT_BOOT_FILE="${PWT_BOOT_FILE:-}"
+    export PWT_CHANGED_FILES="${PWT_CHANGED_FILES:-}"
+    export PWT_PREVIOUS_COMMIT="${PWT_PREVIOUS_COMMIT:-}"
     export MAIN_APP="${MAIN_APP:-}"
+    # The router's view of this worktree (PWT_PUBLIC_PORT/URL, and the host
+    # names when host routing is on): always defined, empty when unknown
+    load_module router
+    router_export_env "$PWT_PROJECT" "$PWT_WORKTREE" "$PWT_PORT"
 
     # Back-compat aliases (short names)
     export PORT="$PWT_PORT"
@@ -4088,10 +4399,11 @@ cmd_server() {
     local pwtfile_argv=()
     local pwtfile_argc=0
     local pwtfile_first=true
+    local progress_json=false
     while [ $# -gt 0 ]; do
         case "$1" in
             -h | --help)
-                echo "Usage: pwt server|s [worktree] [--bg] [--no-input] [pwtfile-flags...]"
+                echo "Usage: pwt server|s [worktree] [--bg] [--progress json] [--no-input] [pwtfile-flags...]"
                 echo "       pwt server wait [worktree] [--log-contains <str>] [--timeout <s>]"
                 echo ""
                 echo "Start development server for a worktree."
@@ -4103,6 +4415,9 @@ cmd_server() {
                 echo "Options:"
                 echo "  --bg            Run server in background (daemonize)"
                 echo "  --count N       With --bg: spawn N instances"
+                echo "  --progress json With --bg: stream boot steps as JSON lines on stdout"
+                echo "                  and exit when the server listens (0), fails (1)"
+                echo "                  or times out (5); human output goes to stderr"
                 echo "  --no-input      Close stdin and set PWT_AGENT=1"
                 echo "  -h, --help      Show this help"
                 echo ""
@@ -4122,6 +4437,21 @@ cmd_server() {
             --no-input)
                 PWT_NO_INPUT=true
                 shift
+                ;;
+            --progress | --progress=*)
+                local _progress_fmt
+                if [ "$1" = "--progress" ]; then
+                    _progress_fmt="${2:-}"
+                    shift 2 || shift
+                else
+                    _progress_fmt="${1#--progress=}"
+                    shift
+                fi
+                if [ "$_progress_fmt" != json ]; then
+                    pwt_error "Error: --progress takes 'json' (got '${_progress_fmt}')"
+                    return $EXIT_USAGE
+                fi
+                progress_json=true
                 ;;
             --count)
                 _validate_bg_count "${2:-}"
@@ -4172,6 +4502,15 @@ cmd_server() {
                 ;;
         esac
     done
+
+    if [ "$progress_json" = true ]; then
+        if [ "$PWT_BG" != true ]; then
+            pwt_error "Error: --progress json needs --bg (a foreground server owns stdout)"
+            return $EXIT_USAGE
+        fi
+        # stdout carries only JSON lines from here on; humans read stderr
+        exec 3>&1 1>&2
+    fi
 
     local arg="$worktree_arg"
     local current_dir=$(pwd)
@@ -4347,10 +4686,39 @@ cmd_server() {
             fi
             return $EXIT_CONFLICT
         fi
+        # Machine-wide cap (router.max_servers): make room by stopping the
+        # least recently used idle server, or refuse when every one is busy
+        if [ "$worktree_name" != "@" ]; then
+            load_module router
+            router_enforce_cap "$CURRENT_PROJECT" "$worktree_name" || return $?
+        fi
     fi
 
     # Actually cd to worktree path (for Pwtfile commands that use pwd)
     cd "$worktree_path" || exit 1
+
+    # Boot progress: only for a server that will run (has a server()), and
+    # the port is only watched when the Pwtfile actually serves on PWT_PORT
+    local boot_timeout
+    boot_timeout=$(router_config boot_timeout 120)
+    [[ "$boot_timeout" =~ ^[0-9]+$ ]] || boot_timeout=120
+    export PWT_BOOT_TIMEOUT="$boot_timeout"
+    export PWT_BOOT_WATCH_PORT=""
+    if has_pwtfile_command "server"; then
+        _boot_begin "${CURRENT_PROJECT:-unknown}" "$worktree_name" "$port"
+        [ "$_pwtfile_uses_port" = true ] && PWT_BOOT_WATCH_PORT="$port"
+        if [ "$PWT_BG" != true ]; then
+            if [ -n "$PWT_BOOT_WATCH_PORT" ]; then
+                # Detached from every descriptor: bats and $(...) wait on
+                # inherited pipes, and this watcher outlives nothing but pwt
+                (_boot_watch "$port" "$$" "$boot_timeout" "$_PWT_BOOT_STARTED_MS") \
+                    </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+            else
+                _boot_emit listen skip "" "server() picks its own port"
+                _boot_emit boot done 0 ""
+            fi
+        fi
+    fi
 
     events_append "${CURRENT_PROJECT:-unknown}" "$worktree_name" "server_start" "port=$port"
 
@@ -4367,6 +4735,17 @@ cmd_server() {
     fi
 
     # Run Pwtfile server phase
+    if [ "$progress_json" = true ]; then
+        local _launch_rc=0
+        run_pwtfile "server" || _launch_rc=$?
+        if [ "$_launch_rc" -ne 0 ]; then
+            [ -n "${PWT_BOOT_FILE:-}" ] && cat "$PWT_BOOT_FILE" >&3
+            return "$_launch_rc"
+        fi
+        [ -n "${PWT_BOOT_FILE:-}" ] || return 0
+        _boot_follow "$PWT_BOOT_FILE" $((boot_timeout + 5)) >&3
+        return $?
+    fi
     run_pwtfile "server"
 }
 
@@ -6248,7 +6627,7 @@ _implicit_cd_target_candidate() {
 # Usage: is_builtin_command <word>
 is_builtin_command() {
     case "${1:-}" in
-        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | environment | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | ports | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
+        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | router | repoint | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | environment | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | ports | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
             return 0
             ;;
     esac
@@ -9682,6 +10061,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             shift
             load_module gateway
             cmd_servers "$@"
+            ;;
+        repoint)
+            require_project
+            shift
+            load_module worktree
+            cmd_repoint "$@"
+            ;;
+        router)
+            # Machine-wide: no project needed (only `router url` asks for one)
+            shift
+            load_module router
+            cmd_router "$@"
             ;;
         repair | fix)
             require_project

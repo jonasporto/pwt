@@ -42,6 +42,9 @@ _save_job() {
 		printf 'project=%s\n' "$(_state_escape "$project")"
 		printf 'log=%s\n' "$(_state_escape "$log")"
 		printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		# Epoch twin of started_at: the server cap orders instances by it,
+		# and parsing ISO dates portably (BSD vs GNU date) is not worth it
+		printf 'started_epoch=%s\n' "$(date +%s)"
 		printf 'status=running\n'
 	} >"$tmp" && mv "$tmp" "$job_file"
 	events_append "$project" "$wt" "job_start" "id=$id command=$cmd"
@@ -187,6 +190,19 @@ check_duplicate_job() {
 	return 1
 }
 
+# Every descendant of <pid>, deepest last (one ps pass, BFS in awk)
+_job_descendants() {
+	ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$1" '
+		{ kids[$2] = kids[$2] " " $1 }
+		END {
+			queue[1] = root; head = 1; tail = 1
+			while (head <= tail) {
+				n = split(kids[queue[head++]], k, " ")
+				for (i = 1; i <= n; i++) { queue[++tail] = k[i]; print k[i] }
+			}
+		}'
+}
+
 # Stop a job by ID (TERM signal to process group, fallback to pid)
 # Usage: _stop_job <job_id>
 _stop_job() {
@@ -222,19 +238,35 @@ _stop_job() {
 		done
 	}
 
-	# Try killing process group first, then individual pid
-	if [ -n "$pgid" ] && [ "$pgid" != "$pid" ]; then
+	# The whole process group first: the job is a session leader (setsid),
+	# so its pgid IS its pid, and the server it runs (`exec rails s` inside
+	# a subshell) is a child that a TERM to the pid alone leaves orphaned
+	# and still listening. The only group never to signal is pwt's own,
+	# which a launcher without setsid(1) leaves the job in.
+	local own_pgid
+	own_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+	if [ -n "$pgid" ] && [ "$pgid" != "$own_pgid" ]; then
 		kill -TERM -- "-$pgid" 2>/dev/null || true
 		_wait_pid_gone "$pid"
+	fi
+
+	# No group of its own (launched without setsid): signal the job's
+	# process tree instead, children first, so the server it ran dies too
+	local tree=""
+	if [ -z "$pgid" ] || [ "$pgid" = "$own_pgid" ]; then
+		tree=$(_job_descendants "$pid")
+		[ -n "$tree" ] && { kill -TERM $tree 2>/dev/null || true; }
 	fi
 
 	if kill -0 "$pid" 2>/dev/null; then
 		kill -TERM "$pid" 2>/dev/null || true
 		_wait_pid_gone "$pid"
 	fi
+	[ -n "$tree" ] && { kill -9 $tree 2>/dev/null || true; }
 
 	# Force kill if still running
 	if kill -0 "$pid" 2>/dev/null; then
+		[ -n "$pgid" ] && [ "$pgid" != "$own_pgid" ] && kill -9 -- "-$pgid" 2>/dev/null || true
 		kill -9 "$pid" 2>/dev/null || true
 	fi
 

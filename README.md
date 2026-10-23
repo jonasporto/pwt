@@ -434,7 +434,8 @@ pwt create review-1 3f2a9c1 --detach
 
 `<name>` only names the worktree; a ref this clone lacks is fetched by
 name. To move such a worktree to another commit later without redoing its
-setup, see [Repoint](#repoint).
+setup, see [Repoint](#repoint). `create` makes the new worktree current;
+`--no-use` leaves the current one alone (service slots, scripts).
 
 If a worktree was already created with raw Git, adopt it into pwt:
 

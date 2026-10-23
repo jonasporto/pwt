@@ -8687,7 +8687,7 @@ show_help_commands() {
 COMMANDS
 --------
 Worktree Management:
-  create|add <name> [base] [desc] Create new worktree (-e -a --from --clone --detach)
+  create|add <name> [base] [desc] Create new worktree (-e -a --from --clone --detach --no-use)
   track <remote-branch> [--name] Create worktree tracking existing remote branch
   adopt [path]                   Register existing git worktree and run setup
   setup [path]                   Run/adopt standard setup for existing worktree
@@ -8969,7 +8969,7 @@ show_help_brief() {
     echo "Commands:"
     echo "  init [url]                     Initialize project (clone URL or configure current repo)"
     echo "  <name> init [url]              Initialize with specific name (pwt pc init <url>)"
-    echo "  create|add <name> [base] [desc] Create new worktree (-e -a --from --branch --track --detach)"
+    echo "  create|add <name> [base] [desc] Create new worktree (-e -a --from --branch --track --detach --no-use)"
     echo "  track <remote-branch> [--name]  Create worktree tracking existing remote branch"
     echo "  adopt [path]                    Register existing git worktree and run setup"
     echo "  setup [path]                    Run/adopt standard setup for existing worktree"

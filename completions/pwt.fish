@@ -133,6 +133,7 @@ complete -c pwt -n '__pwt_using_command create' -l branch -d 'Use exact Git bran
 complete -c pwt -n '__pwt_using_command create' -l track -d 'Track existing remote branch'
 complete -c pwt -n '__pwt_using_command create' -l track-existing -d 'Track existing remote branch'
 complete -c pwt -n '__pwt_using_command create' -l detach -d 'Detached at the base ref, no branch'
+complete -c pwt -n '__pwt_using_command create' -l no-use -d 'Do not make the new worktree current'
 complete -c pwt -n '__pwt_using_command add' -a '(__pwt_branches)' -d 'Branch'
 
 # Track/adopt commands

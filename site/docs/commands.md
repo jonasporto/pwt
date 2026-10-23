@@ -82,6 +82,7 @@ Options:
   --branch <name>   Use exact Git branch name (directory still uses <branch>)
   --detach          Check out the base ref (a commit, tag, branch) detached:
                     no branch is created; <branch> only names the worktree
+  --no-use          Leave the current worktree as it is (default: switch to the new one)
   --track <remote/ref>
   --track-existing <remote/ref>
                     Create local branch tracking an existing remote branch

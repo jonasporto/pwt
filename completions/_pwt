@@ -469,7 +469,7 @@ _pwt() {
                         case $CURRENT in
                             3) _pwt_branches ;;
                             4) _pwt_branches ;;
-                            *) _alternative 'flags:flag:((--detach\:"Detached at the base ref, no branch"))' 'description:description:_message description' ;;
+                            *) _alternative 'flags:flag:((--detach\:"Detached at the base ref, no branch" --no-use\:"Do not make the new worktree current"))' 'description:description:_message description' ;;
                         esac
                         ;;
                     track)

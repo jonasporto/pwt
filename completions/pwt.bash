@@ -62,7 +62,7 @@ _pwt() {
 			[[ "${words[i]}" != -* ]] && ((nargs++))
 		done
 		if [[ $nargs -le 2 ]]; then
-			local flags="--from --from-current --branch --track --track-existing --clone --detach -e --editor -n --dry-run"
+			local flags="--from --from-current --branch --track --track-existing --clone --detach --no-use -e --editor -n --dry-run"
 			COMPREPLY=($(compgen -W "$(_pwt_get_branches) $flags" -- "$cur"))
 		fi
 		;;

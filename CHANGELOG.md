@@ -43,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `public_url`, `last_request_epoch`, `in_flight` and `boot`
   (`state`, `duration_ms`, `last_good_ms`).
 - `pwt create <name> <ref> --detach`: a worktree at an exact commit with no
-  branch; a ref the clone lacks is fetched by name.
+  branch; a ref the clone lacks is fetched by name. `pwt create --no-use`
+  leaves the current worktree as it was.
 - `pwt repoint <worktree> <ref> [--stop] [--progress json]`: move an
   existing worktree to another commit, detached, keeping its port,
   metadata, databases and caches; only differing files are rewritten.
@@ -65,7 +66,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `exec rails s` (the documented pattern) was left orphaned and still
   listening after "Stopped". The group is now signalled, and a job
   without a group of its own has its process tree stopped instead; the
-  launching terminal's group is never signalled.
+  launching terminal's group is never signalled. A stop now returns only
+  once every process of the group is gone, so the port is free for the
+  next start.
+- `pwt server` decided at random that a long Pwtfile did not use
+  `PWT_PORT`: `grep -v | grep -q` under `pipefail` reads "no match" when
+  `grep -q` exits at the first match and the writer dies of SIGPIPE, which
+  any Pwtfile past the 64 KB pipe buffer makes likely. It only changed the
+  startup message before; now one awk process decides.
+- `pwt servers` took about two minutes with 144 worktrees and a thousand
+  job records: the job index was built inside `$(...)` and so rebuilt for
+  every row. Built once, the same call takes under 5 seconds.
+- Port allocation gave up looking for holes after 100 candidates and fell
+  back to the highest port plus one, so a machine with many worktrees only
+  ever grew upward. It now reuses any hole up to the highest allocated
+  port, and never hands out a port that is (or would make) another
+  worktree's public router port.
 
 ### Changed
 - Linux: perl is now optional. Background jobs, the gateway and the

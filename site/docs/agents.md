@@ -323,7 +323,7 @@ A worktree pinned to an exact commit, no branch, and moved later without
 redoing setup:
 
 ```bash
-pwt --no-input create slot-1 4e1d2b7 --detach
+pwt --no-input create slot-1 4e1d2b7 --detach --no-use   # --no-use: keep `current`
 pwt repoint slot-1 origin/main --progress json   # exit 4 if a job runs; --stop
 ```
 

@@ -170,3 +170,19 @@ EOF
     [ "$status" -eq 0 ]
     wait_for "! listening $BOOT_PORT" 5
 }
+
+@test "a Pwtfile larger than a pipe buffer still counts as using PWT_PORT" {
+    # Regression: `grep -v | grep -q PWT_PORT` under pipefail read "no" when
+    # grep -q exited at the first match and the writer died of SIGPIPE,
+    # and the boot skipped the port wait (listen skip, done in ~1 s)
+    local i=0
+    while [ "$i" -lt 3000 ]; do
+        printf 'filler_%s() { echo "%s padding padding padding padding"; }\n' "$i" "$i"
+        i=$((i + 1))
+    done >>"$TEST_REPO/Pwtfile"
+    [ "$(wc -c <"$TEST_REPO/Pwtfile")" -gt 140000 ]
+    run --separate-stderr "$PWT_BIN" server BOOT --bg --progress json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"step":"listen","state":"done"'* ]]
+    [[ "$output" != *'"step":"listen","state":"skip"'* ]]
+}

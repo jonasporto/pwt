@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-10-22
+
 ### Added
 - `pwt router`: a machine-wide proxy that gives every worktree of every
   project a stable public port (its pwt port plus `port_offset`, default

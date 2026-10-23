@@ -526,14 +526,16 @@ _ensure_ports_snapshot() {
 	[ -n "${_SERVERS_PORTS_SNAPSHOT_SET:-}" ] && return 0
 
 	local pairs pids sys_pids
-	pairs=$(_ports_pid_snapshot)
-	_SERVERS_PORTS_SNAPSHOT=$(printf '%s\n' "$pairs" | cut -f1 | grep -E '^[0-9]+$' | sort -u)
+	# No snapshot tool (no lsof, no ss) is a normal state, not an error:
+	# callers fall back to live probes on an empty snapshot
+	pairs=$(_ports_pid_snapshot) || pairs=""
+	_SERVERS_PORTS_SNAPSHOT=$(printf '%s\n' "$pairs" | cut -f1 | grep -E '^[0-9]+$' | sort -u) || true
 	_SERVERS_SYSTEM_PORTS=""
 
 	# One ps pass classifies every listener on the machine. Doing it per
 	# port would cost a fork per worktree, which is what the snapshot
 	# exists to avoid.
-	pids=$(printf '%s\n' "$pairs" | cut -f2 | grep -E '^[0-9]+$' | sort -u | tr '\n' ',')
+	pids=$(printf '%s\n' "$pairs" | cut -f2 | grep -E '^[0-9]+$' | sort -u | tr '\n' ',') || true
 	if [ -n "${pids%,}" ]; then
 		sys_pids=$(ps -p "${pids%,}" -o pid=,command= 2>/dev/null |
 			awk -v proc_re="$PWT_SYSTEM_PROC_RE" -v path_re="$PWT_SYSTEM_PATH_RE" '
@@ -782,8 +784,8 @@ cmd_servers() {
 	# index first built in a subshell is lost, so every row rebuilt it (one
 	# pass over every job file per worktree: ~2 minutes at 144 worktrees and
 	# a thousand job records)
-	_ensure_jobs_index
-	_ensure_ports_snapshot
+	_ensure_jobs_index || true
+	_ensure_ports_snapshot || true
 
 	if [ "$json" = true ]; then
 		load_module router

@@ -186,7 +186,7 @@ pwt server TICKET-123 --bg --no-input --progress json
 ```
 
 stdout carries only JSON lines (`ts`, `ts_ms`, `project`, `worktree`,
-`step`, `state` = start|done|fail|skip, `duration_ms`, `detail`); human
+`boot_id`, `step`, `state` = start|done|fail|skip, `duration_ms`, `detail`); human
 output goes to stderr. The same lines stay in
 `~/.pwt/state/<project>/<wt>.boot.jsonl`. A `spawn` line's `detail` names the
 job id and its log; on exit 1, read that log.

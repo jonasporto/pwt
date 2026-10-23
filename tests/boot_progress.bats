@@ -186,3 +186,19 @@ EOF
     [[ "$output" == *'"step":"listen","state":"done"'* ]]
     [[ "$output" != *'"step":"listen","state":"skip"'* ]]
 }
+
+@test "the watcher of a finished boot never writes into the next boot's file" {
+    # Regression (seen on CI): boot 2 failed, boot 3 truncated the same file
+    # within 300 ms, and boot 2's watcher, still polling, saw its process
+    # gone and wrote "boot fail" into boot 3's record
+    source_pwt_functions $(sed -n 's/^PWT_BOOT_FUNCTIONS="\(.*\)"$/\1/p' "$PWT_BIN")
+    local file="$TEST_TEMP_DIR/w.boot.jsonl"
+    printf '{"ts":"x","ts_ms":1,"project":"p","worktree":"w","boot_id":"NEW","step":"boot","state":"start"}\n' >|"$file"
+    sleep 30 &
+    local dead=$!
+    kill "$dead"
+    wait "$dead" 2>/dev/null || true
+    PWT_BOOT_FILE="$file" _PWT_BOOT_ID="OLD" run _boot_watch 1 "$dead" 5 0
+    [ "$(grep -c . "$file")" -eq 1 ]
+    ! grep -q '"state":"fail"' "$file"
+}

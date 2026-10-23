@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Boot progress: every `pwt server` boot writes one JSON line per step to
   `state/<project>/<wt>.boot.jsonl` (`boot`, `spawn`, `environment`,
   `listen`, plus Pwtfile steps), and keeps the last good boot as
-  `.boot.prev.jsonl`. `pwt_step <name> <cmd...>` (and `--skip [reason]`)
+  `.boot.prev.jsonl`; a `boot_id` ties the lines of one boot together.
+  `pwt_step <name> <cmd...>` (and `--skip [reason]`)
   times a step from inside `server()`. `pwt server <wt> --bg --progress json`
   streams the lines on stdout, human output on stderr, and exits 0 when the
   server listens, 1 when the boot fails, 5 on timeout.

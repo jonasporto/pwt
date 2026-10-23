@@ -309,14 +309,15 @@ server() {
 
 ```bash
 pwt server feat-x --bg --progress json
-# {"ts":"...","ts_ms":...,"project":"app","worktree":"feat-x","step":"deps","state":"done","duration_ms":812,"detail":""}
+# {"ts":"...","ts_ms":...,"project":"app","worktree":"feat-x","boot_id":"...","step":"deps","state":"done","duration_ms":812,"detail":""}
 # ...
 # {"ts":"...","step":"boot","state":"done","duration_ms":4210,"detail":""}
 ```
 
 With `--bg --progress json`, stdout carries only those lines (human output
 goes to stderr) and pwt exits when the boot ends: 0 listening, 1 failed,
-5 timed out. A `state` is `start`, `done`, `fail` or `skip`.
+5 timed out. A `state` is `start`, `done`, `fail` or `skip`; `boot_id` is
+the same on every line of one boot.
 
 **Variables:** `$PWT_PORT`, `$PWT_WORKTREE`, `$PWT_WORKTREE_PATH`,
 `$PWT_BRANCH`, `$PWT_TICKET`, `$PWT_PROJECT`, `$PWT_ARGS`, `$MAIN_APP`;

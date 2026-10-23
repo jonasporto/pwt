@@ -1363,7 +1363,7 @@ events_maybe_truncate() {
 #
 # Every function in this section is copied into --bg job scripts with
 # `declare -f`, so they may only call each other, json_escape and builtins.
-PWT_BOOT_FUNCTIONS="_pwt_now_ms _boot_emit pwt_step pwt_changed _boot_port_open _boot_watch json_escape _json_escape_c0"
+PWT_BOOT_FUNCTIONS="_pwt_now_ms _boot_emit pwt_step pwt_changed _boot_port_open _boot_is_current _boot_watch json_escape _json_escape_c0"
 
 # Milliseconds since the epoch. bash 5 has EPOCHREALTIME; GNU date has %N;
 # macOS bash 3.2 has neither, and perl is the portable last precise option.
@@ -1400,9 +1400,9 @@ _boot_emit() {
     [[ "$_dur" =~ ^[0-9]+$ ]] || _dur=null
     # One printf per line: appends under PIPE_BUF are atomic, so the job,
     # its watcher and the launcher can all write the same file.
-    printf '{"ts":"%s","ts_ms":%s,"project":"%s","worktree":"%s","step":"%s","state":"%s","duration_ms":%s,"detail":"%s"}\n' \
+    printf '{"ts":"%s","ts_ms":%s,"project":"%s","worktree":"%s","boot_id":"%s","step":"%s","state":"%s","duration_ms":%s,"detail":"%s"}\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(_pwt_now_ms)" \
-        "$(json_escape "${PWT_PROJECT:-}")" "$(json_escape "${PWT_WORKTREE:-}")" \
+        "$(json_escape "${PWT_PROJECT:-}")" "$(json_escape "${PWT_WORKTREE:-}")" "${_PWT_BOOT_ID:-}" \
         "$(json_escape "$1")" "$2" "$_dur" "$(json_escape "${4:-}")" \
         >>"$_file" 2>/dev/null || true
     return 0
@@ -1450,23 +1450,41 @@ _boot_port_open() {
     return 1
 }
 
+# Is the boot file still this boot's? A new boot truncates the same path,
+# and the watcher of the previous one (a boot that just failed) may still
+# be polling: it must never write into its successor's record.
+_boot_is_current() {
+    local first=""
+    [ -n "${_PWT_BOOT_ID:-}" ] || return 0
+    IFS= read -r first <"${PWT_BOOT_FILE:-/dev/null}" 2>/dev/null || true
+    case "$first" in
+        *"\"boot_id\":\"${_PWT_BOOT_ID}\""*) return 0 ;;
+    esac
+    return 1
+}
+
 # Watch a boot until the server listens, its process dies, or time runs out.
 # Runs in the background next to the server and records listen + boot.
 # Usage: _boot_watch <port> <server_pid> <timeout_s> <boot_started_ms>
 _boot_watch() {
     local port="$1" pid="$2" timeout_s="${3:-120}" t_boot="$4" t0 now
     t0=$(_pwt_now_ms)
+    _boot_is_current || return 0
     _boot_emit listen start "" "port=$port"
     local deadline=$((SECONDS + timeout_s))
     while :; do
+        _boot_is_current || return 0
         if _boot_port_open "$port"; then
+            _boot_is_current || return 0
             now=$(_pwt_now_ms)
             _boot_emit listen done $((now - t0)) "port=$port"
             _boot_emit boot done $((now - t_boot)) ""
             return 0
         fi
         if ! kill -0 "$pid" 2>/dev/null; then
-            # The launcher may have closed the boot already (startup crash)
+            # A new boot took the file, or the launcher already closed this
+            # one (startup crash): either way there is nothing to add
+            _boot_is_current || return 1
             grep -q '"step":"boot","state":"fail"' "${PWT_BOOT_FILE:-/dev/null}" 2>/dev/null && return 1
             now=$(_pwt_now_ms)
             _boot_emit listen fail $((now - t0)) "server exited before listening on port $port"
@@ -1474,6 +1492,7 @@ _boot_watch() {
             return 1
         fi
         if [ "$SECONDS" -ge "$deadline" ]; then
+            _boot_is_current || return 1
             now=$(_pwt_now_ms)
             _boot_emit listen fail $((now - t0)) "port $port not listening after ${timeout_s}s"
             _boot_emit boot fail $((now - t_boot)) "timed out after ${timeout_s}s"
@@ -1520,6 +1539,8 @@ _boot_begin() {
     : >|"$file" 2>/dev/null || return 0
     export PWT_BOOT_FILE="$file"
     _PWT_BOOT_STARTED_MS=$(_pwt_now_ms)
+    # Ties every line to this boot (see _boot_is_current)
+    export _PWT_BOOT_ID="${_PWT_BOOT_STARTED_MS}-$$"
     _boot_emit boot start "" "port=$3"
 }
 
@@ -3659,6 +3680,7 @@ export PWT_JOB_INDEX='${_idx}'
 export PWT_KILL_TARGET='${PWT_KILL_TARGET:-}'
 export MAIN_APP='${MAIN_APP:-}'
 export PWT_BOOT_FILE='${PWT_BOOT_FILE:-}'
+export _PWT_BOOT_ID='${_PWT_BOOT_ID:-}'
 PWT_ARGC='${PWT_ARGC:-0}'
 PWT_ARGV=(${pwt_argv_literal})
 pwt_arg() {

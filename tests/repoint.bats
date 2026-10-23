@@ -2,6 +2,7 @@
 # pwt create --detach and pwt repoint: worktrees pinned to exact commits
 
 load test_helper
+bats_require_minimum_version 1.5.0
 
 setup() {
     setup_test_env
@@ -45,6 +46,7 @@ EOF
 
 teardown() {
     "$PWT_BIN" jobs stop --all >/dev/null 2>&1 || true
+    kill_test_jobs
     teardown_test_env
 }
 
@@ -147,4 +149,36 @@ teardown() {
     run git -C "$TEST_WORKTREES/ONBRANCH" symbolic-ref -q HEAD
     [ "$status" -ne 0 ]
     grep -q $'\trepoint\t' "$PWT_DIR/events.log"
+}
+
+@test "repoint ignores a typechange (a tracked file setup replaced with a symlink)" {
+    echo "notes" >"$TEST_REPO/NOTES.md"
+    git -C "$TEST_REPO" add NOTES.md
+    git -C "$TEST_REPO" commit -q -m notes
+    local c3 c4
+    c3=$(git -C "$TEST_REPO" rev-parse HEAD)
+    echo three >"$TEST_REPO/app.txt"
+    git -C "$TEST_REPO" commit -q -am three
+    c4=$(git -C "$TEST_REPO" rev-parse HEAD)
+    "$PWT_BIN" create SLOT "$c3" --detach >/dev/null
+    echo "shared" >"$TEST_TEMP_DIR/shared-notes.md"
+    rm "$TEST_WORKTREES/SLOT/NOTES.md"
+    ln -s "$TEST_TEMP_DIR/shared-notes.md" "$TEST_WORKTREES/SLOT/NOTES.md"
+
+    run "$PWT_BIN" repoint SLOT "$c4"
+    [ "$status" -eq 0 ]
+    [ "$(git -C "$TEST_WORKTREES/SLOT" rev-parse HEAD)" = "$c4" ]
+    [ -L "$TEST_WORKTREES/SLOT/NOTES.md" ]
+
+    # A real edit is still refused
+    echo edit >"$TEST_WORKTREES/SLOT/app.txt"
+    run "$PWT_BIN" repoint SLOT "$c3"
+    [ "$status" -eq 4 ]
+}
+
+@test "create --no-use leaves the current worktree alone" {
+    "$PWT_BIN" create FIRST HEAD >/dev/null
+    [ "$("$PWT_BIN" current --name 2>/dev/null)" = "FIRST" ]
+    "$PWT_BIN" create SLOT "$C1" --detach --no-use >/dev/null
+    [ "$("$PWT_BIN" current --name 2>/dev/null)" = "FIRST" ]
 }

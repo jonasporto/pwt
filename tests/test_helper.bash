@@ -158,3 +158,27 @@ wait_for() {
     done
     return 1
 }
+
+# Kill every background job this test's PWT_DIR launched, whole session:
+# a job script is a session leader running $PWT_DIR/jobs/<id>.sh, and its
+# server is a child that outlives a TERM to the leader alone. Works without
+# lsof (minimal Linux), where a teardown cannot find leftovers by port.
+kill_test_jobs() {
+    [ -n "${PWT_DIR:-}" ] || return 0
+    local pid
+    for pid in $(ps -eo pid=,args= 2>/dev/null | awk -v d="$PWT_DIR/jobs/" '$2 == "/bin/bash" && index($3, d) == 1 { print $1 }'); do
+        kill -9 -- "-$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
+    done
+}
+
+# Kill a process and all its descendants (children first)
+kill_tree() {
+    local root="$1" kids
+    kids=$(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$root" '$2 == p { print $1 }')
+    local k
+    for k in $kids; do
+        kill_tree "$k"
+    done
+    kill -9 "$root" 2>/dev/null || true
+}

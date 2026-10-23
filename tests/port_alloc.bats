@@ -37,3 +37,35 @@ EOF_META
     [ "$status" -eq 0 ]
     [ "$output" -eq 5003 ]
 }
+
+@test "allocation reuses a hole past the first hundred ports" {
+    source_pwt_functions next_available_port state_get _state_unescape _state_unescape_var
+    BASE_PORT=6000
+    WORKTREES_DIR="$TEST_TEMP_DIR/none"
+    meta_ports_all() {
+        local p=6001
+        while [ "$p" -le 6150 ]; do
+            [ "$p" -eq 6120 ] || printf '%s\t-\t-\n' "$p"
+            p=$((p + 1))
+        done
+    }
+    meta_base_ports_all() { :; }
+    is_port_pair_free() { return 0; }
+    run next_available_port
+    [ "$output" = "6120" ]
+}
+
+@test "allocation never hands out another worktree's public router port" {
+    source_pwt_functions next_available_port state_get _state_unescape _state_unescape_var
+    BASE_PORT=6000
+    WORKTREES_DIR="$TEST_TEMP_DIR/none"
+    mkdir -p "$PWT_DIR"
+    printf 'router.port_offset=2\n' >"$PWT_DIR/config"
+    # 6001 taken; 6003 = 6001 + offset is its public port; 6002 + 2 would
+    # land on... nothing taken, but 6002 - 2 = 6000 is BASE (public 6002)
+    meta_ports_all() { printf '6001\t-\t-\n'; }
+    meta_base_ports_all() { :; }
+    is_port_pair_free() { return 0; }
+    run next_available_port
+    [ "$output" = "6004" ]
+}

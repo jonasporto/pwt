@@ -35,6 +35,11 @@ EOF
 teardown() {
     "$PWT_BIN" router down >/dev/null 2>&1 || true
     "$PWT_BIN" jobs stop --all >/dev/null 2>&1 || true
+    kill_test_jobs
+    # A wake the router started just before going down may still be
+    # launching its job; give it the launch grace and sweep again
+    sleep 0.7
+    kill_test_jobs
     # Listeners only, and only in this file's range: an unfiltered lsof
     # matches clients too (see helpers.bats)
     # (one snapshot, filtered by port: a per-port lsof costs ~0.3 s each)

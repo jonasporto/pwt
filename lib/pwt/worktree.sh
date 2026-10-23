@@ -83,7 +83,7 @@ _pwt_run_standard_setup() {
 
 	run_pwtfile "setup"
 	run_hook "post-create"
-	set_current_worktree "$worktree_name" 2>/dev/null || true
+	[ "${PWT_CREATE_NO_USE:-false}" = true ] || set_current_worktree "$worktree_name" 2>/dev/null || true
 	clear_list_cache
 }
 
@@ -98,6 +98,7 @@ cmd_create() {
 	local explicit_branch=""
 	local track_existing_ref=""
 	local detach=false
+	local no_use=false
 
 	# Parse arguments
 	while [ $# -gt 0 ]; do
@@ -146,6 +147,10 @@ cmd_create() {
 			detach=true
 			shift
 			;;
+		--no-use)
+			no_use=true
+			shift
+			;;
 		--)
 			# Everything after -- is the description
 			shift
@@ -166,6 +171,7 @@ cmd_create() {
 			echo "  --branch <name>   Use exact Git branch name (directory still uses <branch>)"
 			echo "  --detach          Check out the base ref (a commit, tag, branch) detached:"
 			echo "                    no branch is created; <branch> only names the worktree"
+			echo "  --no-use          Leave the current worktree as it is (default: switch to the new one)"
 			echo "  --track <remote/ref>"
 			echo "  --track-existing <remote/ref>"
 			echo "                    Create local branch tracking an existing remote branch"
@@ -262,6 +268,7 @@ cmd_create() {
 		echo "  --from-current    Create from current branch"
 		echo "  --branch <name>   Use exact Git branch name"
 		echo "  --detach          Detached at the base ref, no branch"
+		echo "  --no-use          Do not make the new worktree current"
 		echo "  --track <remote/ref>"
 		echo "  --track-existing <remote/ref>"
 		echo "                    Create local branch tracking an existing remote branch"
@@ -528,7 +535,7 @@ cmd_create() {
 	release_metadata_lock
 	trap - EXIT # Clear the exit trap
 
-	_pwt_run_standard_setup "$worktree_name" "$worktree_dir" "$final_branch" "$port" "$final_base" "$final_desc"
+	PWT_CREATE_NO_USE="$no_use" _pwt_run_standard_setup "$worktree_name" "$worktree_dir" "$final_branch" "$port" "$final_base" "$final_desc"
 
 	local mode_label="Worktree"
 	[ "$workspace_mode" = "clone" ] && mode_label="Clone" || true
@@ -1266,7 +1273,7 @@ cmd_remove() {
 	# Detect processes on port (generic - no framework-specific checks)
 	local port_pids=""
 	local port_info=""
-	if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && has_lsof; then
+	if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]] && can_name_port_owners; then
 		local pids_on_port=$(get_pids_on_port "$port")
 		for pid in $pids_on_port; do
 			# A system daemon must never block a removal, and must never
@@ -1559,7 +1566,12 @@ cmd_repoint() {
 		echo "  Stop it where it runs, then repoint." >&2
 		return $EXIT_CONFLICT
 	fi
-	if [ -n "$(git -C "$path" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+	# A typechange alone (" T": a tracked file a Pwtfile setup replaced with
+	# a symlink) is not a local edit; if that file differs between the two
+	# commits, git checkout refuses on its own below.
+	local dirty
+	dirty=$(git -C "$path" status --porcelain --untracked-files=no 2>/dev/null | grep -v '^ T ' || true)
+	if [ -n "$dirty" ]; then
 		pwt_error "Error: $name has uncommitted changes to tracked files"
 		echo "  Commit, stash or discard them first: pwt run $name git status" >&2
 		return $EXIT_CONFLICT
@@ -1600,8 +1612,10 @@ cmd_repoint() {
 
 	t0=$(_pwt_now_ms)
 	_boot_emit checkout start "" ""
-	if ! git -C "$path" checkout --detach --quiet "$new_commit"; then
-		_boot_emit checkout fail $(($(_pwt_now_ms) - t0)) "git checkout failed"
+	local checkout_err
+	if ! checkout_err=$(git -C "$path" checkout --detach --quiet "$new_commit" 2>&1); then
+		printf '%s\n' "$checkout_err" >&2
+		_boot_emit checkout fail $(($(_pwt_now_ms) - t0)) "$(printf '%s' "$checkout_err" | head -3)"
 		_boot_emit repoint fail $(($(_pwt_now_ms) - t_all)) "git checkout failed"
 		[ -n "$follow_pid" ] && wait "$follow_pid" 2>/dev/null
 		return $EXIT_ERROR

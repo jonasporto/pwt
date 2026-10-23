@@ -57,6 +57,7 @@ Tapes and how to re-record: `examples/README.md`.
 | Starting a server hangs the agent's shell | `pwt server --bg` daemonizes; `pwt jobs list --porcelain` tracks it |
 | Parsing human-formatted CLI output | `--porcelain`/`--json` everywhere + a stable exit-code contract |
 | Browser tests need one URL while the target branch changes | `pwt gateway` routes a stable URL to any worktree |
+| Ten worktrees, each with a dev server eating memory | `pwt router` keeps a port open per worktree, starts the server on the first request, stops it when idle |
 | Several projects on one machine keep claiming the same port | Ports are allocated machine-wide; `pwt ports` shows every allocation and flags conflicts |
 
 A one-off second checkout with no server and no setup? Raw `git worktree
@@ -134,7 +135,7 @@ bunx @jonasporto/pwt --help
 curl -fsSL https://raw.githubusercontent.com/jonasporto/pwt/main/install.sh | bash
 ```
 
-**Dependencies:** `git` (required). `fzf`, `lsof` (optional but highly recommended). `jq` is only needed once, to convert state written before schema v2.
+**Dependencies:** `git` (required). `fzf`, `lsof` (optional but highly recommended; on Linux `ss` or `fuser` stand in for `lsof`). `node` for `pwt gateway` and `pwt router`. `perl` is optional: background jobs and daemons fall back to a subshell plus `setsid` when it is absent. `jq` is only needed once, to convert state written before schema v2.
 
 See [INSTALL.md](INSTALL.md) for shell setup and troubleshooting.
 
@@ -290,9 +291,46 @@ pwt <worktree> <command> [args...]            # From inside the project
 pwt <command> [args...]                       # From inside the worktree
 ```
 
+### Boot progress
+
+Every `pwt server` boot writes one JSON line per step to
+`~/.pwt/state/<project>/<worktree>.boot.jsonl`: pwt's own steps (`boot`,
+`spawn`, `environment`, `listen`) plus whatever `server()` wraps in
+`pwt_step`. The last successful boot is kept as `<worktree>.boot.prev.jsonl`,
+which is what wait estimates are computed from.
+
+```bash
+server() {
+    pwt_step deps bundle install
+    pwt_step assets --skip "built on setup"
+    exec bin/rails server -p "$PWT_PORT"
+}
+```
+
+```bash
+pwt server feat-x --bg --progress json
+# {"ts":"...","ts_ms":...,"project":"app","worktree":"feat-x","step":"deps","state":"done","duration_ms":812,"detail":""}
+# ...
+# {"ts":"...","step":"boot","state":"done","duration_ms":4210,"detail":""}
+```
+
+With `--bg --progress json`, stdout carries only those lines (human output
+goes to stderr) and pwt exits when the boot ends: 0 listening, 1 failed,
+5 timed out. A `state` is `start`, `done`, `fail` or `skip`.
+
 **Variables:** `$PWT_PORT`, `$PWT_WORKTREE`, `$PWT_WORKTREE_PATH`,
 `$PWT_BRANCH`, `$PWT_TICKET`, `$PWT_PROJECT`, `$PWT_ARGS`, `$MAIN_APP`;
-`$PWT_AGENT=1` when running under `--no-input`.
+`$PWT_AGENT=1` when running under `--no-input`. Also always defined (empty
+when they do not apply), so `set -u` Pwtfiles are safe:
+
+| Variable | Value |
+|----------|-------|
+| `$PWT_PUBLIC_PORT` | The stable port `pwt router` serves this worktree on (`$PWT_PORT` + `port_offset`) |
+| `$PWT_PUBLIC_URL` | `http://localhost:$PWT_PUBLIC_PORT` |
+| `$PWT_BOOT_FILE` | The progress file of the server boot in progress |
+| `$PWT_CHANGED_FILES` | In `repoint()`: changed paths, one per line |
+| `$PWT_PREVIOUS_COMMIT` | In `repoint()`: the commit the worktree was on |
+| `$PWT_HOST`, `$PWT_URL`, `$PWT_HOSTS`, `$PWT_DOMAIN`, `$PWT_HOST_<ALIAS>` | Router host names; filled only with `pwt router config host_routing true` |
 
 Run `pwt help pwtfile` for full syntax.
 
@@ -346,9 +384,13 @@ integration, `@there` has no previous line to read and says so.
 | `editor` | Open editor in current worktree |
 | `server` | Start dev server (from Pwtfile) |
 | `server wait [worktree]` | Block until the server is ready (`--log-contains`, `--timeout`) |
+| `server <wt> --bg --progress json` | Start and stream the boot steps until the server listens |
 | `jobs wait <id\|worktree>` | Block until a background job finishes (`--timeout`) |
 | `gateway` | Stable project URL that routes to a worktree server |
-| `servers` | Show active servers, gateway target, and background jobs |
+| `servers` | Show active servers, gateway target, and background jobs (`--json`) |
+| `servers stop <worktree>` | Stop a worktree's background server (`--idle`: refuse while busy) |
+| `router` | Stable public port per worktree: wake on request, idle stop, server cap |
+| `repoint <worktree> <ref>` | Move a worktree to another commit, detached, keeping its port and caches |
 | `logs [worktree]` | Show background job logs (`-f` to follow) |
 | `ports` | Machine-wide port registry: every allocation, every project, conflicts flagged |
 | `meta set <wt> <key> <val>` | Free-form worktree metadata (what dashboards read) |
@@ -382,6 +424,17 @@ Equivalent explicit `create` form:
 ```bash
 pwt create PROJ-1234 --branch team/PROJ-1234 --from origin/team/PROJ-1234
 ```
+
+A worktree pinned to an exact commit, with no branch at all, is
+`--detach`:
+
+```bash
+pwt create review-1 3f2a9c1 --detach
+```
+
+`<name>` only names the worktree; a ref this clone lacks is fetched by
+name. To move such a worktree to another commit later without redoing its
+setup, see [Repoint](#repoint).
 
 If a worktree was already created with raw Git, adopt it into pwt:
 
@@ -436,7 +489,88 @@ pwt backend gateway down  # explicit project/alias from anywhere
 ```
 
 Use `pwt servers` to see the gateway, current target, running server jobs, and
-active ports. Add `--all` to include stopped worktrees.
+active ports. Add `--all` to include stopped worktrees. `pwt servers --json`
+adds, per worktree, its public router port and URL, the last request the
+router saw, requests in flight, and a boot summary
+(`{"state":"done","duration_ms":4210,"last_good_ms":4210}`).
+`pwt servers stop <worktree>` stops its background server.
+
+---
+
+## Router: wake on request, stop when idle
+
+The gateway gives a project one URL. The router gives every worktree of every
+project its own stable port, and owns that port while the server sleeps:
+
+```bash
+pwt router up
+pwt router routes          # PUBLIC  PROJECT  WORKTREE  PORT
+open "$(pwt router url feat-x)"   # http://localhost:15012
+```
+
+The public port is the worktree's pwt port plus `port_offset` (default 10000:
+5012 becomes 15012). The server keeps binding `$PWT_PORT`; the router
+forwards to it, HTTP and WebSocket, with `X-Forwarded-For/Host/Proto/Port`.
+
+- **Wake.** A request to a stopped server runs `pwt server <wt> --bg`. A
+  browser gets a page that shows the boot steps live, each with the time it
+  took last boot, and reloads the original URL when the server listens. Other
+  clients are held up to `hold_seconds` (30), then get 503 with
+  `Retry-After`. A boot that fails, or passes `boot_timeout` (120 s), shows
+  the error and the job log tail (`expose_logs false` hides the log).
+- **Idle stop.** A server no request reached through the router for
+  `idle_minutes` (30) is stopped with `pwt servers stop --idle`, which refuses
+  while a request or websocket is in flight or another pwt job runs for that
+  worktree. Only servers that got router traffic are stopped: one an agent
+  uses directly on `$PWT_PORT` is left alone.
+- **Cap.** `max_servers` (0 = no cap) bounds the running pwt servers on the
+  machine. A `pwt server --bg` over the cap, including a wake, first stops
+  the least recently used idle server, and exits 4 when every one is busy.
+  The main app (`@`) is never counted nor stopped.
+
+```bash
+pwt router config max_servers 2
+pwt router config idle_minutes 15
+pwt router config                # every setting with its value
+pwt router status --json
+pwt router up --foreground       # attached, for systemd or a container
+```
+
+TLS stays outside pwt: put a TLS proxy or tunnel in front of a public port.
+Routing by host name on the router's own port (`<worktree>.<project>.localhost`,
+with extra names from a Pwtfile `hosts()` function) is available behind
+`pwt router config host_routing true`; run `pwt router help` for its settings.
+
+---
+
+## Repoint
+
+A worktree whose setup is expensive (dependencies, a database, warm caches)
+can move to another commit without being rebuilt:
+
+```bash
+pwt repoint run-slot-1 origin/main
+pwt repoint run-slot-1 4e1d2b7 --stop --progress json
+```
+
+`repoint` checks out the ref detached, rewriting only the files that differ,
+and keeps the port, metadata, databases and caches. It refuses (exit 4) while
+a pwt job runs for the worktree (`--stop` stops them first), while something
+listens on its port, or with uncommitted changes to tracked files. Then the
+Pwtfile's `repoint()` redoes only the steps whose inputs changed:
+
+```bash
+repoint() {
+    pwt_changed Gemfile.lock package-lock.json && pwt_step deps ./scripts/install
+    pwt_changed db/schema.rb 'db/migrate/*' && pwt_step db ./scripts/migrate
+    return 0
+}
+```
+
+`repoint()` sees `$PWT_CHANGED_FILES` (one path per line) and
+`$PWT_PREVIOUS_COMMIT`. `pwt_changed` takes bash globs where `*` also crosses
+`/`. Progress goes to `<worktree>.repoint.jsonl`, in the same line format as a
+boot.
 
 ---
 
@@ -479,8 +613,9 @@ Driving pwt from an AI agent or a script? Run **`pwt skill`** to print the
 agent guide (or `pwt skill --install` to copy it into `~/.claude/skills` and
 `~/.agents/skills`). It covers: machine-readable flags
 (`list --porcelain`, `info --porcelain`, `gateway status --json`,
-`pwt state --json`, `--no-input`), the exit-code table, and the wait
-primitives (`pwt server wait`, `pwt jobs wait`) that replace poll loops.
+`servers --json`, `router status --json`, `pwt state --json`, `--no-input`),
+the exit-code table, and the wait primitives (`pwt server wait`,
+`pwt jobs wait`, `pwt server --bg --progress json`) that replace poll loops.
 
 External tools can also read pwt state directly: `~/.pwt` holds flat
 key=value files plus an append-only `events.log`, versioned via

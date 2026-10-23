@@ -778,6 +778,12 @@ cmd_servers() {
 	current=$(get_current_from_symlink 2>/dev/null || true)
 	local has_server=false
 	has_pwtfile_command "server" && has_server=true
+	# Built here, in this shell: the per-row lookups run inside $(...), and an
+	# index first built in a subshell is lost, so every row rebuilt it (one
+	# pass over every job file per worktree: ~2 minutes at 144 worktrees and
+	# a thousand job records)
+	_ensure_jobs_index
+	_ensure_ports_snapshot
 
 	if [ "$json" = true ]; then
 		load_module router

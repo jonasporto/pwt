@@ -247,7 +247,15 @@ _stop_job() {
 	own_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
 	if [ -n "$pgid" ] && [ "$pgid" != "$own_pgid" ]; then
 		kill -TERM -- "-$pgid" 2>/dev/null || true
-		_wait_pid_gone "$pid"
+		# Wait for the whole group, not just its leader: the server is the
+		# member that holds the port, and a caller about to start another
+		# one there (the cap's eviction, a repoint) needs it gone
+		local tries=40
+		while [ "$tries" -gt 0 ] && kill -0 -- "-$pgid" 2>/dev/null; do
+			sleep 0.05
+			tries=$((tries - 1))
+		done
+		kill -0 -- "-$pgid" 2>/dev/null && { kill -9 -- "-$pgid" 2>/dev/null || true; }
 	fi
 
 	# No group of its own (launched without setsid): signal the job's

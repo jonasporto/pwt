@@ -35,6 +35,13 @@ Lifecycle Hooks:
                 "pwt run" and every Pwtfile command, printed by
                 "pwt environment". Global Pwtfile first, project last.
 
+  repoint()     Runs after "pwt repoint" moved the worktree; sees
+                $PWT_CHANGED_FILES and $PWT_PREVIOUS_COMMIT, so it redoes only
+                the steps whose inputs changed (see pwt_changed below).
+  hosts()       Extra hostnames for the router's host routing, one per line
+                ("api", or "*" for every label in front). Only read with
+                "pwt router config host_routing true".
+
 Custom Commands:
   xxx()         Any function becomes "pwt xxx"
   params        Passed as "$1", "$2", ... and raw "$PWT_ARGS"
@@ -79,6 +86,13 @@ Environment Variables (available in Pwtfile):
   $PWT_PROJECT           Project name
   $PWT_ARGS              Arguments passed to custom commands
   $PWT_KILL_TARGET       Delegated command from remove --kill-<command>
+  $PWT_PUBLIC_PORT       Stable port the router serves this worktree on
+  $PWT_PUBLIC_URL        http://localhost:$PWT_PUBLIC_PORT
+  $PWT_BOOT_FILE         Boot progress file of the running server boot
+  $PWT_CHANGED_FILES     In repoint(): changed paths, one per line
+  $PWT_PREVIOUS_COMMIT   In repoint(): the commit the worktree was on
+  $PWT_HOST $PWT_URL $PWT_HOSTS $PWT_DOMAIN $PWT_HOST_<ALIAS>
+                         Router host names (empty unless host_routing is on)
   $MAIN_APP              Path to main app (useful for copying files)
 
 Helper Functions:
@@ -88,6 +102,11 @@ Helper Functions:
   pwtfile_git_exclude "pat".. Ignore files repo-locally (.git/info/exclude,
                               never committed, covers all worktrees)
   run <cmd>                   Run command (silent on error)
+  pwt_step <name> <cmd...>    Time one step of a server boot (start/done/fail
+                              lines in the boot progress); runs <cmd> as is
+                              outside a boot. pwt_step <name> --skip [reason]
+  pwt_changed <glob...>       In repoint(): did a matching file change?
+                              pwt_changed Gemfile.lock && pwt_step deps bundle install
 
 Tips:
   - Use "exec" in server() to keep stdin open for interactive commands

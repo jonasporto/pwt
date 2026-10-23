@@ -1,12 +1,14 @@
 # pwt - Power Worktrees bash completion
 # Install: source this file or add to /etc/bash_completion.d/
 
-_pwt_commands="init create add track adopt setup list ls tree skill cd use current info show remove rm server s gateway servers run environment for-each editor e diff copy repair fix auto-remove cleanup restore fix-port doctor state meta m project config port ports plugin setup-shell shell-init steps step alias jobs logs self versions help version"
+_pwt_commands="init create add track adopt setup list ls tree skill cd use current info show remove rm server s gateway servers router repoint run environment for-each editor e diff copy repair fix auto-remove cleanup restore fix-port doctor state meta m project config port ports plugin setup-shell shell-init steps step alias jobs logs self versions help version"
 
 _pwt_meta_actions="list show set unset import"
 _pwt_project_actions="list init show set path alias"
 _pwt_gateway_actions="init up down start stop restart status use url logs help"
 _pwt_plugin_actions="list install remove create path help"
+_pwt_router_actions="up down start stop restart status routes url config logs help"
+_pwt_router_keys="port_offset port listen host_routing domain template alias_template main_template main_alias_template scheme public_port hold_seconds boot_timeout idle_minutes max_servers expose_logs"
 
 _pwt_get_worktrees() {
 	pwt list --names 2>/dev/null
@@ -60,7 +62,7 @@ _pwt() {
 			[[ "${words[i]}" != -* ]] && ((nargs++))
 		done
 		if [[ $nargs -le 2 ]]; then
-			local flags="--from --from-current --branch --track --track-existing --clone -e --editor -n --dry-run"
+			local flags="--from --from-current --branch --track --track-existing --clone --detach -e --editor -n --dry-run"
 			COMPREPLY=($(compgen -W "$(_pwt_get_branches) $flags" -- "$cur"))
 		fi
 		;;
@@ -71,7 +73,7 @@ _pwt() {
 	adopt | setup)
 		COMPREPLY=($(compgen -d -- "$cur"))
 		;;
-	cd | use | server | s | info | show | port | editor | e | repair | fix | fix-port | environment)
+	cd | use | info | show | port | editor | e | repair | fix | fix-port | environment)
 		COMPREPLY=($(compgen -W "$(_pwt_get_worktrees)" -- "$cur"))
 		;;
 	gateway)
@@ -135,10 +137,40 @@ _pwt() {
 		# 'wait' is a subcommand; other positions complete worktree names
 		if [[ "$prev" == "server" || "$prev" == "s" ]]; then
 			COMPREPLY=($(compgen -W "wait $(_pwt_get_worktrees)" -- "$cur"))
+		elif [[ "$prev" == "--progress" ]]; then
+			COMPREPLY=($(compgen -W "json" -- "$cur"))
+		else
+			COMPREPLY=($(compgen -W "--bg --progress --count --no-input" -- "$cur"))
 		fi
 		;;
 	servers)
-		COMPREPLY=($(compgen -W "--all --json -a" -- "$cur"))
+		if [[ "$prev" == "servers" ]]; then
+			COMPREPLY=($(compgen -W "stop --all --json -a" -- "$cur"))
+		elif [[ "$prev" == "stop" ]]; then
+			COMPREPLY=($(compgen -W "@ $(_pwt_get_worktrees)" -- "$cur"))
+		else
+			COMPREPLY=($(compgen -W "--idle --all --json" -- "$cur"))
+		fi
+		;;
+	router)
+		if [[ "$prev" == "router" ]]; then
+			COMPREPLY=($(compgen -W "$_pwt_router_actions" -- "$cur"))
+		elif [[ "$prev" == "url" ]]; then
+			COMPREPLY=($(compgen -W "@ $(_pwt_get_worktrees)" -- "$cur"))
+		elif [[ "$prev" == "config" ]]; then
+			COMPREPLY=($(compgen -W "$_pwt_router_keys" -- "$cur"))
+		else
+			COMPREPLY=($(compgen -W "--port --listen --foreground --json --porcelain --unset -f --follow" -- "$cur"))
+		fi
+		;;
+	repoint)
+		if [[ "$prev" == "repoint" ]]; then
+			COMPREPLY=($(compgen -W "$(_pwt_get_worktrees)" -- "$cur"))
+		elif [[ "$prev" == "--progress" ]]; then
+			COMPREPLY=($(compgen -W "json" -- "$cur"))
+		else
+			COMPREPLY=($(compgen -W "$(_pwt_get_branches) --stop --progress" -- "$cur"))
+		fi
 		;;
 	list | ls | tree | doctor | pick | select | help | version)
 		# These commands have optional flags, no required completions

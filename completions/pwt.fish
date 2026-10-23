@@ -55,6 +55,8 @@ complete -c pwt -n __pwt_needs_command -a server -d 'Start development server'
 complete -c pwt -n __pwt_needs_command -a s -d 'Start development server'
 complete -c pwt -n __pwt_needs_command -a gateway -d 'Stable gateway to a worktree server'
 complete -c pwt -n __pwt_needs_command -a servers -d 'Show project server status'
+complete -c pwt -n __pwt_needs_command -a router -d 'Stable public port per worktree, wake on request'
+complete -c pwt -n __pwt_needs_command -a repoint -d 'Move a worktree to another commit, detached'
 complete -c pwt -n __pwt_needs_command -a skill -d 'Print the agent-facing CLI guide'
 complete -c pwt -n __pwt_needs_command -a logs -d 'Show background job logs'
 complete -c pwt -n __pwt_needs_command -a self -d 'List/switch installed pwt versions'
@@ -130,6 +132,7 @@ complete -c pwt -n '__pwt_using_command create' -l from-current -d 'Create from 
 complete -c pwt -n '__pwt_using_command create' -l branch -d 'Use exact Git branch name'
 complete -c pwt -n '__pwt_using_command create' -l track -d 'Track existing remote branch'
 complete -c pwt -n '__pwt_using_command create' -l track-existing -d 'Track existing remote branch'
+complete -c pwt -n '__pwt_using_command create' -l detach -d 'Detached at the base ref, no branch'
 complete -c pwt -n '__pwt_using_command add' -a '(__pwt_branches)' -d 'Branch'
 
 # Track/adopt commands
@@ -162,6 +165,22 @@ complete -c pwt -n '__pwt_using_command state' -a migrate -d 'Inspect/apply stat
 complete -c pwt -n '__pwt_using_command state' -l json -d 'Print snapshot as JSON'
 complete -c pwt -n '__pwt_using_command servers' -l all -s a -d 'Show stopped worktrees'
 complete -c pwt -n '__pwt_using_command servers' -l json -d 'Output JSON'
+complete -c pwt -n '__pwt_using_command servers' -a stop -d 'Stop a worktree pwt server'
+complete -c pwt -n '__pwt_using_command servers' -l idle -d 'With stop: refuse while busy'
+complete -c pwt -n '__pwt_using_command server' -l progress -a json -d 'With --bg: stream boot steps as JSON'
+
+# Router
+complete -c pwt -n '__pwt_using_command router' -a 'up down restart status routes url config logs help' -d 'Action'
+complete -c pwt -n '__pwt_using_command router' -l port -d 'Router port'
+complete -c pwt -n '__pwt_using_command router' -l listen -d 'Addresses to bind'
+complete -c pwt -n '__pwt_using_command router' -l foreground -d 'Run in the foreground'
+complete -c pwt -n '__pwt_using_command router' -l json -d 'Output JSON'
+complete -c pwt -n '__pwt_using_command router' -l porcelain -d 'Machine-readable routes'
+
+# Repoint
+complete -c pwt -n '__pwt_using_command repoint' -a '(__pwt_worktrees)' -d 'Worktree'
+complete -c pwt -n '__pwt_using_command repoint' -l stop -d 'Stop pwt jobs first'
+complete -c pwt -n '__pwt_using_command repoint' -l progress -a json -d 'Stream steps as JSON'
 complete -c pwt -n '__pwt_using_command gateway' -l port -s p -d 'Gateway port'
 complete -c pwt -n '__pwt_using_command gateway' -l host -s H -d 'Gateway public host'
 complete -c pwt -n '__pwt_using_command gateway' -l json -d 'Output JSON'

@@ -27,6 +27,8 @@ _pwt_commands() {
         's:Start development server'
         'gateway:Stable gateway to a worktree server'
         'servers:Show project server status'
+        'router:Stable public port per worktree, wake on request'
+        'repoint:Move a worktree to another commit, detached'
         'logs:Show background job logs'
         'self:List/switch installed pwt versions'
         'versions:List/switch installed pwt versions'
@@ -206,6 +208,43 @@ _pwt_gateway_actions() {
     _describe 'action' actions
 }
 
+_pwt_router_actions() {
+    local actions=(
+        'up:Start the router (--port, --listen, --foreground)'
+        'down:Stop the router'
+        'restart:Restart the router'
+        'status:Show router state and policy'
+        'routes:List public ports and where they go'
+        'url:Print a worktree URL through the router'
+        'config:Show or change router settings'
+        'logs:Show router log'
+        'help:Show help'
+    )
+    _describe 'action' actions
+}
+
+_pwt_router_keys() {
+    local keys=(
+        'port_offset:Public port = pwt port + offset'
+        'port:Router status page port'
+        'listen:Addresses to bind'
+        'host_routing:Also route by Host name'
+        'domain:Base domain for host routing'
+        'template:Worktree hostname template'
+        'alias_template:Alias hostname template'
+        'main_template:Main app hostname template'
+        'main_alias_template:Main app alias hostname template'
+        'scheme:Scheme used in PWT_URL'
+        'public_port:Port shown in PWT_URL'
+        'hold_seconds:How long a non-HTML request waits'
+        'boot_timeout:Seconds before a boot is failed'
+        'idle_minutes:Stop idle servers after N minutes'
+        'max_servers:Machine-wide cap on running servers'
+        'expose_logs:Show log tail on the failure page'
+    )
+    _describe 'key' keys
+}
+
 _pwt_meta_fields() {
     local fields=(
         'base:Base branch'
@@ -327,7 +366,29 @@ _pwt() {
                         esac
                         ;;
                     servers)
-                        _arguments '--all[Show stopped worktrees]' '-a[Show stopped worktrees]' '--json[JSON output]'
+                        case $CURRENT in
+                            4) _alternative 'actions:action:((stop\:"Stop a worktree pwt server"))' 'flags:flag:((--all\:"Show stopped worktrees" --json\:"JSON output"))' ;;
+                            5) [[ ${words[4]} == stop ]] && _pwt_worktrees "$_project" ;;
+                            *) _arguments '--idle[Refuse while busy]' ;;
+                        esac
+                        ;;
+                    repoint)
+                        case $CURRENT in
+                            4) _pwt_worktrees "$_project" ;;
+                            5) _pwt_branches ;;
+                            *) _arguments '--stop[Stop pwt jobs first]' '--progress[Stream steps]:format:(json)' ;;
+                        esac
+                        ;;
+                    router)
+                        case $CURRENT in
+                            4) _pwt_router_actions ;;
+                            5)
+                                case ${words[4]} in
+                                    url) _pwt_worktrees "$_project" ;;
+                                    config) _pwt_router_keys ;;
+                                esac
+                                ;;
+                        esac
                         ;;
                     tree|status|doctor|list|ls)
                         # These commands have optional flags, no required args
@@ -408,7 +469,7 @@ _pwt() {
                         case $CURRENT in
                             3) _pwt_branches ;;
                             4) _pwt_branches ;;
-                            *) _message 'description' ;;
+                            *) _alternative 'flags:flag:((--detach\:"Detached at the base ref, no branch"))' 'description:description:_message description' ;;
                         esac
                         ;;
                     track)
@@ -456,7 +517,30 @@ _pwt() {
                         esac
                         ;;
                     servers)
-                        _arguments '--all[Show stopped worktrees]' '-a[Show stopped worktrees]' '--json[JSON output]'
+                        case $CURRENT in
+                            3) _alternative 'actions:action:((stop\:"Stop a worktree pwt server"))' 'flags:flag:((--all\:"Show stopped worktrees" --json\:"JSON output"))' ;;
+                            4) [[ ${words[3]} == stop ]] && _pwt_worktrees ;;
+                            *) _arguments '--idle[Refuse while busy]' ;;
+                        esac
+                        ;;
+                    repoint)
+                        case $CURRENT in
+                            3) _pwt_worktrees ;;
+                            4) _pwt_branches ;;
+                            *) _arguments '--stop[Stop pwt jobs first]' '--progress[Stream steps]:format:(json)' ;;
+                        esac
+                        ;;
+                    router)
+                        case $CURRENT in
+                            3) _pwt_router_actions ;;
+                            4)
+                                case ${words[3]} in
+                                    url) _pwt_worktrees ;;
+                                    config) _pwt_router_keys ;;
+                                    up) _arguments '--port[Router port]:port:' '--listen[Addresses]:addrs:' '--foreground[Run in foreground]' ;;
+                                esac
+                                ;;
+                        esac
                         ;;
                     tree|doctor)
                         # These commands have optional flags, no required args

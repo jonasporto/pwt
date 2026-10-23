@@ -659,6 +659,13 @@ has_lsof() {
     [ "$_lsof_available" = "yes" ]
 }
 
+# Can get_pids_on_port name a port's owner here? (lsof, or ss/fuser on
+# Linux). Gate on this, not on has_lsof: a box with ss but no lsof can
+# answer every "who holds this port" question pwt asks.
+can_name_port_owners() {
+    has_lsof || command -v ss >/dev/null 2>&1 || command -v fuser >/dev/null 2>&1
+}
+
 # Get PIDs using a port
 # Usage: get_pids_on_port <port>
 # Falls back to ss/fuser on Linux boxes without lsof (minimal containers, WSL).
@@ -4117,40 +4124,36 @@ next_available_port() {
         done
     fi
 
-    # Find next free port, starting from BASE_PORT+1
-    # Try to reuse "holes" from removed worktrees
-    local candidate=$((BASE_PORT + 1))
-    local max_attempts=100 # Avoid infinite loop
+    # The router serves each worktree on port + offset: never hand out a
+    # port that is someone's public port, or whose own would land on one
+    local offset taken="|" max_port=$BASE_PORT allocated
+    offset=$(state_get "$PWT_DIR/config" "router.port_offset")
+    [[ "$offset" =~ ^[0-9]+$ ]] || offset=10000
+    for allocated in "${allocated_ports[@]}"; do
+        taken="${taken}${allocated}|$((allocated + offset))|$((allocated - offset))|"
+        [ "$allocated" -gt "$max_port" ] && max_port=$allocated
+    done
 
-    for ((i = 0; i < max_attempts; i++)); do
-        local is_allocated=false
-
-        # Check if port is allocated by existing worktree
-        for allocated in "${allocated_ports[@]}"; do
-            if [ "$candidate" -eq "$allocated" ]; then
-                is_allocated=true
-                break
-            fi
-        done
-
-        if [ "$is_allocated" = false ]; then
-            # Check if the candidate port is actually free on the system
-            if is_port_pair_free "$candidate"; then
-                echo "$candidate"
-                return 0
-            fi
-        fi
-
+    # First free hole from BASE_PORT+1 (ports of removed worktrees come
+    # back), up to just past the highest allocated port. This used to stop
+    # after 100 candidates and fall back to max+1, so a machine with a
+    # hundred worktrees only ever grew upward and walked into the public
+    # range.
+    local candidate=$((BASE_PORT + 1)) last=$((max_port + 100))
+    while [ "$candidate" -le "$last" ] && [ "$candidate" -le 65535 ]; do
+        case "$taken" in
+            *"|$candidate|"*) ;;
+            *)
+                if is_port_pair_free "$candidate"; then
+                    echo "$candidate"
+                    return 0
+                fi
+                ;;
+        esac
         candidate=$((candidate + 1))
     done
 
-    # Fallback: return next after all allocated
-    local max_port=$BASE_PORT
-    for allocated in "${allocated_ports[@]}"; do
-        if [ "$allocated" -gt "$max_port" ]; then
-            max_port=$allocated
-        fi
-    done
+    # Fallback: next after all allocated
     echo $((max_port + 1))
 }
 
@@ -4666,7 +4669,11 @@ cmd_server() {
     local _pwtfile_uses_port=false _pf
     for _pf in "$(get_project_pwtfile)" "$PWT_DIR/Pwtfile"; do
         [ -f "$_pf" ] || continue
-        if grep -v '^[[:space:]]*#' "$_pf" | grep -q 'PWT_PORT'; then
+        # One process: `grep -v | grep -q` under pipefail reads as "no" when
+        # grep -q exits at the first match and the writer dies of SIGPIPE,
+        # which a long Pwtfile makes likely (and the boot then skipped the
+        # port wait, reporting "done" before the server listened)
+        if awk '!/^[[:space:]]*#/ && /PWT_PORT/ { found = 1; exit } END { exit !found }' "$_pf"; then
             _pwtfile_uses_port=true
             break
         fi
@@ -5774,7 +5781,7 @@ cmd_fix_port() {
     local pids=$(get_pids_on_port "$old_port")
     local procs_info=""
 
-    if has_lsof && [ -n "$pids" ]; then
+    if can_name_port_owners && [ -n "$pids" ]; then
         for pid in $pids; do
             local proc=$(ps -p "$pid" -o comm= 2>/dev/null || echo "?")
             procs_info="${procs_info}  PID $pid: $proc\n"
@@ -7504,14 +7511,14 @@ cmd_self() {
     # `use local` would then write a self-referential symlink, bricking pwt
     local self_path="${BASH_SOURCE[0]:-$0}"
     local self_real
-    self_real=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "$self_path" 2>/dev/null)
+    self_real=$(_pwt_realpath "$self_path" 2>/dev/null)
     [ -n "$self_real" ] || self_real=$(cd "$(dirname "$self_path")" 2>/dev/null && pwd -P)/$(basename "$self_path")
 
     # Describe one binary path: kind, version, details
     _self_describe() {
         local bin="$1"
         local real
-        real=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "$bin" 2>/dev/null || echo "$bin")
+        real=$(_pwt_realpath "$bin" 2>/dev/null || echo "$bin")
         local kind="?"
         local detail=""
         case "$real" in
@@ -7555,14 +7562,14 @@ cmd_self() {
         # Candidates: everything on PATH + known install locations + repo worktrees
         for bin in $(which -a pwt 2>/dev/null) "$LOCAL_BIN" /opt/homebrew/bin/pwt /usr/local/bin/pwt "$HOME"/.nvm/versions/node/*/bin/pwt $wt_candidates; do
             [ -e "$bin" ] || continue
-            real=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "$bin" 2>/dev/null || echo "$bin")
+            real=$(_pwt_realpath "$bin" 2>/dev/null || echo "$bin")
             case "|$seen|" in *"|$real|"*) continue ;; esac
             seen="$seen|$real"
             IFS=$'\t' read -r kind ver path detail <<<"$(_self_describe "$bin")"
             marker="  "
             if [ -n "$active" ]; then
                 local active_real
-                active_real=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "$active" 2>/dev/null || echo "$active")
+                active_real=$(_pwt_realpath "$active" 2>/dev/null || echo "$active")
                 [ "$active_real" = "$real" ] && marker="${GREEN}→ ${NC}"
             fi
             echo -e "$marker${YELLOW}$kind${NC}\tv$ver\t$path"
@@ -7965,12 +7972,12 @@ cmd_doctor() {
     # measured cost of not checking this was an hour of debugging a
     # terminal that ran an npm 0.2.8 while the repo binary had the fix.
     local _running _path_first
-    _running=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "${BASH_SOURCE[0]:-$0}" 2>/dev/null)
+    _running=$(_pwt_realpath "${BASH_SOURCE[0]:-$0}" 2>/dev/null)
     [ -n "$_running" ] || _running="${BASH_SOURCE[0]:-$0}"
     _path_first=$(type -P pwt 2>/dev/null || true)
     if [ -n "$_path_first" ]; then
         local _path_first_real
-        _path_first_real=$(perl -MCwd -e 'print Cwd::abs_path($ARGV[0])' "$_path_first" 2>/dev/null || echo "$_path_first")
+        _path_first_real=$(_pwt_realpath "$_path_first" 2>/dev/null || echo "$_path_first")
         if [ "$_path_first_real" != "$_running" ]; then
             local _path_ver
             _path_ver=$(grep -m1 '^PWT_VERSION=' "$_path_first_real" 2>/dev/null | cut -d'"' -f2)
@@ -8680,7 +8687,7 @@ show_help_commands() {
 COMMANDS
 --------
 Worktree Management:
-  create|add <name> [base] [desc] Create new worktree (-e -a --from --clone)
+  create|add <name> [base] [desc] Create new worktree (-e -a --from --clone --detach)
   track <remote-branch> [--name] Create worktree tracking existing remote branch
   adopt [path]                   Register existing git worktree and run setup
   setup [path]                   Run/adopt standard setup for existing worktree
@@ -8690,6 +8697,8 @@ Worktree Management:
   info [worktree]                Show worktree details
   select [--preview]             Interactive worktree selector (fzf)
   auto-remove [target] [--execute] Remove worktrees merged into target
+  repoint <worktree> <ref>       Move a worktree to another commit, detached,
+                                 keeping port, metadata and caches (--stop)
 
 Navigation:
   cd [worktree|branch|@|-]       Navigate to worktree (@ main, - previous)
@@ -8700,8 +8709,13 @@ Navigation:
 Development:
   server [worktree]              Start dev server (from Pwtfile)
   server wait [worktree]         Block until server is ready (--log-contains, --timeout)
+  server <wt> --bg --progress json  Start and stream boot steps as JSON lines
   gateway [action]               Stable gateway to a worktree server
-  servers [--all]                Show project server status
+  servers [--all|--json]         Show project server status
+  servers stop <worktree>        Stop a worktree's pwt server (--idle: refuse while busy)
+  router [action]                Stable public port per worktree (port + 10000):
+                                 wakes a stopped server on request, stops idle
+                                 ones, caps running servers (pwt router help)
   run <worktree> <cmd>           Run command in worktree
   environment [worktree]         Print the worktree's environment() (eval it)
   for-each <cmd>                 Run command in all worktrees
@@ -8788,6 +8802,13 @@ Lifecycle Hooks:
                 "pwt run" and every Pwtfile command, printed by
                 "pwt environment". Global Pwtfile first, project last.
 
+  repoint()     Runs after "pwt repoint" moved the worktree; sees
+                $PWT_CHANGED_FILES and $PWT_PREVIOUS_COMMIT, so it redoes only
+                the steps whose inputs changed (see pwt_changed below).
+  hosts()       Extra hostnames for the router's host routing, one per line
+                ("api", or "*" for every label in front). Only read with
+                "pwt router config host_routing true".
+
 Custom Commands:
   xxx()         Any function becomes "pwt xxx"
   params        Passed as "$1", "$2", ... and raw "$PWT_ARGS"
@@ -8832,6 +8853,13 @@ Environment Variables (available in Pwtfile):
   $PWT_PROJECT           Project name
   $PWT_ARGS              Arguments passed to custom commands
   $PWT_KILL_TARGET       Delegated command from remove --kill-<command>
+  $PWT_PUBLIC_PORT       Stable port the router serves this worktree on
+  $PWT_PUBLIC_URL        http://localhost:$PWT_PUBLIC_PORT
+  $PWT_BOOT_FILE         Boot progress file of the running server boot
+  $PWT_CHANGED_FILES     In repoint(): changed paths, one per line
+  $PWT_PREVIOUS_COMMIT   In repoint(): the commit the worktree was on
+  $PWT_HOST $PWT_URL $PWT_HOSTS $PWT_DOMAIN $PWT_HOST_<ALIAS>
+                         Router host names (empty unless host_routing is on)
   $MAIN_APP              Path to main app (useful for copying files)
 
 Helper Functions:
@@ -8841,6 +8869,11 @@ Helper Functions:
   pwtfile_git_exclude "pat".. Ignore files repo-locally (.git/info/exclude,
                               never committed, covers all worktrees)
   run <cmd>                   Run command (silent on error)
+  pwt_step <name> <cmd...>    Time one step of a server boot (start/done/fail
+                              lines in the boot progress); runs <cmd> as is
+                              outside a boot. pwt_step <name> --skip [reason]
+  pwt_changed <glob...>       In repoint(): did a matching file change?
+                              pwt_changed Gemfile.lock && pwt_step deps bundle install
 
 Tips:
   - Use "exec" in server() to keep stdin open for interactive commands
@@ -8936,7 +8969,7 @@ show_help_brief() {
     echo "Commands:"
     echo "  init [url]                     Initialize project (clone URL or configure current repo)"
     echo "  <name> init [url]              Initialize with specific name (pwt pc init <url>)"
-    echo "  create|add <name> [base] [desc] Create new worktree (-e -a --from --branch --track)"
+    echo "  create|add <name> [base] [desc] Create new worktree (-e -a --from --branch --track --detach)"
     echo "  track <remote-branch> [--name]  Create worktree tracking existing remote branch"
     echo "  adopt [path]                    Register existing git worktree and run setup"
     echo "  setup [path]                    Run/adopt standard setup for existing worktree"
@@ -8957,8 +8990,12 @@ show_help_brief() {
     echo "  copy <src> <dest> <patterns>   Copy files between worktrees"
     echo "  server [worktree]              Start dev server (from Pwtfile)"
     echo "  server wait [worktree]         Block until server is ready (--log-contains, --timeout)"
+    echo "  server <wt> --bg --progress json  Start and stream boot steps until listening"
     echo "  gateway [action]               Stable gateway to a worktree server"
-    echo "  servers [--all]                Show project server status"
+    echo "  servers [--all|--json]         Show project server status"
+    echo "  servers stop <worktree>        Stop a worktree's pwt server (--idle)"
+    echo "  router [action]                Stable public port per worktree; wakes and idles servers"
+    echo "  repoint <worktree> <ref>       Move a worktree to another commit, detached (--stop)"
     echo "  fix-port [worktree]            Fix port conflict"
     echo "  auto-remove [target] [--execute] Remove worktrees merged into target"
     echo "  restore [backup] [worktree]    Recover backed up changes from trash"
@@ -9000,6 +9037,9 @@ show_help_brief() {
     echo "  --no-input                     Never prompt; safe for automation"
     echo "  jobs wait <id|worktree>        Block until a job finishes (--timeout)"
     echo "  server wait [worktree]         Block until server is ready (--timeout)"
+    echo "  server <wt> --bg --progress json  Start + JSON boot steps; exit 0 ready, 1 fail, 5 timeout"
+    echo "  servers --json                 JSON server state (public port, boot summary)"
+    echo "  router status --json           JSON router state and policy"
     echo "  Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 timeout, 6 missing dep"
     echo ""
     echo "Project selection (in order of priority):"
@@ -9101,6 +9141,14 @@ cmd_help() {
         gateway | servers)
             load_module gateway
             "cmd_$topic" --help
+            ;;
+        router)
+            load_module router
+            cmd_router --help
+            ;;
+        repoint)
+            load_module worktree
+            cmd_repoint --help
             ;;
         plugin)
             load_module plugin

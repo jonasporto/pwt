@@ -7,7 +7,7 @@
 # This module is sourced by bin/pwt for list/tree commands.
 #
 # Dependencies:
-#   - Requires functions from bin/pwt: init_metadata, get_metadata, has_lsof,
+#   - Requires functions from bin/pwt: init_metadata, get_metadata, can_name_port_owners,
 #     get_pids_on_port, get_status_symbols, get_divergence, get_remote_divergence,
 #     format_relative_time, run_pwtfile, has_pwtfile
 #   - Requires variables: MAIN_APP, WORKTREES_DIR, CURRENT_PROJECT, DEFAULT_BRANCH,
@@ -65,8 +65,8 @@ check_port_status() {
 		return
 	fi
 
-	# Without lsof, we can't check port status
-	if ! has_lsof; then
+	# Without lsof/ss/fuser, we can't check port status
+	if ! can_name_port_owners; then
 		echo -e "${YELLOW}[port $port]${NC}"
 		return
 	fi

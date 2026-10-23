@@ -3,6 +3,7 @@
 # process-group stop that a server ending in `exec` depends on.
 
 load test_helper
+bats_require_minimum_version 1.5.0
 
 setup() {
     setup_test_env
@@ -40,6 +41,7 @@ EOF
 
 teardown() {
     "$PWT_BIN" jobs stop --all >/dev/null 2>&1 || true
+    kill_test_jobs
     if command -v lsof >/dev/null 2>&1 && [ -n "${TEST_BASE_PORT:-}" ]; then
         local pids
         pids=$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null |
@@ -112,7 +114,10 @@ listening() {
     rm "$TEST_REPO/.fail-step"
 
     run "$PWT_BIN" server BOOT --bg --progress json
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
     # prev = the first good boot, not the failed one in between
     grep -qF "$first" "$PWT_DIR/state/test-project/BOOT.boot.prev.jsonl"
     ! grep -q '"state":"fail"' "$PWT_DIR/state/test-project/BOOT.boot.prev.jsonl"
@@ -122,7 +127,7 @@ listening() {
     "$PWT_BIN" server BOOT >/dev/null 2>&1 &
     local fg=$!
     wait_for "grep -q '\"step\":\"boot\",\"state\":\"done\"' '$BOOT_FILE'" 15
-    kill "$fg" 2>/dev/null || true
+    kill_tree "$fg"
     grep -q '"step":"listen","state":"done"' "$BOOT_FILE"
 }
 

@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwt router`: a machine-wide proxy that gives every worktree of every
+  project a stable public port (its pwt port plus `port_offset`, default
+  10000) and owns that port while the server sleeps. HTTP and WebSocket
+  pass through with `X-Forwarded-For/Host/Proto/Port`. A request to a
+  stopped server runs `pwt server <wt> --bg`: a browser gets a page that
+  shows the boot steps live, each with its time from the last good boot,
+  and reloads the original URL once the server listens; other clients are
+  held up to `hold_seconds` (30), then get 503 with `Retry-After`. A
+  failed or timed-out boot (`boot_timeout`, 120 s) shows the error and the
+  job log tail (`expose_logs false` hides it). Servers no request reached
+  through the router for `idle_minutes` (30) are stopped; only servers
+  that got router traffic, never one used directly on its own port.
+  Subcommands: `up [--port] [--listen] [--foreground]`, `down`, `restart`,
+  `status [--json]`, `routes [--json|--porcelain]`, `url`, `config`,
+  `logs`. Routing by host name on the router's own port
+  (`<worktree>.<project>.localhost`, Pwtfile `hosts()` aliases, `*` for
+  every label in front) ships behind `router.host_routing`, off by default.
+- Server cap: `pwt router config max_servers N` bounds the running pwt
+  servers on the machine. A `pwt server --bg` over the cap (a router wake
+  included) stops the least recently used idle server first, and exits 4
+  when every running server is busy (a request in flight, or another pwt
+  job for that worktree). The main app (`@`) is never counted nor stopped.
+- Boot progress: every `pwt server` boot writes one JSON line per step to
+  `state/<project>/<wt>.boot.jsonl` (`boot`, `spawn`, `environment`,
+  `listen`, plus Pwtfile steps), and keeps the last good boot as
+  `.boot.prev.jsonl`. `pwt_step <name> <cmd...>` (and `--skip [reason]`)
+  times a step from inside `server()`. `pwt server <wt> --bg --progress json`
+  streams the lines on stdout, human output on stderr, and exits 0 when the
+  server listens, 1 when the boot fails, 5 on timeout.
+- `pwt servers stop <worktree> [--idle]` stops a worktree's background
+  server jobs (exit 3 when pwt runs none); `--idle` refuses (exit 4) while
+  the worktree is busy. `pwt servers --json` rows gained `public_port`,
+  `public_url`, `last_request_epoch`, `in_flight` and `boot`
+  (`state`, `duration_ms`, `last_good_ms`).
+- `pwt create <name> <ref> --detach`: a worktree at an exact commit with no
+  branch; a ref the clone lacks is fetched by name.
+- `pwt repoint <worktree> <ref> [--stop] [--progress json]`: move an
+  existing worktree to another commit, detached, keeping its port,
+  metadata, databases and caches; only differing files are rewritten.
+  Refuses (exit 4) with a running pwt job (unless `--stop`), a listening
+  server or uncommitted tracked changes. The Pwtfile's `repoint()` then
+  redoes only what changed, with `$PWT_CHANGED_FILES`,
+  `$PWT_PREVIOUS_COMMIT` and the `pwt_changed <glob...>` helper.
+- New Pwtfile variables, always defined: `PWT_PUBLIC_PORT`,
+  `PWT_PUBLIC_URL`, `PWT_BOOT_FILE`, `PWT_CHANGED_FILES`,
+  `PWT_PREVIOUS_COMMIT`, and the host-routing ones (`PWT_HOST`, `PWT_URL`,
+  `PWT_HOSTS`, `PWT_DOMAIN`, `PWT_HOST_<ALIAS>`), empty unless
+  `host_routing` is on.
+
+### Fixed
+- `pwt jobs stop` (and `pwtfile_stop_jobs`, which the `remove --kill-*`
+  delegation contract uses) never signalled the job's process group. The job runs as a
+  session leader, so its pgid equals its pid, and the group kill was
+  skipped exactly when they were equal: a `server()` ending in
+  `exec rails s` (the documented pattern) was left orphaned and still
+  listening after "Stopped". The group is now signalled, and a job
+  without a group of its own has its process tree stopped instead; the
+  launching terminal's group is never signalled.
+
+### Changed
+- Linux: perl is now optional. Background jobs, the gateway and the
+  router detach through a subshell that closes inherited descriptors and
+  calls `setsid` when perl is absent (`PWT_NO_PERL=1` forces it); doctor
+  resolves paths with `realpath` / `readlink -f` instead of perl's Cwd;
+  port-owner checks in `list`, `remove` and `fix-port` use `ss` or `fuser`
+  when `lsof` is not installed.
+
 ## [0.2.15] - 2026-10-15
 
 ### Added

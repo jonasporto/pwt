@@ -35,6 +35,8 @@ links straight to it.
 <a href="#s"><code>s</code></a>
 <a href="#gateway"><code>gateway</code></a>
 <a href="#servers"><code>servers</code></a>
+<a href="#router"><code>router</code></a>
+<a href="#repoint"><code>repoint</code></a>
 <a href="#run"><code>run</code></a>
 <a href="#environment"><code>environment</code></a>
 <a href="#for-each"><code>for-each</code></a>
@@ -78,6 +80,8 @@ Options:
   --from <ref>      Create from specific ref (tag, commit, branch)
   --from-current    Create from current branch
   --branch <name>   Use exact Git branch name (directory still uses <branch>)
+  --detach          Check out the base ref (a commit, tag, branch) detached:
+                    no branch is created; <branch> only names the worktree
   --track <remote/ref>
   --track-existing <remote/ref>
                     Create local branch tracking an existing remote branch
@@ -357,7 +361,7 @@ Alias for [`pwt remove`](#remove).
 Also available as [`s`](#s).
 
 ```
-Usage: pwt server|s [worktree] [--bg] [--no-input] [pwtfile-flags...]
+Usage: pwt server|s [worktree] [--bg] [--progress json] [--no-input] [pwtfile-flags...]
        pwt server wait [worktree] [--log-contains <str>] [--timeout <s>]
 
 Start development server for a worktree.
@@ -369,6 +373,9 @@ Arguments:
 Options:
   --bg            Run server in background (daemonize)
   --count N       With --bg: spawn N instances
+  --progress json With --bg: stream boot steps as JSON lines on stdout
+                  and exit when the server listens (0), fails (1)
+                  or times out (5); human output goes to stderr
   --no-input      Close stdin and set PWT_AGENT=1
   -h, --help      Show this help
 
@@ -410,13 +417,68 @@ Commands:
 
 ```
 Usage: pwt servers [--all] [--json]
+       pwt servers stop <worktree|@> [--idle]
 
 Show development server status for the current project.
+--json adds each worktree's public router port and boot summary.
 
 Options:
   --all, -a   Include stopped worktrees
   --json      Output machine-readable JSON
   -h, --help  Show this help
+```
+
+## pwt router {#router}
+
+```
+Usage: pwt router <command> [args]
+
+A stable public port for every worktree of every project on this machine.
+The router owns the port while the server sleeps: the first request starts
+the server (pwt server --bg) and is held until it listens, a browser sees
+the boot steps live, and servers nobody used for idle_minutes are stopped.
+Public port = the worktree's pwt port + port_offset (5012 -> 15012); the
+server keeps binding PWT_PORT and the router forwards to it.
+
+Commands:
+  up [--port N] [--listen ADDRS]   Start the router (daemon)
+  up --foreground                  Run in the foreground (systemd, containers)
+  down                             Stop the router
+  restart                          Restart the router
+  status [--json]                  Show router state and policy
+  routes [--json|--porcelain]      List every public port and where it goes
+  url [worktree|@]                 Print a worktree's URL through the router
+  config [key [value]]             Show or change settings (--unset to reset)
+  logs [-f]                        Show the router log
+
+Policy (pwt router config <key> <value>):
+  idle_minutes 30     stop a server after 30 min without router traffic
+  max_servers 2       cap running servers; the least recently used idle
+                      one is stopped to make room (the main app @ is exempt)
+  boot_timeout 120    report a boot failed after 120 s
+  hold_seconds 30     how long an API/XHR request waits for a waking server
+
+Host routing (off by default): pwt router config host_routing true routes
+<worktree>.<project>.localhost on the router port; a Pwtfile hosts()
+declares extra names ("api", or "*" for every label in front).
+```
+
+## pwt repoint {#repoint}
+
+```
+Usage: pwt repoint <worktree> <ref> [--stop] [--progress json]
+
+Check out <ref> (commit, tag, branch) detached in an existing worktree,
+keeping its port, metadata, databases and caches. Then runs the
+Pwtfile's repoint() with PWT_CHANGED_FILES, so it redoes only the steps
+whose inputs changed (pwt_changed <glob...> && pwt_step <name> <cmd>).
+
+Options:
+  --stop            Stop the worktree's pwt server and jobs first
+                    (otherwise a running one is a conflict, exit 4)
+  --progress json   Stream the steps as JSON lines on stdout
+
+Refuses (exit 4) with uncommitted changes to tracked files.
 ```
 
 ## pwt run {#run}

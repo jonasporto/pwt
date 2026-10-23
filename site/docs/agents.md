@@ -104,8 +104,9 @@ and the answer is always more current than any document, including this one:
 | What does this project define? | `pwt steps`, `pwt help pwtfile` |
 | Which project/worktree am I in? | `pwt project show`, `pwt current` |
 | What worktrees exist, and in what state? | `pwt list --porcelain` |
-| What is running right now? | `pwt servers`, `pwt jobs list --porcelain` |
+| What is running right now? | `pwt servers --json`, `pwt jobs list --porcelain` |
 | Where is the gateway pointing? | `pwt gateway status --json` |
+| Is the router up, and with what policy? | `pwt router status --json`, `pwt router routes --json` |
 | What is the whole picture? | `pwt state --json` |
 | Is the environment sane? | `pwt doctor` |
 | What just happened? | `tail ~/.pwt/events.log` |
@@ -126,6 +127,9 @@ pwt list --porcelain              # JSON list of worktrees
 pwt info <worktree> --porcelain   # JSON details for one worktree
 pwt jobs list --porcelain         # JSON list of background jobs
 pwt gateway status --json         # JSON gateway state
+pwt servers --json                # JSON servers: listening, job, public port, boot summary
+pwt router status --json          # JSON router state and policy
+pwt router routes --json          # JSON public port -> worktree map
 pwt current --json                # JSON context for the current worktree
 pwt state --json                  # versioned snapshot of ALL state
 ```
@@ -150,8 +154,8 @@ unexpected value; see `docs/state-v2-contract.md`.
 | 1 | General error |
 | 2 | Usage/argument error |
 | 3 | Not found (worktree, project, branch, port, job) |
-| 4 | Conflict (already exists, port in use, duplicate job) |
-| 5 | Timeout (`jobs wait` / `server wait` exceeded `--timeout`) |
+| 4 | Conflict (already exists, port in use, duplicate job, server cap reached, busy worktree) |
+| 5 | Timeout (`jobs wait` / `server wait` exceeded `--timeout`, a `--progress json` boot timed out) |
 | 6 | Missing dependency (a required external tool is not installed) |
 
 Branch on the code, not on message text.
@@ -178,6 +182,38 @@ pwt jobs wait TICKET-123 --timeout 900     # prints "<job-id> stopped"
 `server wait` exits 3 when the worktree has no allocated port, or (with
 `--log-contains`) when no server job exists yet; start one with
 `pwt server <wt> --bg` first.
+
+To start and wait in one call, with the boot steps as data:
+
+```bash
+pwt server TICKET-123 --bg --no-input --progress json
+# stdout: one JSON line per step, then {"step":"boot","state":"done",...}
+# exit 0 = listening, 1 = boot failed (the fail line says why), 5 = timed out
+```
+
+stdout carries only JSON lines (`ts`, `ts_ms`, `project`, `worktree`,
+`step`, `state` = start|done|fail|skip, `duration_ms`, `detail`); human
+output goes to stderr. The same lines stay in
+`~/.pwt/state/<project>/<wt>.boot.jsonl`. A `spawn` line's `detail` names the
+job id and its log; on exit 1, read that log.
+
+## Servers that sleep: the router
+
+When the user runs `pwt router`, every worktree has a stable public port
+(its pwt port + `port_offset`, default 10000) and its server may be stopped
+on purpose. A request to that port starts it; there is nothing to fix.
+
+```bash
+pwt router url TICKET-123        # http://localhost:15012 (the URL to hand out)
+pwt servers --json               # public_port, last_request_epoch, in_flight, boot
+pwt servers stop TICKET-123      # stop its background server
+```
+
+- Hit `$PWT_PORT` directly for tests you drive: the router does not idle-stop
+  a server that got no traffic through it.
+- `pwt server --bg` exits 4 with "server cap reached" when `max_servers` is
+  set and every running server is busy. Do not raise the cap or stop someone
+  else's server without asking; report it.
 
 ## Find the worktree that has a branch
 
@@ -283,6 +319,19 @@ pwt meta unset TICKET-123 blocked      # clear a field (custom fields only)
 pwt remove TICKET-123 --kill-port -y
 ```
 
+A worktree pinned to an exact commit, no branch, and moved later without
+redoing setup:
+
+```bash
+pwt --no-input create slot-1 4e1d2b7 --detach
+pwt repoint slot-1 origin/main --progress json   # exit 4 if a job runs; --stop
+```
+
+`repoint` keeps the port, metadata and caches, rewrites only the files that
+differ, and runs the Pwtfile's `repoint()` with `$PWT_CHANGED_FILES`. It
+refuses (exit 4) with a running pwt job, a listening server, or uncommitted
+tracked changes; never pass `--stop` for a worktree someone else is using.
+
 Metadata keys are free-form but must match `[A-Za-z0-9_.-]+`; pass key and
 value as separate arguments (`pwt meta set WT key value`), never `key=value`.
 The short forms (`pwt meta <key>`, `pwt meta <key> <value>`,
@@ -341,7 +390,8 @@ its base.
 |---|---|
 | Command works in one worktree, fails in another | ran from the wrong checkout; use `pwt run` |
 | `Worktree not found: stop` (or another verb) | the argument was taken as a worktree name; check the command's argument order |
-| Server "started" but nothing answers | you did not wait; use `pwt server wait` |
+| Server "started" but nothing answers | you did not wait; use `pwt server wait` or `--progress json` |
+| A worktree's server keeps disappearing | the router stopped it as idle; a request to its public port wakes it |
 | A Pwtfile command silently does nothing | it may read pwt state files directly; state is `key=value` since schema 2, use `--porcelain` interfaces instead |
 | Exit 6 | a required external tool is missing; the message names it |
 

@@ -76,7 +76,24 @@ Use exact Git branch name while keeping the worktree name separate
 .TP
 .BR \-\-track " " \fIREMOTE\-BRANCH\fR
 Create a local branch tracking an existing remote branch without applying branch_prefix
+.TP
+.BR \-\-detach
+Check out \fIBASE\fR (a commit, tag or branch) detached: no branch is
+created and \fIBRANCH\fR only names the worktree. A ref this clone lacks is
+fetched by name. Cannot be combined with \fB\-\-branch\fR, \fB\-\-track\fR
+or \fB\-\-clone\fR.
 .RE
+.TP
+.B repoint \fINAME\fR \fIREF\fR [\fB\-\-stop\fR] [\fB\-\-progress json\fR]
+Check out \fIREF\fR detached in an existing worktree, keeping its port,
+metadata, databases and caches; only the files that differ are rewritten.
+Then runs the Pwtfile's \fBrepoint()\fR with \fB$PWT_CHANGED_FILES\fR and
+\fB$PWT_PREVIOUS_COMMIT\fR. Refuses (exit 4) while a pwt job runs for the
+worktree (\fB\-\-stop\fR stops them first), while something listens on its
+port, or with uncommitted changes to tracked files. Exits 3 for an unknown
+worktree or ref, 1 when \fBrepoint()\fR fails. Progress is written to
+\fI~/.pwt/state/PROJECT/NAME.repoint.jsonl\fR; \fB\-\-progress json\fR
+streams it on stdout.
 .TP
 .B track \fIREMOTE\-BRANCH\fR [\fB\-\-name\fR \fINAME\fR]
 Create a pwt-managed worktree that tracks an existing remote branch. The local
@@ -163,8 +180,17 @@ Go to previous worktree
 
 .SS Development
 .TP
-.B server\fR|\fBs \fR[\fINAME\fR]
-Start development server for worktree (runs Pwtfile server command)
+.B server\fR|\fBs \fR[\fINAME\fR] [\fB\-\-bg\fR [\fB\-\-progress json\fR]]
+Start development server for worktree (runs Pwtfile server command). Every
+boot is recorded as JSON lines in \fI~/.pwt/state/PROJECT/NAME.boot.jsonl\fR
+(steps \fBboot\fR, \fBspawn\fR, \fBenvironment\fR, \fBlisten\fR, and any
+\fBpwt_step\fR), and the last successful boot is kept as
+\fINAME.boot.prev.jsonl\fR for wait estimates. With \fB\-\-bg \-\-progress
+json\fR, stdout carries only those lines (human output goes to stderr) and
+pwt exits 0 when the server listens, 1 when the boot fails, 5 on timeout
+(router setting \fBboot_timeout\fR, default 120 seconds). Under
+\fBmax_servers\fR, a \fB\-\-bg\fR start first stops the least recently
+used idle server, or exits 4 when every running server is busy.
 .TP
 .B server wait \fR[\fINAME\fR] [\fB\-\-log\-contains\fR \fISTR\fR] [\fB\-\-timeout\fR \fISECONDS\fR]
 Block until the worktree's server is ready: by default until its allocated
@@ -199,7 +225,47 @@ Show gateway port, daemon status, and current target.
 .B servers \fR[\fB\-\-all\fR] [\fB\-\-json\fR]
 Show project server status, including gateway target, current worktree,
 listening ports, and background server jobs. By default shows active entries;
-\fB\-\-all\fR includes stopped worktrees.
+\fB\-\-all\fR includes stopped worktrees. \fB\-\-json\fR rows carry the
+public router port and URL, the last request seen by the router, requests in
+flight, and a boot summary (state, duration, last good duration).
+.TP
+.B servers stop \fINAME\fR|\fB@\fR [\fB\-\-idle\fR]
+Stop the pwt-managed (background) server jobs of a worktree. Exits 3 when pwt
+runs no server for it (a foreground server is stopped where it runs). With
+\fB\-\-idle\fR, refuses (exit 4) while a request or websocket is in flight
+through the router, or while another pwt job runs for the worktree.
+.TP
+.B router up \fR[\fB\-\-port\fR \fIPORT\fR] [\fB\-\-listen\fR \fIADDRS\fR] [\fB\-\-foreground\fR]
+Start the machine-wide router (node). Every worktree of every project gets a
+stable public port, its pwt port plus \fBport_offset\fR (default 10000), that
+the router owns while the server sleeps. The server keeps binding
+\fB$PWT_PORT\fR and the router forwards to it, HTTP and WebSocket, with
+X-Forwarded-For/Host/Proto/Port. A request to a stopped server runs
+\fBpwt server NAME \-\-bg\fR: a browser gets a page with the boot steps
+live and an estimate from the last boot, other clients are held up to
+\fBhold_seconds\fR (default 30) and then get 503 with Retry-After. A failed
+boot shows the error and the job log tail. \fB\-\-foreground\fR runs it
+attached, for systemd or a container.
+.TP
+.B router down\fR|\fBrestart\fR|\fBstatus \fR[\fB\-\-json\fR]|\fBlogs \fR[\fB\-f\fR]
+Stop, restart or inspect the router.
+.TP
+.B router routes \fR[\fB\-\-json\fR|\fB\-\-porcelain\fR]
+List every public port and the worktree it serves.
+.TP
+.B router url \fR[\fINAME\fR|\fB@\fR]
+Print a worktree's URL through the router.
+.TP
+.B router config \fR[\fIKEY\fR [\fIVALUE\fR|\fB\-\-unset\fR]]
+Show or change router settings, stored as \fBrouter.KEY\fR in
+\fI~/.pwt/config\fR: \fBport_offset\fR, \fBport\fR (status page, 7600),
+\fBlisten\fR (127.0.0.1,::1), \fBidle_minutes\fR (30; 0 never; only servers
+that got router traffic are stopped), \fBmax_servers\fR (0 = no cap; the
+main app is never counted nor stopped), \fBboot_timeout\fR,
+\fBhold_seconds\fR, \fBexpose_logs\fR, and the opt-in host routing keys
+\fBhost_routing\fR, \fBdomain\fR, \fBtemplate\fR, \fBalias_template\fR,
+\fBmain_template\fR, \fBmain_alias_template\fR, \fBscheme\fR,
+\fBpublic_port\fR.
 .TP
 .B logs \fR[\fINAME\fR] [\fIJOB\fR] [\fB\-f\fR]
 Show logs from a worktree's background jobs. Without a job id, picks the
@@ -378,6 +444,16 @@ every Pwtfile command, and prints them with \fBpwt environment\fR. The global
 Pwtfile's come first and the project's last, so the project wins. A failing
 \fBenvironment()\fR warns and the command runs without it.
 .TP
+.B repoint()
+Run by \fBpwt repoint\fR after the checkout. \fB$PWT_CHANGED_FILES\fR lists
+the changed paths, one per line, so it can redo only the steps whose inputs
+changed (\fBpwt_changed\fR).
+.TP
+.B hosts()
+Extra hostnames for the router's opt-in host routing, one per line
+(\fBapi\fR), or \fB*\fR to route every label in front of the worktree's own
+host to it.
+.TP
 .I custom_command()
 Any function becomes available as \fBpwt custom_command\fR
 
@@ -400,6 +476,15 @@ worktree of the repo. Idempotent per pattern.
 .TP
 .B run \fIcmd\fR...
 Run a command, silently tolerating failure
+.TP
+.B pwt_step \fIname\fR \fIcmd\fR... / \fBpwt_step\fR \fIname\fR \fB\-\-skip\fR [\fIreason\fR]
+Time one step of a server boot (or a repoint): writes start, done or fail
+lines with the duration and returns the command's status. Outside a boot it
+just runs the command.
+.TP
+.B pwt_changed \fIglob\fR...
+In \fBrepoint()\fR: succeed when a changed file matches a glob (bash
+patterns, \fB*\fR also crosses \fB/\fR).
 
 .SS Command Forms
 .TP
@@ -437,6 +522,19 @@ Arguments passed to command
 .TP
 .B $PWT_KILL_TARGET
 Delegated command name from \fBremove --kill-\fICOMMAND\fR
+.TP
+.B $PWT_PUBLIC_PORT\fR, \fB$PWT_PUBLIC_URL
+The stable port the router serves this worktree on, and
+http://localhost:PORT for it
+.TP
+.B $PWT_BOOT_FILE
+Progress file of the server boot in progress (empty otherwise)
+.TP
+.B $PWT_CHANGED_FILES\fR, \fB$PWT_PREVIOUS_COMMIT
+In \fBrepoint()\fR: the changed paths and the commit the worktree was on
+.TP
+.B $PWT_HOST\fR, \fB$PWT_URL\fR, \fB$PWT_HOSTS\fR, \fB$PWT_DOMAIN\fR, \fB$PWT_HOST_\fIALIAS
+Router host names; filled only with \fBrouter.host_routing\fR true
 
 .SH CONFIGURATION
 Configuration is stored in \fB~/.pwt/\fR:
@@ -508,6 +606,11 @@ This enables \fBpwt cd\fR integration for actual directory change.
 .B PWT_DEBUG
 Enable debug output when set to 1
 .TP
+.B PWT_NO_PERL
+Set to 1 to detach background processes without perl (a subshell that
+closes inherited descriptors and calls \fBsetsid\fR(1) when available),
+the path minimal Linux images take anyway.
+.TP
 .B PWT_NO_UPDATE_CHECK
 Set to 1 to disable the update notice and the background version check
 entirely. The notice is shown at most once a day, on stderr, only for an
@@ -529,6 +632,12 @@ Custom plugins
 .TP
 .I ~/.pwt/trash/
 Backup of removed worktrees
+.TP
+.I ~/.pwt/router/
+Router pid, log, readiness marker and per-worktree activity
+.TP
+.I ~/.pwt/state/PROJECT/NAME.boot.jsonl
+Progress of the last server boot (\fI.boot.prev.jsonl\fR: last good one)
 .TP
 .I ~/.pwt/version-check
 Cached latest released version (refreshed in the background)

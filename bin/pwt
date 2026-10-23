@@ -1459,6 +1459,8 @@ _boot_watch() {
             return 0
         fi
         if ! kill -0 "$pid" 2>/dev/null; then
+            # The launcher may have closed the boot already (startup crash)
+            grep -q '"step":"boot","state":"fail"' "${PWT_BOOT_FILE:-/dev/null}" 2>/dev/null && return 1
             now=$(_pwt_now_ms)
             _boot_emit listen fail $((now - t0)) "server exited before listening on port $port"
             _boot_emit boot fail $((now - t_boot)) "server exited before listening on port $port"
@@ -3704,7 +3706,12 @@ BGEOF
         bg_pid=$(_pwt_daemonize "$log_file" truncate /bin/bash "$bg_script") || bg_pid=""
         [[ "$bg_pid" =~ ^[0-9]+$ ]] || bg_pid=""
 
+        if [ -n "$bg_pid" ] && [ -n "$_spawn_t0" ]; then
+            _boot_emit spawn done $(($(_pwt_now_ms) - _spawn_t0)) "job=$job_id log=$log_file"
+        fi
+
         if [ -z "$bg_pid" ]; then
+            [ -n "$_spawn_t0" ] && _boot_emit spawn fail "" "no pid"
             pwt_error "Background job failed to start (no PID)"
             rm -f "$bg_script" 2>/dev/null
             return $EXIT_ERROR
@@ -3740,10 +3747,9 @@ BGEOF
             [ "$PWT_QUIET" = true ] || echo "  pwt jobs logs $job_id       # view output"
         elif [ -n "$early_rc" ] || ! kill -0 "$bg_pid" 2>/dev/null; then
             pwt_error "Background job failed to start${early_rc:+ (exit $early_rc)}"
-            if [ "$_idx" -eq 1 ] && [ "$phase" = server ]; then
-                _boot_emit spawn fail "" "exit ${early_rc:-unknown} log=$log_file"
-                [ -n "${PWT_BOOT_WATCH_PORT:-}" ] ||
-                    _boot_emit boot fail "" "server exited during startup"
+            if [ -n "$_spawn_t0" ]; then
+                _boot_emit boot fail $(($(_pwt_now_ms) - ${_PWT_BOOT_STARTED_MS:-0})) \
+                    "server exited during startup (exit ${early_rc:-unknown})"
             fi
             echo "Last output:" >&2
             tail -20 "$log_file" 2>/dev/null >&2 || echo "(no output)" >&2
@@ -3757,8 +3763,7 @@ BGEOF
             pgid=$(ps -o pgid= -p "$bg_pid" 2>/dev/null | tr -d ' ')
             [ "$pgid" = "$bg_pid" ] || pgid=""
             _save_job "$job_id" "$bg_pid" "$pgid" "$phase" "$worktree" "$project" "$log_file"
-            if [ "$_idx" -eq 1 ] && [ "$phase" = server ]; then
-                _boot_emit spawn done "$([ -n "$_spawn_t0" ] && echo $(($(_pwt_now_ms) - _spawn_t0)))" "job=$job_id log=$log_file"
+            if [ -n "$_spawn_t0" ]; then
                 if [ -z "${PWT_BOOT_WATCH_PORT:-}" ]; then
                     _boot_emit listen skip "" "server() picks its own port"
                     _boot_emit boot done $(($(_pwt_now_ms) - ${_PWT_BOOT_STARTED_MS:-0})) ""
@@ -4739,7 +4744,7 @@ cmd_server() {
         local _launch_rc=0
         run_pwtfile "server" || _launch_rc=$?
         if [ "$_launch_rc" -ne 0 ]; then
-            [ -n "${PWT_BOOT_FILE:-}" ] && cat "$PWT_BOOT_FILE" >&3
+            [ -n "${PWT_BOOT_FILE:-}" ] && _boot_follow "$PWT_BOOT_FILE" 2 >&3
             return "$_launch_rc"
         fi
         [ -n "${PWT_BOOT_FILE:-}" ] || return 0

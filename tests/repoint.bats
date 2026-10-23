@@ -11,26 +11,26 @@ setup() {
     export TEST_BASE_PORT=$((48000 + (RANDOM % 9) * 50))
     mkdir -p "$TEST_WORKTREES"
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat >"$PWT_DIR/projects/test-project/config" <<EOF
+    cat >|"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
 base_port=$TEST_BASE_PORT
 EOF
     cd "$TEST_REPO"
-    echo one >app.txt
+    echo one >|app.txt
     git add app.txt
     git commit -q -m "one"
     export C1
     C1=$(git rev-parse HEAD)
     mkdir -p db/migrate
-    echo two >app.txt
-    echo "create" >db/migrate/001_create.rb
+    echo two >|app.txt
+    echo "create" >|db/migrate/001_create.rb
     git add -A
     git commit -q -m "two"
     export C2
     C2=$(git rev-parse HEAD)
-    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+    cat >|"$TEST_REPO/Pwtfile" <<'EOF'
 repoint() {
     set -u
     echo "prev=$PWT_PREVIOUS_COMMIT"
@@ -119,7 +119,7 @@ teardown() {
 
 @test "repoint refuses (exit 4) with uncommitted changes to tracked files" {
     "$PWT_BIN" create SLOT "$C1" --detach >/dev/null
-    echo dirty >"$TEST_WORKTREES/SLOT/app.txt"
+    echo dirty >|"$TEST_WORKTREES/SLOT/app.txt"
     run "$PWT_BIN" repoint SLOT "$C2"
     [ "$status" -eq 4 ]
     [[ "$output" == *"uncommitted changes"* ]]
@@ -152,16 +152,16 @@ teardown() {
 }
 
 @test "repoint ignores a typechange (a tracked file setup replaced with a symlink)" {
-    echo "notes" >"$TEST_REPO/NOTES.md"
+    echo "notes" >|"$TEST_REPO/NOTES.md"
     git -C "$TEST_REPO" add NOTES.md
     git -C "$TEST_REPO" commit -q -m notes
     local c3 c4
     c3=$(git -C "$TEST_REPO" rev-parse HEAD)
-    echo three >"$TEST_REPO/app.txt"
+    echo three >|"$TEST_REPO/app.txt"
     git -C "$TEST_REPO" commit -q -am three
     c4=$(git -C "$TEST_REPO" rev-parse HEAD)
     "$PWT_BIN" create SLOT "$c3" --detach >/dev/null
-    echo "shared" >"$TEST_TEMP_DIR/shared-notes.md"
+    echo "shared" >|"$TEST_TEMP_DIR/shared-notes.md"
     rm "$TEST_WORKTREES/SLOT/NOTES.md"
     ln -s "$TEST_TEMP_DIR/shared-notes.md" "$TEST_WORKTREES/SLOT/NOTES.md"
 
@@ -171,7 +171,7 @@ teardown() {
     [ -L "$TEST_WORKTREES/SLOT/NOTES.md" ]
 
     # A real edit is still refused
-    echo edit >"$TEST_WORKTREES/SLOT/app.txt"
+    echo edit >|"$TEST_WORKTREES/SLOT/app.txt"
     run "$PWT_BIN" repoint SLOT "$c3"
     [ "$status" -eq 4 ]
 }

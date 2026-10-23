@@ -9,21 +9,22 @@ setup() {
     command -v node >/dev/null 2>&1 || skip "node is required for router tests"
 
     export TEST_WORKTREES="$TEST_TEMP_DIR/worktrees"
-    # 47000-47499: own range (gateway.bats 42xxx ... wait.bats 46xxx).
-    # Public ports sit at +200, the router's own port at +400.
-    export TEST_BASE_PORT=$((47000 + (RANDOM % 9) * 50))
-    export TEST_ROUTER_PORT=$((TEST_BASE_PORT + 400))
+    # 47000-47449: own range (gateway.bats 42xxx ... wait.bats 46xxx,
+    # boot_progress.bats from 47500). Worktree ports base+1.., public ports
+    # at +200, the router's own port at +300: everything below base+350.
+    export TEST_BASE_PORT=$((47000 + (RANDOM % 3) * 50))
+    export TEST_ROUTER_PORT=$((TEST_BASE_PORT + 300))
     mkdir -p "$TEST_WORKTREES"
 
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat >"$PWT_DIR/projects/test-project/config" <<EOF
+    cat >|"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
 base_port=$TEST_BASE_PORT
 EOF
     printf 'router.port=%s\nrouter.port_offset=200\nrouter.listen=127.0.0.1\n' \
-        "$TEST_ROUTER_PORT" >"$PWT_DIR/config"
+        "$TEST_ROUTER_PORT" >|"$PWT_DIR/config"
     # The router asks for routes and idleness on these clocks
     export PWT_ROUTER_REFRESH_MS=500
     export PWT_ROUTER_IDLE_TICK_MS=300
@@ -46,7 +47,7 @@ teardown() {
     if command -v lsof >/dev/null 2>&1 && [ -n "${TEST_BASE_PORT:-}" ]; then
         local pids
         pids=$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null |
-            awk -v lo="$TEST_BASE_PORT" -v hi="$((TEST_BASE_PORT + 449))" \
+            awk -v lo="$TEST_BASE_PORT" -v hi="$((TEST_BASE_PORT + 349))" \
                 'NR > 1 { n = split($9, a, ":"); p = a[n] + 0; if (p >= lo && p <= hi) print $2 }' | sort -u)
         [ -n "$pids" ] && echo "$pids" | xargs kill -9 2>/dev/null || true
     fi
@@ -56,7 +57,7 @@ teardown() {
 # A server that answers with what it saw, upgrades websockets and echoes;
 # a .crash file makes it fail its boot, a .slow file makes it boot slowly
 write_server_pwtfile() {
-    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+    cat >|"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     pwt_step deps sleep 0.2
     [ -f "$MAIN_APP/.crash" ] && { echo "boom: missing dependency"; return 3; }

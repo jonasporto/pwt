@@ -15,14 +15,14 @@ setup() {
     export TEST_BASE_PORT=$((47500 + (RANDOM % 9) * 50))
     mkdir -p "$TEST_WORKTREES"
     mkdir -p "$PWT_DIR/projects/test-project"
-    cat >"$PWT_DIR/projects/test-project/config" <<EOF
+    cat >|"$PWT_DIR/projects/test-project/config" <<EOF
 path=$TEST_REPO
 worktrees_dir=$TEST_WORKTREES
 branch_prefix=test/
 base_port=$TEST_BASE_PORT
 EOF
     cd "$TEST_REPO"
-    cat >"$TEST_REPO/Pwtfile" <<'EOF'
+    cat >|"$TEST_REPO/Pwtfile" <<'EOF'
 server() {
     set -u
     pwt_step deps true

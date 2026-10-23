@@ -201,8 +201,10 @@ EOF
     [[ "$output" == *"Starting test-project / WAKE-HTML"* ]]
     [[ "$output" == *"/__pwt/boot"* ]]
 
-    wait_for "http_get $pub /__pwt/boot | grep -q '\"state\":\"ready\"'" 20
+    # ready = the port answers; the watcher records listen within ~250 ms
+    wait_for "http_get $pub /__pwt/boot | grep -q '\"step\":\"listen\",\"state\":\"done\"'" 20
     run http_get "$pub" /__pwt/boot
+    [[ "$output" == *'"state":"ready"'* ]]
     [[ "$output" == *'"step":"deps","state":"done"'* ]]
     [[ "$output" == *'"step":"listen","state":"done"'* ]]
 }

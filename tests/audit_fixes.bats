@@ -494,7 +494,10 @@ PWTEOF
 
     run "$PWT_BIN" _implicit-cd renamed-project
     assert_success "the renamed project must resolve without touching any config"
-    [[ "$output" == *"$TEST_REPO"* ]]
+    [[ "$output" == *"$TEST_REPO"* ]] || {
+        echo "output: $output"
+        return 1
+    }
 }
 
 # ============================================
@@ -543,4 +546,20 @@ STUBEOF
         run "$PWT_BIN" self use npm
     assert_success "npm>=9 must resolve via prefix -g, got: $output"
     [ "$(readlink "$TEST_TEMP_DIR/home/.local/bin/pwt")" = "$TEST_TEMP_DIR/npmglobal/bin/pwt" ]
+}
+
+@test "a project renamed in the same second as the index write still resolves" {
+    # macOS bash 3.2 compares -nt in whole seconds: forcing equal mtimes is
+    # the deterministic form of "renamed right after the cache was written"
+    cd "$TEST_REPO"
+    "$PWT_BIN" list >/dev/null 2>&1 || true # builds the index cache
+    mv "$PWT_DIR/projects/test-project" "$PWT_DIR/projects/renamed-project"
+    touch -r "$PWT_DIR/cache/project-index" "$PWT_DIR/projects"
+
+    run "$PWT_BIN" _implicit-cd renamed-project
+    assert_success
+    [[ "$output" == *"$TEST_REPO"* ]] || {
+        echo "output: $output"
+        return 1
+    }
 }

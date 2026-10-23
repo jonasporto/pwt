@@ -80,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pwt servers` took about two minutes with 144 worktrees and a thousand
   job records: the job index was built inside `$(...)` and so rebuilt for
   every row. Built once, the same call takes under 5 seconds.
+- A project directory renamed in the same second as the project index was
+  written kept resolving to nothing on macOS: the system bash 3.2 compares
+  `-nt` in whole seconds, so the rename looked older than the cache. The
+  cached project names are now compared with the directories themselves.
 - Port allocation gave up looking for holes after 100 candidates and fell
   back to the highest port plus one, so a machine with many worktrees only
   ever grew upward. It now reuses any hole up to the highest allocated

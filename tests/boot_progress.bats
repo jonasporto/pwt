@@ -194,10 +194,10 @@ EOF
     source_pwt_functions $(sed -n 's/^PWT_BOOT_FUNCTIONS="\(.*\)"$/\1/p' "$PWT_BIN")
     local file="$TEST_TEMP_DIR/w.boot.jsonl"
     printf '{"ts":"x","ts_ms":1,"project":"p","worktree":"w","boot_id":"NEW","step":"boot","state":"start"}\n' >|"$file"
-    sleep 30 &
-    local dead=$!
-    kill "$dead"
-    wait "$dead" 2>/dev/null || true
+    # A pid that has already exited, without leaving a background job for
+    # bats to track (bats 1.14 counted one as an extra test)
+    local dead
+    dead=$(sh -c 'echo $$')
     PWT_BOOT_FILE="$file" _PWT_BOOT_ID="OLD" run _boot_watch 1 "$dead" 5 0
     [ "$(grep -c . "$file")" -eq 1 ]
     ! grep -q '"state":"fail"' "$file"

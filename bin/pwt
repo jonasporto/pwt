@@ -1849,11 +1849,20 @@ build_project_index() {
         done
         if [ "$stale" = false ]; then
             _PWT_PROJECT_INDEX=$(<"$cache_file")
-            local cached_count=0 line
+            # The cached names must be exactly the project directories, in
+            # glob order: this catches removals and renames even when the
+            # mtimes cannot (macOS bash 3.2 compares -nt in whole seconds,
+            # so a rename in the same second as the cache write looked
+            # fresh forever). Pure bash, no forks.
+            local cached_names="" current_names="" line
             while IFS= read -r line; do
-                [ -n "$line" ] && cached_count=$((cached_count + 1))
+                [ -n "$line" ] && cached_names+="${line%%$'\037'*}/"
             done <<<"$_PWT_PROJECT_INDEX"
-            if [ "$cached_count" -eq "${#configs[@]}" ]; then
+            for cfg in "${configs[@]}"; do
+                cfg="${cfg%/config}"
+                current_names+="${cfg##*/}/"
+            done
+            if [ "$cached_names" = "$current_names" ]; then
                 return 0
             fi
             _PWT_PROJECT_INDEX=""

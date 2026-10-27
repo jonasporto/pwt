@@ -46,6 +46,7 @@ links straight to it.
 <a href="#auto-remove"><code>auto-remove</code></a>
 <a href="#cleanup"><code>cleanup</code></a>
 <a href="#restore"><code>restore</code></a>
+<a href="#patch"><code>patch</code></a>
 <a href="#fix-port"><code>fix-port</code></a>
 <a href="#doctor"><code>doctor</code></a>
 <a href="#state"><code>state</code></a>
@@ -621,6 +622,57 @@ Usage: pwt [project] restore [backup] [worktree]
 
 Backups are created automatically when removing dirty worktrees.
 Location: ~/.pwt/trash/
+```
+
+## pwt patch {#patch}
+
+```
+Usage: pwt patch apply [<worktree>] <file|->  [options]
+       pwt patch export [<worktree>] [--base <ref>] [-o <file>] [--json]
+
+Land commits from a patch file on a worktree, or export a worktree's commits
+as a patch file. Without <worktree>, the worktree you stand in is used.
+
+apply reads a mailbox (git format-patch output, applied with git am -3) or
+a plain diff (applied to the files with git apply, no commit). It refuses,
+with nothing changed, when:
+  - a touched file has local edits, or the index has staged changes
+  - an am, rebase, merge, cherry-pick, revert or bisect is in progress
+  - HEAD is detached                       (override: --detached)
+  - a commit message carries a session trailer or link
+                                           (override: --strip-session)
+  - the patch touches a secret path (.env, *.pem, *.key, ...)
+                                           (override: --allow-secrets)
+  - a pwt job runs for the worktree and --idle was given
+Patches the branch already has (same patch-id) are skipped. The HEAD before
+the apply and any local edits go to ~/.pwt/trash first (pwt restore lists
+them). On a conflict the apply is aborted and the worktree is left as it was.
+
+apply options:
+  --json            One JSON object on stdout for tools
+  --repair          Run the Pwtfile's repair() afterwards (it sees
+                    PWT_CHANGED_FILES and PWT_PREVIOUS_COMMIT)
+  --idle            Refuse while a pwt job runs for the worktree
+  --detached        Apply on a detached HEAD
+  --strip-session   Drop session trailers and links from the messages
+  --allow-secrets   Let the patch touch secret paths
+  -p<n>             Strip <n> leading path components (plain diffs)
+
+export options:
+  --base <ref>      Range start (default: merge base with the worktree's
+                    recorded base branch)
+  -o <file>         Write here instead of stdout
+  --json            One JSON object on stdout (needs -o)
+
+Exit codes: 0 applied or exported (commits already in the branch count as
+applied: skipped), 1 aborted on conflict or git error, 2 usage, 3 worktree
+or file not found, 4 refused before any change.
+
+Examples:
+  pwt patch apply TICKET-123 ~/Downloads/fix.patch
+  curl -s "$URL" | pwt patch apply TICKET-123 -
+  pwt agent-wt patch export | pwt my-wt patch apply -
+  pwt patch export TICKET-123 -o TICKET-123.patch
 ```
 
 ## pwt fix-port {#fix-port}

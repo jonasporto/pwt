@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pwt patch apply [<wt>] <file|->`: land the commits of a git format-patch
+  mailbox on a worktree with `git am -3` (authors kept), or apply a plain
+  diff to its files with no commit. Commits the branch already has (same
+  patch-id) are skipped, so a second round lands only its new commits. It
+  refuses (exit 4, nothing changed) when a touched file has local edits,
+  when the index has staged changes, while an am, rebase, merge,
+  cherry-pick, revert or bisect is in progress, on a detached HEAD
+  (`--detached`), when a message carries a session trailer or link
+  (`--strip-session` drops them), when the patch touches a secret path
+  such as `.env` or `*.pem` (`--allow-secrets`), and with `--idle` while a
+  pwt job runs for the worktree. It never stashes; edits to files the
+  patch leaves alone do not block. The HEAD before the apply and a patch of
+  any local edits go to `~/.pwt/trash` first (`pwt restore` lists them,
+  with the HEAD to go back to) and the output ends with the one-line undo.
+  On a conflict the apply is aborted (exit 1), the worktree is left as it
+  was and the conflicting files are named; files that needed a 3-way merge
+  are listed. The Pwtfile's `repair()` then sees `PWT_CHANGED_FILES` and
+  `PWT_PREVIOUS_COMMIT` (as `repoint()` does); pwt suggests it and runs it
+  only with `--repair`. `--json` prints one object for tools. Works in the
+  worktree-first form (`pwt <wt> patch apply -`) and from inside a worktree
+  without naming it.
+- `pwt patch export [<wt>] [--base <ref>] [-o <file>] [--json]`: the
+  worktree's own commits as a mailbox (`git format-patch --binary`) from
+  the merge base with its recorded base branch, commit count on stderr, a
+  warning when the range has merge commits.
+
+### Fixed
+- Man page: the EXIT STATUS section listed codes from before 0.2.0 (2 as
+  not found, 3 as conflict). It now matches `pwt help`: 2 usage, 3 not
+  found, 4 conflict, 5 timeout, 6 missing dependency.
+
 ## [0.2.16] - 2026-10-22
 
 ### Added

@@ -350,6 +350,37 @@ Resolve port conflict by allocating new port
 .B restore \fINAME\fR
 Recover backed up changes from trash
 
+.SS Patches
+.TP
+.B patch apply \fR[\fINAME\fR] \fIFILE\fR|\fB\-\fR [\fB\-\-json\fR] [\fB\-\-repair\fR] [\fB\-\-idle\fR] [\fB\-\-detached\fR] [\fB\-\-strip\-session\fR] [\fB\-\-allow\-secrets\fR] [\fB\-p\fIN\fR]
+Land the commits of a git format-patch mailbox on the worktree with
+\fBgit am \-3\fR (authors kept), or apply a plain diff to its files with no
+commit. Without \fINAME\fR, the worktree you stand in. Commits the branch
+already has (same patch-id) are skipped. Refuses (exit 4) with nothing
+changed when a touched file has local edits, when the index has staged
+changes, while an am, rebase, merge, cherry-pick, revert or bisect is in
+progress, on a detached HEAD (\fB\-\-detached\fR overrides), when a message
+carries a session trailer or link (\fB\-\-strip\-session\fR drops them), when
+the patch touches a secret path such as \fI.env\fR or \fI*.pem\fR
+(\fB\-\-allow\-secrets\fR), and, with \fB\-\-idle\fR, while a pwt job runs for
+the worktree. It never stashes. The HEAD before the apply and a patch of any
+local edits go to \fI~/.pwt/trash\fR first (\fBpwt restore\fR lists them).
+On a conflict the apply is aborted (exit 1), the worktree is left as it was
+and the conflicting files are named. Afterwards the Pwtfile's
+\fBrepair()\fR sees \fB$PWT_CHANGED_FILES\fR and \fB$PWT_PREVIOUS_COMMIT\fR;
+it is suggested, and run only with \fB\-\-repair\fR. \fB\-\-json\fR prints one
+object (\fIresult\fR, \fIreason\fR, \fIhead_before\fR, \fIhead_after\fR,
+\fIapplied\fR, \fIskipped\fR, \fItouched_files\fR, \fIthree_way_files\fR,
+\fIconflict_files\fR, \fIbackup\fR, \fIundo\fR). Exits 3 for an unknown
+worktree or file, 2 for an empty or unreadable input.
+.TP
+.B patch export \fR[\fINAME\fR] [\fB\-\-base \fIREF\fR] [\fB\-o \fIFILE\fR] [\fB\-\-json\fR]
+Write the worktree's own commits as a mailbox (\fBgit format-patch
+\-\-binary\fR) to stdout or \fIFILE\fR. The range starts at the merge base
+with the worktree's recorded base branch, or at \fIREF\fR. The commit count
+goes to stderr, with a warning when the range has merge commits.
+\fB\-\-json\fR needs \fB\-o\fR.
+
 .SS Interactive Selection
 .TP
 .B select \fR[\fIOPTIONS\fR]
@@ -654,13 +685,22 @@ Project-level command definitions
 Success
 .TP
 .B 1
-General error
+General error (a \fBpatch apply\fR aborted on conflict is this)
 .TP
 .B 2
-Not found (worktree, project, etc.)
+Usage or argument error
 .TP
 .B 3
-Conflict (worktree exists, port in use)
+Not found (worktree, project, branch, port, job)
+.TP
+.B 4
+Conflict (already exists, port in use, busy worktree, a refusal before any change)
+.TP
+.B 5
+Timeout (\fBjobs wait\fR, \fBserver wait\fR, a \fB\-\-progress json\fR boot)
+.TP
+.B 6
+Missing dependency (a required external tool is not installed)
 
 .SH SEE ALSO
 .BR git-worktree (1),

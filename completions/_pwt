@@ -44,6 +44,7 @@ _pwt_commands() {
         'auto-remove:Remove merged worktrees'
         'cleanup:Remove merged worktrees'
         'restore:Recover backed up changes from trash'
+        'patch:Apply or export commit patches on a worktree'
         'state:Versioned JSON snapshot of pwt state'
         'fix-port:Resolve port conflict'
         'doctor:Check system health and configuration'
@@ -436,6 +437,13 @@ _pwt() {
                             5) _pwt_worktrees "$_project" ;;
                         esac
                         ;;
+                    patch)
+                        case $CURRENT in
+                            4) _describe 'action' '(apply:Land\ a\ mailbox\ or\ diff export:Write\ the\ commits\ as\ a\ mailbox)' ;;
+                            5) _pwt_worktrees "$_project" ;;
+                            *) _arguments '--json[One JSON object for tools]' '--repair[Run repair() afterwards]' '--idle[Refuse while a pwt job runs]' '--detached[Apply on a detached HEAD]' '--strip-session[Drop session trailers]' '--allow-secrets[Let the patch touch secret paths]' '--base[Export range start]:ref' '-o[Export to this file]:file:_files' '*:patch file:_files' ;;
+                        esac
+                        ;;
                     jobs)
                         local jobs_actions=(
                             'list:List all jobs'
@@ -591,6 +599,13 @@ _pwt() {
                         case $CURRENT in
                             3) _pwt_backups ;;
                             4) _pwt_worktrees ;;
+                        esac
+                        ;;
+                    patch)
+                        case $CURRENT in
+                            3) _describe 'action' '(apply:Land\ a\ mailbox\ or\ diff export:Write\ the\ commits\ as\ a\ mailbox)' ;;
+                            4) _pwt_worktrees ;;
+                            *) _arguments '--json[One JSON object for tools]' '--repair[Run repair() afterwards]' '--idle[Refuse while a pwt job runs]' '--detached[Apply on a detached HEAD]' '--strip-session[Drop session trailers]' '--allow-secrets[Let the patch touch secret paths]' '--base[Export range start]:ref' '-o[Export to this file]:file:_files' '*:patch file:_files' ;;
                         esac
                         ;;
                     meta|m)

@@ -6670,7 +6670,7 @@ _implicit_cd_target_candidate() {
 # Usage: is_builtin_command <word>
 is_builtin_command() {
     case "${1:-}" in
-        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | router | repoint | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | environment | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | ports | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
+        init | discover | create | add | track | adopt | setup | list | ls | tree | skill | status | info | show | current | use | ps1 | remove | rm | server | s | gateway | servers | router | repoint | repair | fix | auto-remove | cleanup | restore | fix-port | meta | m | alias | config | cd | _cd | run | environment | editor | e | editor:* | diff | copy | cp | for-each | steps | step | doctor | state | migrate | self | versions | which | logs | jobs | ports | patch | select | _select | shell-init | setup-shell | project | port | version | help | -h | --help | plugin)
             return 0
             ;;
     esac
@@ -7010,12 +7010,21 @@ _restore_list() {
             [ -f "$TRASH_DIR/${basename}.patch" ] && has_patch=true
             [ -d "$TRASH_DIR/${basename}_untracked" ] && has_untracked=true
 
+            # A record `patch apply` wrote carries the HEAD to go back to
+            local kind head
+            kind=$(state_get "$json_file" "kind")
+            head=$(state_get "$json_file" "head")
+
             local contents=""
             [ "$has_patch" = true ] && contents="patch"
             [ "$has_untracked" = true ] && contents="${contents:+$contents+}untracked"
+            [ -n "$head" ] && contents="${contents:+$contents+}head"
 
             echo -e "  ${GREEN}$wt_name${NC}  ${DIM}$date${NC}  ${YELLOW}[$contents]${NC}"
             [ -n "$branch" ] && echo -e "     Branch: ${CYAN}$branch${NC}"
+            if [ -n "$head" ]; then
+                echo -e "     Before ${kind:-apply}: ${CYAN}${head:0:7}${NC}  undo: git reset --keep $head"
+            fi
             echo ""
         done
     fi
@@ -9030,6 +9039,8 @@ show_help_brief() {
     echo "  fix-port [worktree]            Fix port conflict"
     echo "  auto-remove [target] [--execute] Remove worktrees merged into target"
     echo "  restore [backup] [worktree]    Recover backed up changes from trash"
+    echo "  patch apply [wt] <file|->      Land a mailbox or diff on a worktree (--json, --repair)"
+    echo "  patch export [wt] [-o file]    Write the worktree's commits as a mailbox (--base ref)"
     echo "  doctor                         Check system health and configuration"
     echo "  skill [--install]              Print the agent-facing CLI guide"
     echo "  state --json                   Versioned JSON snapshot of all pwt state"
@@ -9071,6 +9082,7 @@ show_help_brief() {
     echo "  server <wt> --bg --progress json  Start + JSON boot steps; exit 0 ready, 1 fail, 5 timeout"
     echo "  servers --json                 JSON server state (public port, boot summary)"
     echo "  router status --json           JSON router state and policy"
+    echo "  patch apply <wt> - --json      Apply a mailbox from stdin; exit 0 applied, 4 refused, 1 aborted"
     echo "  Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 timeout, 6 missing dep"
     echo ""
     echo "Project selection (in order of priority):"
@@ -9160,6 +9172,10 @@ cmd_help() {
         create | remove | repair | auto_remove | track | adopt | setup)
             load_module worktree
             "cmd_$topic" --help
+            ;;
+        patch)
+            load_module patch
+            cmd_patch --help
             ;;
         list)
             load_module list
@@ -10173,6 +10189,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             shift # remove "restore" from args
             cmd_restore "$@"
             ;;
+        patch)
+            require_project
+            shift # remove "patch" from args
+            load_module patch
+            cmd_patch "$@"
+            ;;
         fix-port)
             require_project
             cmd_fix_port "${2:-}"
@@ -10480,7 +10502,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                         exit $?
                     fi
                     case "$_wt_cmd" in
-                        logs | info | show | server | port | cd | use | editor | remove | rm | diff | repair | fix | fix-port | meta | run)
+                        logs | info | show | server | port | cd | use | editor | remove | rm | diff | repair | fix | fix-port | meta | run | patch)
                             exec "$0" --project "$CURRENT_PROJECT" "$_wt_cmd" "$_wt_name" "$@"
                             ;;
                     esac
@@ -10491,7 +10513,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
                 echo -e "${RED}Unknown command: $_pwtfile_cmd${NC}"
                 # Try to suggest similar commands (include installed plugins)
-                _known_commands="create track adopt setup list tree info current use select remove cd run environment editor diff copy server gateway servers fix-port auto-remove restore doctor state meta project plugin port help version for-each jobs"
+                _known_commands="create track adopt setup list tree info current use select remove cd run environment editor diff copy server gateway servers fix-port auto-remove restore patch doctor state meta project plugin port help version for-each jobs"
                 # Add installed plugins from all directories to suggestions
                 _get_all_plugin_dirs() {
                     echo "$PWT_DIR/plugins"

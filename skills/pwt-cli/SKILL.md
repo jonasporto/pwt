@@ -125,6 +125,7 @@ pwt servers --json                # JSON servers: listening, job, public port, b
 pwt router status --json          # JSON router state and policy
 pwt router routes --json          # JSON public port -> worktree map
 pwt current --json                # JSON context for the current worktree
+pwt patch apply <wt> - --json     # JSON result of landing a mailbox from stdin
 pwt state --json                  # versioned snapshot of ALL state
 ```
 
@@ -330,6 +331,38 @@ Metadata keys are free-form but must match `[A-Za-z0-9_.-]+`; pass key and
 value as separate arguments (`pwt meta set WT key value`), never `key=value`.
 The short forms (`pwt meta <key>`, `pwt meta <key> <value>`,
 `pwt meta unset <key>`) target the worktree the shell is standing in.
+
+## Land commits from elsewhere as patches, never with raw git am
+
+A change made in another worktree, by another agent, or delivered as a
+file goes onto a pwt worktree with `pwt patch apply`, not with `git am` or
+`git apply` run by hand. pwt checks what git does not: it refuses (exit 4,
+nothing changed) when a touched file has local edits, when the index has
+staged changes, during an am, rebase, merge, cherry-pick, revert or bisect,
+on a detached HEAD, when a message carries a session trailer or link, and
+when the patch touches a secret path. It skips commits the branch already
+has, backs up the HEAD and any local edits to `~/.pwt/trash` first, aborts
+on conflict and leaves the worktree as it was (exit 1), and names the files
+that needed a 3-way merge so a person reads them.
+
+```bash
+pwt patch apply <wt> fix.patch                 # a git format-patch mailbox
+curl -s "$URL" | pwt patch apply <wt> - --json # from stdin, JSON for tools
+pwt <other-wt> patch export | pwt <wt> patch apply -   # worktree to worktree
+pwt patch export <wt> -o <wt>.patch            # hand work over without a push
+```
+
+The JSON `result` is `applied`, `refused` or `aborted`; `reason` says why,
+`applied[]` lists `{sha, subject}`, `skipped` counts commits already in the
+branch, `three_way_files` and `conflict_files` name files, `undo` is the
+git command that goes back. Branch on the exit code first.
+
+Overrides exist for each refusal and are the person's call, not yours:
+`--detached`, `--strip-session`, `--allow-secrets`. After a successful
+apply pwt suggests `pwt repair <wt>` when the Pwtfile has `repair()`; run
+it with `--repair` only when the person asked for a repaired worktree, since
+the repair runs scripts the patch itself may have changed. pwt never runs
+migrations on its own.
 
 ## Destructive commands need explicit approval
 

@@ -72,6 +72,7 @@ complete -c pwt -n __pwt_needs_command -a fix -d 'Repair broken worktree'
 complete -c pwt -n __pwt_needs_command -a auto-remove -d 'Remove merged worktrees'
 complete -c pwt -n __pwt_needs_command -a cleanup -d 'Remove merged worktrees'
 complete -c pwt -n __pwt_needs_command -a restore -d 'Recover from trash'
+complete -c pwt -n __pwt_needs_command -a patch -d 'Apply or export commit patches on a worktree'
 complete -c pwt -n __pwt_needs_command -a fix-port -d 'Resolve port conflict'
 complete -c pwt -n __pwt_needs_command -a doctor -d 'Check system health'
 complete -c pwt -n __pwt_needs_command -a state -d 'Versioned JSON snapshot of pwt state'
@@ -162,6 +163,16 @@ complete -c pwt -n '__pwt_using_command jobs' -a 'list logs wait stop clean help
 complete -c pwt -n '__pwt_using_command server' -a wait -d 'Block until the server is ready'
 
 # State subcommands
+complete -c pwt -n '__pwt_using_command patch' -a apply -d 'Land a mailbox or diff on a worktree'
+complete -c pwt -n '__pwt_using_command patch' -a export -d "Write the worktree's commits as a mailbox"
+complete -c pwt -n '__pwt_using_command patch' -l json -d 'One JSON object for tools'
+complete -c pwt -n '__pwt_using_command patch' -l repair -d "Run the Pwtfile's repair() afterwards"
+complete -c pwt -n '__pwt_using_command patch' -l idle -d 'Refuse while a pwt job runs for the worktree'
+complete -c pwt -n '__pwt_using_command patch' -l detached -d 'Apply on a detached HEAD'
+complete -c pwt -n '__pwt_using_command patch' -l strip-session -d 'Drop session trailers from the messages'
+complete -c pwt -n '__pwt_using_command patch' -l allow-secrets -d 'Let the patch touch secret paths'
+complete -c pwt -n '__pwt_using_command patch' -l base -r -d 'Export range start'
+complete -c pwt -n '__pwt_using_command patch' -s o -r -d 'Export to this file'
 complete -c pwt -n '__pwt_using_command state' -a migrate -d 'Inspect/apply state schema migrations'
 complete -c pwt -n '__pwt_using_command state' -l json -d 'Print snapshot as JSON'
 complete -c pwt -n '__pwt_using_command servers' -l all -s a -d 'Show stopped worktrees'

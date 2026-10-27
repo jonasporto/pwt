@@ -400,6 +400,8 @@ integration, `@there` has no previous line to read and says so.
 | `remove <worktree>` | Remove worktree (`--with-branch`, `--kill-port`) |
 | `auto-remove [target]` | Bulk-remove merged worktrees (dry-run by default, `--execute`) |
 | `restore [backup] [wt]` | Recover uncommitted work that `remove` backed up to trash |
+| `patch apply [wt] <file\|->` | Land a mailbox (`git am -3`) or a diff on a worktree; refuses when unsafe, aborts on conflict (`--json`, `--repair`) |
+| `patch export [wt] [-o file]` | Write the worktree's own commits as a mailbox (`--base <ref>`) |
 | `state --json` | Versioned JSON snapshot of all pwt state (projects, worktrees, jobs) |
 
 ---
@@ -573,6 +575,56 @@ repoint() {
 `$PWT_PREVIOUS_COMMIT`. `pwt_changed` takes bash globs where `*` also crosses
 `/`. Progress goes to `<worktree>.repoint.jsonl`, in the same line format as a
 boot.
+
+---
+
+## Patches
+
+Commits made somewhere else (a change tool, a teammate, another agent's
+worktree) land on a worktree as commits, in one command, or not at all:
+
+```bash
+pwt patch apply TICKET-123 ~/Downloads/fix.patch   # a git format-patch mailbox
+curl -s "$URL" | pwt patch apply TICKET-123 -       # from stdin
+pwt agent-wt patch export | pwt my-wt patch apply - # between two worktrees, no push
+pwt patch export TICKET-123 -o TICKET-123.patch     # share work without pushing
+```
+
+`apply` runs `git am -3`, so authorship stays with the patch and a file the
+branch changed elsewhere still merges. Commits the branch already has (same
+patch-id) are skipped, so a second round of the same change lands only its
+new commits. Before anything changes it refuses (exit 4) when a touched file
+has local edits, when the index has staged changes, during an am, rebase,
+merge, cherry-pick, revert or bisect, on a detached HEAD (`--detached`
+overrides), when a message carries a session trailer or link
+(`--strip-session` drops them), and when the patch touches `.env`, `*.pem`,
+`*.key` or similar (`--allow-secrets`). It never stashes. Edits to files the
+patch leaves alone do not block. The HEAD before the apply, plus a patch of
+any local edits, go to `~/.pwt/trash` first (`pwt restore` lists them), and
+the output ends with the one-line undo. On a conflict the apply is aborted
+(exit 1) and the worktree is left exactly as it was, with the conflicting
+files named. Files that needed a 3-way merge are listed: git merges text,
+not meaning, so read those.
+
+A plain diff (no mail headers) is applied to the files with `git apply` and
+no commit is made.
+
+After an apply the Pwtfile's `repair()` sees `$PWT_CHANGED_FILES` and
+`$PWT_PREVIOUS_COMMIT`, like `repoint()`, so it can redo only what the patch
+touched (`pwt_changed Gemfile.lock && pwt_step deps ./scripts/install`). pwt
+prints the suggestion and runs it only with `--repair`: a patch can change
+the very scripts a repair runs, and pwt never migrates a database on its own.
+
+`--json` gives one object for tools: `result` (`applied`, `refused`,
+`aborted`), `reason`, `head_before`, `head_after`, `applied[]`, `skipped`,
+`touched_files`, `three_way_files`, `conflict_files`, `backup`, `undo`.
+`--idle` refuses while a pwt job runs for the worktree; without it a running
+server is a warning.
+
+`export` writes `git format-patch --binary` from the merge base with the
+worktree's recorded base branch (or `--base <ref>`) to stdout or `-o`,
+prints the commit count on stderr, and warns when the range has merge
+commits, which format-patch leaves out.
 
 ---
 

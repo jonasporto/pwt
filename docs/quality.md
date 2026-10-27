@@ -19,8 +19,8 @@ the pipeline is never noisy enough to be ignored.
 | `bash -n` syntax | gate | clean |
 | `shellcheck -x -S error` | gate | **0** |
 | Docs consistency (man coverage, version match) | gate | clean |
-| Test suite, bash 5.x | gate | 870 passing |
-| Test suite, macOS system bash 3.2 | gate | 870 passing |
+| Test suite, bash 5.x | gate | 1067 passing |
+| Test suite, macOS system bash 3.2 | gate | 1067 passing |
 | Test suite under `set -u` (CI) | gate | passing |
 | `shellcheck -S warning` | informational | 332 (301 of them SC2155) |
 | `shfmt` | gate | clean (reformat landed 2026-08-09) |

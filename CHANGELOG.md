@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-10-27
+
 ### Added
 - `pwt patch apply [<wt>] <file|->`: land the commits of a git format-patch
   mailbox on a worktree with `git am -3` (authors kept), or apply a plain

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-10-30
+
 ### Fixed
 - Job lookups by worktree name are scoped to the project. One ticket often
   has a worktree of the same name in two projects; a running server in one

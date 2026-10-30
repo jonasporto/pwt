@@ -596,6 +596,8 @@ _ensure_jobs_index() {
 	_SERVERS_JOBS_INDEX=""
 	for f in "${PWT_JOBS_DIR:-$PWT_DIR/jobs}"/*.job; do
 		[ -f "$f" ] || continue
+		# One worktree name can exist in two projects; only this one's jobs
+		_job_in_scope "$f" || continue
 		wt=$(state_get "$f" "worktree")
 		cmd=$(state_get "$f" "command")
 		id=$(state_get "$f" "id")

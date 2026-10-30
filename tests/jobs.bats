@@ -321,3 +321,67 @@ PWTEOF
         return 1
     }
 }
+
+# ============================================
+# Job lookups by worktree name are scoped to the project
+# ============================================
+
+# Two projects with a worktree of the same name (one ticket, two repos):
+# a running server in one project must not read as "already running" in
+# the other, and the lookups by name (stop, logs, servers) must pick the
+# job of the project in scope.
+@test "a running server in another project does not block, stop or shadow the same worktree name" {
+    cd "$TEST_REPO"
+    cat >"$TEST_REPO/Pwtfile" <<'PWTEOF'
+server() {
+    sleep 30
+}
+PWTEOF
+    "$PWT_BIN" create SAME-NAME HEAD >/dev/null
+
+    # The other project's server job for a worktree with the same name,
+    # with a live process behind it
+    sleep 60 &
+    local other_pid=$!
+    mkdir -p "$PWT_DIR/jobs"
+    cat >|"$PWT_DIR/jobs/SAME-NAME-server-1000000000.job" <<JOB
+id=SAME-NAME-server-1000000000
+pid=$other_pid
+pgid=$other_pid
+command=server
+worktree=SAME-NAME
+project=other-project
+log=$PWT_DIR/other.log
+started_at=2026-01-01T00:00:00Z
+started_epoch=1000000000
+status=running
+JOB
+    echo "other project log" >|"$PWT_DIR/other.log"
+
+    run "$PWT_BIN" server SAME-NAME --bg
+    [ "$status" -eq 0 ]
+    case "$output" in *'"job_id"'*) ;; *) echo "server did not start: $output" >&2; kill "$other_pid"; return 1 ;; esac
+    local own_id
+    own_id=$(echo "$output" | grep -o '"job_id":"[^"]*"' | head -1 | sed 's/"job_id":"//;s/"//')
+    [ "$own_id" != "SAME-NAME-server-1000000000" ]
+
+    # The duplicate guard still works inside the project
+    run "$PWT_BIN" server SAME-NAME --bg
+    [ "$status" -ne 0 ]
+    case "$output" in *"Already running"*"$own_id"*) ;; *) echo "wrong duplicate: $output" >&2; kill "$other_pid"; return 1 ;; esac
+
+    # logs and servers by name see this project's job, not the other one
+    run "$PWT_BIN" logs SAME-NAME
+    case "$output" in *"other project log"*) echo "logs picked the other project's job" >&2; kill "$other_pid"; return 1 ;; esac
+    run "$PWT_BIN" servers
+    case "$output" in *"job:$own_id"*) ;; *) echo "servers did not show own job: $output" >&2; kill "$other_pid"; return 1 ;; esac
+
+    # stop by worktree name stops this project's job and leaves the other alive
+    run "$PWT_BIN" servers stop SAME-NAME
+    [ "$status" -eq 0 ]
+    kill -0 "$other_pid"
+    [ "$(sed -n 's/^status=//p' "$PWT_DIR/jobs/SAME-NAME-server-1000000000.job")" = "running" ]
+    [ "$(sed -n 's/^status=//p' "$PWT_DIR/jobs/${own_id}.job")" = "stopped" ]
+
+    kill "$other_pid" 2>/dev/null || true
+}

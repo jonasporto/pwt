@@ -99,7 +99,7 @@ _resolve_job_id() {
 	while IFS= read -r job_file; do
 		[ -f "$job_file" ] || continue
 		j_wt=$(state_get "$job_file" "worktree")
-		[ "$j_wt" = "$target" ] || continue
+		[ "$j_wt" = "$target" ] && _job_in_scope "$job_file" || continue
 		j_id=$(state_get "$job_file" "id")
 		j_cmd=$(state_get "$job_file" "command")
 		j_status=$(state_get "$job_file" "status")
@@ -160,7 +160,20 @@ _wait_job() {
 	echo "$id ${final_status:-stopped}"
 }
 
-# Check for duplicate running job (same worktree + command)
+# A job belongs to the project in scope. One ticket often has a worktree
+# of the same name in two projects, so a lookup by worktree name alone
+# would read the other project's server as this one's. Records written
+# before the project key, and lookups made with no project in scope,
+# match any project.
+# Usage: _job_in_scope <job_file> [project]
+_job_in_scope() {
+	local want="${2-${CURRENT_PROJECT:-}}" have
+	[ -n "$want" ] || return 0
+	have=$(state_get "$1" "project")
+	[ -z "$have" ] || [ "$have" = "$want" ]
+}
+
+# Check for duplicate running job (same project, worktree and command)
 # Returns job_id if found, fails otherwise
 # Usage: check_duplicate_job <worktree> <command>
 check_duplicate_job() {
@@ -176,7 +189,7 @@ check_duplicate_job() {
 		j_status=$(state_get "$job_file" "status")
 		j_id=$(state_get "$job_file" "id")
 
-		if [ "$j_wt" = "$wt" ] && [ "$j_cmd" = "$cmd" ] && [ "$j_status" = "running" ]; then
+		if [ "$j_wt" = "$wt" ] && [ "$j_cmd" = "$cmd" ] && [ "$j_status" = "running" ] && _job_in_scope "$job_file"; then
 			# Verify process is actually running
 			if _is_job_alive "$j_id"; then
 				echo "$j_id"
@@ -411,7 +424,7 @@ cmd_logs() {
 	while IFS= read -r job_file; do
 		[ -f "$job_file" ] || continue
 		j_wt=$(state_get "$job_file" "worktree")
-		[ "$j_wt" = "$target" ] || continue
+		[ "$j_wt" = "$target" ] && _job_in_scope "$job_file" || continue
 		j_cmd=$(state_get "$job_file" "command")
 		j_id=$(state_get "$job_file" "id")
 		j_status=$(state_get "$job_file" "status")

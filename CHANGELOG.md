@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Job lookups by worktree name are scoped to the project. One ticket often
+  has a worktree of the same name in two projects; a running server in one
+  of them made `pwt server <wt> --bg` in the other refuse with "Already
+  running" (the router hit the same path when waking a server), and
+  `logs`, `servers`, `server wait --log-contains`, `info` and the Pwtfile's
+  `pwtfile_stop_jobs` could pick the other project's job. Each lookup now
+  compares the job record's `project` with the project in scope; records
+  without one still match.
+
 ## [0.2.17] - 2026-10-27
 
 ### Added

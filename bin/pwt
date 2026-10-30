@@ -3348,6 +3348,7 @@ pwtfile_stop_jobs() {
         [ -f "$f" ] || continue
         wt=$(state_get "$f" "worktree")
         [ "$wt" = "${PWT_WORKTREE:-}" ] || continue
+        _job_in_scope "$f" "${PWT_PROJECT:-}" || continue
         cmd=$(state_get "$f" "command")
         [ "$cmd" = "$want" ] || continue
         id=$(state_get "$f" "id")
@@ -4352,7 +4353,7 @@ cmd_server_wait() {
         for json_file in $(ls -t "$PWT_JOBS_DIR"/*.job 2>/dev/null); do
             [ -f "$json_file" ] || continue
             j_wt=$(state_get "$json_file" "worktree")
-            [ "$j_wt" = "$worktree_name" ] || continue
+            [ "$j_wt" = "$worktree_name" ] && _job_in_scope "$json_file" || continue
             j_cmd=$(state_get "$json_file" "command")
             [ "$j_cmd" = "server" ] || continue
             j_id=$(state_get "$json_file" "id")
@@ -5624,7 +5625,7 @@ cmd_info() {
         _j_cmd=$(state_get "$_job_json" "command")
         _j_id=$(state_get "$_job_json" "id")
         _j_status=$(state_get "$_job_json" "status")
-        [ "$_j_wt" = "$name" ] && [ "$_j_status" = "running" ] || continue
+        [ "$_j_wt" = "$name" ] && [ "$_j_status" = "running" ] && _job_in_scope "$_job_json" || continue
         _is_job_alive "$_j_id" || continue
         running_jobs="${running_jobs:+$running_jobs, }$_j_cmd ($_j_id)"
     done
